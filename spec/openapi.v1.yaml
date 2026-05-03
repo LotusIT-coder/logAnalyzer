@@ -1,0 +1,1092 @@
+openapi: 3.1.0
+info:
+  title: Log Analyzer API
+  version: 1.0.0
+  summary: API for local-first log ingestion, analysis, incidents, and Ollama-powered insights.
+  description: |
+    This API is designed for a local backend that can be securely exposed over DuckDNS.
+    It supports ingestion sources, parsed events, incident workflows, dashboard metrics,
+    and AI analysis through Ollama with selectable model profiles.
+servers:
+  - url: https://your-subdomain.duckdns.org
+    description: Public HTTPS endpoint behind reverse proxy
+  - url: http://localhost:8080
+    description: Local development
+security:
+  - bearerAuth: []
+tags:
+  - name: System
+  - name: Sources
+  - name: Ingestion
+  - name: Parser
+  - name: Events
+  - name: Rules
+  - name: Incidents
+  - name: AI
+  - name: Metrics
+  - name: Auth
+  - name: Audit
+paths:
+  /api/v1/health:
+    get:
+      tags: [System]
+      summary: Liveness and readiness check
+      security: []
+      responses:
+        "200":
+          description: Service status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+                  uptime_seconds:
+                    type: integer
+                  timestamp:
+                    type: string
+                    format: date-time
+                required: [status, uptime_seconds, timestamp]
+
+  /api/v1/version:
+    get:
+      tags: [System]
+      summary: API and build metadata
+      security: []
+      responses:
+        "200":
+          description: Version information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_version:
+                    type: string
+                  app_version:
+                    type: string
+                  build_commit:
+                    type: string
+                required: [api_version, app_version]
+
+  /api/v1/sources:
+    get:
+      tags: [Sources]
+      summary: List configured log sources
+      responses:
+        "200":
+          description: Source list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Source'
+                required: [items]
+    post:
+      tags: [Sources]
+      summary: Create a source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceCreateRequest'
+      responses:
+        "201":
+          description: Created source
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Source'
+
+  /api/v1/sources/{id}:
+    patch:
+      tags: [Sources]
+      summary: Update source
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourcePatchRequest'
+      responses:
+        "200":
+          description: Updated source
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Source'
+
+  /api/v1/sources/{id}/test:
+    post:
+      tags: [Sources]
+      summary: Test source connectivity and parser compatibility
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        "200":
+          description: Test result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  details:
+                    type: string
+                required: [ok]
+
+  /api/v1/ingestion/run:
+    post:
+      tags: [Ingestion]
+      summary: Trigger manual ingestion run
+      responses:
+        "202":
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncJobAccepted'
+
+  /api/v1/parser/test:
+    post:
+      tags: [Parser]
+      summary: Test parser profile against sample lines
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                parser_profile_id:
+                  type: string
+                  format: uuid
+                sample_lines:
+                  type: array
+                  items:
+                    type: string
+                  minItems: 1
+              required: [sample_lines]
+      responses:
+        "200":
+          description: Parsing preview
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  matched:
+                    type: integer
+                  total:
+                    type: integer
+                  preview_events:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Event'
+                required: [matched, total, preview_events]
+
+  /api/v1/events:
+    get:
+      tags: [Events]
+      summary: Query events
+      parameters:
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+        - name: severity
+          in: query
+          schema:
+            type: string
+        - name: service
+          in: query
+          schema:
+            type: string
+        - name: host
+          in: query
+          schema:
+            type: string
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Paged event results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Event'
+                  next_cursor:
+                    type: string
+                    nullable: true
+                required: [items]
+
+  /api/v1/events/{id}:
+    get:
+      tags: [Events]
+      summary: Get event details
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        "200":
+          description: Event details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+
+  /api/v1/events/stream:
+    get:
+      tags: [Events]
+      summary: Stream near real-time events (SSE)
+      responses:
+        "200":
+          description: text/event-stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/v1/rules:
+    get:
+      tags: [Rules]
+      summary: List detection rules
+      responses:
+        "200":
+          description: Rule list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Rule'
+                required: [items]
+    post:
+      tags: [Rules]
+      summary: Create detection rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuleCreateRequest'
+      responses:
+        "201":
+          description: Created rule
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+
+  /api/v1/rules/{id}:
+    patch:
+      tags: [Rules]
+      summary: Update detection rule
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RulePatchRequest'
+      responses:
+        "200":
+          description: Updated rule
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+
+  /api/v1/rules/{id}/dry-run:
+    post:
+      tags: [Rules]
+      summary: Dry-run rule against historical events
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                from:
+                  type: string
+                  format: date-time
+                to:
+                  type: string
+                  format: date-time
+      responses:
+        "200":
+          description: Dry-run result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  matched_events:
+                    type: integer
+                  would_create_incident:
+                    type: boolean
+                required: [matched_events, would_create_incident]
+
+  /api/v1/incidents:
+    get:
+      tags: [Incidents]
+      summary: List incidents
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [open, investigating, resolved, false_positive]
+        - name: severity
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Incident list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Incident'
+                required: [items]
+
+  /api/v1/incidents/{id}:
+    get:
+      tags: [Incidents]
+      summary: Get incident details
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        "200":
+          description: Incident details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Incident'
+    patch:
+      tags: [Incidents]
+      summary: Update incident state
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentPatchRequest'
+      responses:
+        "200":
+          description: Updated incident
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Incident'
+
+  /api/v1/ai/models:
+    get:
+      tags: [AI]
+      summary: List models available in local Ollama
+      responses:
+        "200":
+          description: Ollama model list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AIModel'
+                required: [items]
+
+  /api/v1/ai/analyze/window:
+    post:
+      tags: [AI]
+      summary: Analyze a time window of events
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                from:
+                  type: string
+                  format: date-time
+                to:
+                  type: string
+                  format: date-time
+                model_profile_id:
+                  type: string
+                  format: uuid
+                max_events:
+                  type: integer
+                  minimum: 1
+                  maximum: 5000
+                  default: 500
+              required: [from, to]
+      responses:
+        "202":
+          description: Analysis queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncJobAccepted'
+
+  /api/v1/ai/analyze/incident/{id}:
+    post:
+      tags: [AI]
+      summary: Analyze one incident
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                model_profile_id:
+                  type: string
+                  format: uuid
+      responses:
+        "202":
+          description: Analysis queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncJobAccepted'
+
+  /api/v1/ai/chat:
+    post:
+      tags: [AI]
+      summary: Ask a contextual question about selected logs/incidents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                model_profile_id:
+                  type: string
+                  format: uuid
+                context:
+                  type: object
+                  properties:
+                    incident_id:
+                      type: string
+                      format: uuid
+                    event_ids:
+                      type: array
+                      items:
+                        type: string
+                        format: uuid
+              required: [message]
+      responses:
+        "200":
+          description: AI response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  answer:
+                    type: string
+                  references:
+                    type: array
+                    items:
+                      type: string
+                required: [answer]
+
+  /api/v1/ai/jobs/{id}:
+    get:
+      tags: [AI]
+      summary: Get async AI job status and result
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        "200":
+          description: AI job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIJob'
+
+  /api/v1/metrics/timeseries:
+    get:
+      tags: [Metrics]
+      summary: Event count time buckets
+      parameters:
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+        - name: bucket
+          in: query
+          schema:
+            type: string
+            enum: [1m, 5m, 15m, 1h]
+            default: 5m
+      responses:
+        "200":
+          description: Time buckets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  points:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ts:
+                          type: string
+                          format: date-time
+                        count:
+                          type: integer
+                      required: [ts, count]
+                required: [points]
+
+  /api/v1/metrics/top-errors:
+    get:
+      tags: [Metrics]
+      summary: Top recurring errors in time range
+      parameters:
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+      responses:
+        "200":
+          description: Top errors
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key:
+                          type: string
+                        count:
+                          type: integer
+                      required: [key, count]
+                required: [items]
+
+  /api/v1/metrics/top-services:
+    get:
+      tags: [Metrics]
+      summary: Top services by event volume
+      parameters:
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+      responses:
+        "200":
+          description: Top services
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        service:
+                          type: string
+                        count:
+                          type: integer
+                      required: [service, count]
+                required: [items]
+
+  /api/v1/metrics/error-rate:
+    get:
+      tags: [Metrics]
+      summary: Error rate over time range
+      parameters:
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+      responses:
+        "200":
+          description: Error rate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_events:
+                    type: integer
+                  error_events:
+                    type: integer
+                  error_rate:
+                    type: number
+                    format: float
+                required: [total_events, error_events, error_rate]
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Exchange credentials for access token (optional local login mode)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+              required: [username, password]
+      responses:
+        "200":
+          description: Access token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  token_type:
+                    type: string
+                    enum: [Bearer]
+                  expires_in:
+                    type: integer
+                required: [access_token, token_type]
+
+  /api/v1/auth/token:
+    post:
+      tags: [Auth]
+      summary: Create API token with scoped permissions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                scopes:
+                  type: array
+                  items:
+                    type: string
+                expires_at:
+                  type: string
+                  format: date-time
+              required: [name, scopes]
+      responses:
+        "201":
+          description: Created token (shown once)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  token_id:
+                    type: string
+                    format: uuid
+                required: [token, token_id]
+
+  /api/v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: Current principal and scopes
+      responses:
+        "200":
+          description: Current identity
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subject:
+                    type: string
+                  scopes:
+                    type: array
+                    items:
+                      type: string
+                required: [subject, scopes]
+
+  /api/v1/audit:
+    get:
+      tags: [Audit]
+      summary: List audit events (admin)
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Audit list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuditLog'
+                required: [items]
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdParam:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    FromParam:
+      name: from
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date-time
+    ToParam:
+      name: to
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date-time
+
+  schemas:
+    Source:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          type: string
+          enum: [file, syslog, journald, docker]
+        config:
+          type: object
+          additionalProperties: true
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, name, type, config, enabled, created_at, updated_at]
+
+    SourceCreateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [file, syslog, journald, docker]
+        config:
+          type: object
+          additionalProperties: true
+        enabled:
+          type: boolean
+          default: true
+      required: [name, type, config]
+
+    SourcePatchRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        config:
+          type: object
+          additionalProperties: true
+        enabled:
+          type: boolean
+
+    Event:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        source_id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        severity:
+          type: string
+        service:
+          type: string
+          nullable: true
+        host:
+          type: string
+          nullable: true
+        environment:
+          type: string
+          nullable: true
+        event_type:
+          type: string
+          nullable: true
+        message:
+          type: string
+        fields:
+          type: object
+          additionalProperties: true
+        fingerprint:
+          type: string
+          nullable: true
+      required: [id, source_id, timestamp, severity, message, fields]
+
+    Rule:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        condition:
+          type: object
+          additionalProperties: true
+        threshold:
+          type: integer
+          minimum: 1
+        window_seconds:
+          type: integer
+          minimum: 1
+        severity:
+          type: string
+        enabled:
+          type: boolean
+      required: [id, name, condition, threshold, window_seconds, severity, enabled]
+
+    RuleCreateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        condition:
+          type: object
+          additionalProperties: true
+        threshold:
+          type: integer
+          minimum: 1
+        window_seconds:
+          type: integer
+          minimum: 1
+        severity:
+          type: string
+        enabled:
+          type: boolean
+          default: true
+      required: [name, condition, threshold, window_seconds, severity]
+
+    RulePatchRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        condition:
+          type: object
+          additionalProperties: true
+        threshold:
+          type: integer
+          minimum: 1
+        window_seconds:
+          type: integer
+          minimum: 1
+        severity:
+          type: string
+        enabled:
+          type: boolean
+
+    Incident:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        status:
+          type: string
+          enum: [open, investigating, resolved, false_positive]
+        severity:
+          type: string
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        event_count:
+          type: integer
+        rule_id:
+          type: string
+          format: uuid
+          nullable: true
+        summary:
+          type: string
+          nullable: true
+        assignee:
+          type: string
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+      required: [id, title, status, severity, first_seen, last_seen, event_count, tags]
+
+    IncidentPatchRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [open, investigating, resolved, false_positive]
+        summary:
+          type: string
+        assignee:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+
+    AIModel:
+      type: object
+      properties:
+        name:
+          type: string
+        size:
+          type: string
+          nullable: true
+        family:
+          type: string
+          nullable: true
+        modified_at:
+          type: string
+          format: date-time
+          nullable: true
+      required: [name]
+
+    AIJob:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, running, completed, failed]
+        result:
+          type: object
+          additionalProperties: true
+          nullable: true
+        error:
+          type: string
+          nullable: true
+      required: [id, status]
+
+    AsyncJobAccepted:
+      type: object
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued]
+      required: [job_id, status]
+
+    AuditLog:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        actor:
+          type: string
+        action:
+          type: string
+        resource:
+          type: string
+        status:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+      required: [id, actor, action, resource, status, created_at]
