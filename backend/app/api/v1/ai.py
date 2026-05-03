@@ -6,7 +6,7 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import job_store, ollama_client
@@ -35,6 +35,31 @@ _DEFAULT_SYSTEM = (
     "You are a senior site-reliability engineer analyzing log events. "
     "Be concise, factual, and actionable. Respond in the same language as the logs."
 )
+
+_STOP_WORDS = {
+    # English
+    'the','a','an','is','are','was','were','in','on','at','to','for','of','and','or',
+    'not','with','from','that','this','what','when','where','how','why','which','who',
+    'my','all','any','some','no','be','have','do','can','will','would','could','should',
+    'may','might','log','logs','event','events','show','find','list','get','tell','me',
+    'about','please',
+    # German
+    'ich','die','der','das','ein','eine','ist','sind','war','für','von','mit','aus',
+    'bei','zeig','zeige','finde','was','wie','wann','warum','welche','welcher','welches',
+    'alle','meine','bitte','gibt','es','im','den','dem','des','nach','sich','auch','noch',
+    'nur','dann','wenn','aber','oder','und','nicht','sehr','mehr','als','schau','zeige',
+}
+
+
+def _extract_keywords(text: str) -> list[str]:
+    """Extract meaningful keywords from a natural-language query."""
+    import re
+    words = re.split(r'[\s,;:!?.()\[\]{}"\']+', text.lower())
+    seen: dict[str, None] = {}
+    for w in words:
+        if len(w) >= 4 and w not in _STOP_WORDS:
+            seen[w] = None
+    return list(seen.keys())
 
 
 async def _get_model_settings(
@@ -272,13 +297,48 @@ async def ai_chat(
     _token=_read,
     session: AsyncSession = Depends(get_db),
 ):
-    model, system, temperature, max_tokens = await _get_model_settings(
-        session, body.model_profile_id
-    )
+    # --- Model resolution ---
+    if body.model_profile_id:
+        model, system, temperature, max_tokens = await _get_model_settings(
+            session, body.model_profile_id
+        )
+    elif body.model:
+        model = body.model
+        system = _DEFAULT_SYSTEM
+        temperature = 0.2
+        max_tokens = 2048
+    else:
+        model, system, temperature, max_tokens = await _get_model_settings(session, None)
+
+    # --- Fetch relevant log events as context ---
+    references: list[str] = []
+    keywords = _extract_keywords(body.message)
+    augmented_message = body.message
+
+    if keywords:
+        conditions = [Event.message.ilike(f"%{kw}%") for kw in keywords[:4]]
+        stmt = (
+            select(Event)
+            .where(or_(*conditions))
+            .order_by(Event.timestamp.desc())
+            .limit(20)
+        )
+        result = await session.execute(stmt)
+        events = result.scalars().all()
+        references = [
+            f"[{e.timestamp.strftime('%Y-%m-%d %H:%M:%S')}] [{e.severity.upper()}] {e.message}"
+            for e in events
+        ]
+        if references:
+            context_block = "\n".join(references[:10])
+            augmented_message = (
+                f"{body.message}\n\n"
+                f"Relevant log events from the database:\n{context_block}"
+            )
 
     messages = [
         {"role": "system", "content": system},
-        {"role": "user", "content": body.message},
+        {"role": "user", "content": augmented_message},
     ]
 
     try:
@@ -289,7 +349,7 @@ async def ai_chat(
             detail=f"Ollama error: {exc}",
         )
 
-    return AIChatResponse(answer=answer)
+    return AIChatResponse(answer=answer, references=references[:10])
 
 
 # ---------------------------------------------------------------------------

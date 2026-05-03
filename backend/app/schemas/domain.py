@@ -137,6 +137,7 @@ class AIAnalyzeIncidentRequest(BaseModel):
 
 class AIChatRequest(BaseModel):
     message: str
+    model: Optional[str] = None          # direct Ollama model name (e.g. "qwen3:6b")
     model_profile_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
 

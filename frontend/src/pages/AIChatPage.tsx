@@ -5,6 +5,32 @@ import { useState, useRef, useEffect } from 'react'
 interface Message {
   role: 'user' | 'assistant'
   content: string
+  references?: string[]
+}
+
+function ReferencedLogs({ lines }: { lines: string[] }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div style={{ marginTop: '0.75rem', borderTop: '1px solid #334155', paddingTop: '0.5rem' }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{ background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', fontSize: '0.78rem', padding: 0 }}
+      >
+        {open ? '▼' : '▶'} {lines.length} referenzierte Log-Zeile{lines.length !== 1 ? 'n' : ''}
+      </button>
+      {open && (
+        <div style={{ marginTop: '0.4rem', background: '#0f172a', borderRadius: 6, padding: '0.5rem 0.75rem', maxHeight: 220, overflowY: 'auto' }}>
+          {lines.map((l, i) => (
+            <div key={i} style={{
+              fontFamily: 'monospace', fontSize: '0.75rem', lineHeight: 1.5, wordBreak: 'break-all',
+              color: /error|crit|fatal|emerg/i.test(l) ? '#f87171' : /warn/i.test(l) ? '#fbbf24' : '#94a3b8',
+              borderBottom: '1px solid #1e293b', paddingBottom: '0.1rem',
+            }}>{l}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function AIChatPage() {
@@ -31,7 +57,7 @@ export default function AIChatPage() {
     setLoading(true)
     try {
       const r = await aiChat(model, userMsg)
-      setMessages(m => [...m, { role: 'assistant', content: r.response }])
+      setMessages(m => [...m, { role: 'assistant', content: r.answer, references: r.references }])
     } catch (e: any) {
       setMessages(m => [...m, { role: 'assistant', content: `Fehler: ${e?.response?.data?.detail ?? e.message}` }])
     } finally {
@@ -58,6 +84,9 @@ export default function AIChatPage() {
           <div key={i} style={{ ...styles.bubble, ...(m.role === 'user' ? styles.userBubble : styles.aiBubble) }}>
             <span style={styles.role}>{m.role === 'user' ? 'Du' : model}</span>
             <pre style={styles.pre}>{m.content}</pre>
+            {m.references && m.references.length > 0 && (
+              <ReferencedLogs lines={m.references} />
+            )}
           </div>
         ))}
         {loading && (

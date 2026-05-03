@@ -88,11 +88,8 @@ export async function getErrorRate() {
 }
 
 export async function aiChat(model: string, message: string) {
-  const r = await api.post('/ai/chat', {
-    model,
-    messages: [{ role: 'user', content: message }],
-  })
-  return r.data as { response: string }
+  const r = await api.post('/ai/chat', { message, model })
+  return r.data as { answer: string; references: string[] }
 }
 
 export async function getAIModels(): Promise<any[]> {
