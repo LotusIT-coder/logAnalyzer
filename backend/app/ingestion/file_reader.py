@@ -175,39 +175,48 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
             if parsed is None:
                 parsed = parse_line(stripped, "kv", None, None)
 
-            if parsed is not None:
-                ts_raw = parsed.get("timestamp")
-                if ts_raw and isinstance(ts_raw, str):
-                    try:
-                        from datetime import datetime as _dt
-                        ts = _dt.fromisoformat(ts_raw.replace("Z", "+00:00"))
-                    except ValueError:
-                        ts = now
-                elif isinstance(ts_raw, datetime):
-                    ts = ts_raw
-                else:
-                    ts = now
+            # Fallback: keep every non-empty log line as an event.
+            if parsed is None:
+                parsed = {
+                    "timestamp": now,
+                    "severity": "info",
+                    "service": source.name,
+                    "message": stripped,
+                }
 
-                event = Event(
-                    source_id=source.id,
-                    timestamp=ts,
-                    severity=parsed.get("severity", "info"),
-                    service=parsed.get("service"),
-                    host=parsed.get("host"),
-                    environment=parsed.get("environment"),
-                    event_type=parsed.get("event_type"),
-                    message=parsed.get("message", stripped),
-                    fields_json={
-                        k: v for k, v in parsed.items()
-                        if k not in {"timestamp", "severity", "service", "host",
-                                     "environment", "event_type", "message"}
-                    },
-                )
-                session.add(event)
-                events_created += 1
+            ts_raw = parsed.get("timestamp")
+            if ts_raw and isinstance(ts_raw, str):
+                try:
+                    from datetime import datetime as _dt
+                    ts = _dt.fromisoformat(ts_raw.replace("Z", "+00:00"))
+                except ValueError:
+                    ts = now
+            elif isinstance(ts_raw, datetime):
+                ts = ts_raw
+            else:
+                ts = now
+
+            event = Event(
+                source_id=source.id,
+                timestamp=ts,
+                severity=parsed.get("severity", "info"),
+                service=parsed.get("service"),
+                host=parsed.get("host"),
+                environment=parsed.get("environment"),
+                event_type=parsed.get("event_type"),
+                message=parsed.get("message", stripped),
+                fields_json={
+                    k: v for k, v in parsed.items()
+                    if k not in {"timestamp", "severity", "service", "host",
+                                 "environment", "event_type", "message"}
+                },
+            )
+            session.add(event)
+            events_created += 1
 
     return {
-        "source_id": source.id,
+        "source_id": str(source.id),
+        "path": (source.config_json or {}).get("path", ""),
         "lines_ingested": lines_ingested,
         "events_created": events_created,
         "start_offset": start_offset,

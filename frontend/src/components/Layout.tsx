@@ -11,7 +11,7 @@ const NAV: { to: string; label: string }[] = [
 ]
 
 export default function Layout() {
-  const { me, logout } = useAuth()
+  const { me } = useAuth()
 
   return (
     <div style={styles.root}>
@@ -33,10 +33,11 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
-        <div style={styles.footer}>
-          <span style={{ color: '#64748b', fontSize: '0.75rem' }}>{me?.subject}</span>
-          <button onClick={logout} style={styles.logoutBtn}>Logout</button>
-        </div>
+        {me?.subject && (
+          <div style={styles.footer}>
+            <span style={{ color: '#64748b', fontSize: '0.75rem' }}>{me.subject}</span>
+          </div>
+        )}
       </aside>
       <main style={styles.main}>
         <Outlet />

@@ -163,6 +163,7 @@ export default function SourcesPage() {
   const [testResults, setTestResults] = useState<Record<string, any>>({})
   const [tailSource, setTailSource] = useState<any | null>(null)
   const [editSource, setEditSource] = useState<any | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
 
   async function handleCreate() {
     setSaving(true)
@@ -182,9 +183,9 @@ export default function SourcesPage() {
     setTestResults(prev => ({ ...prev, [id]: r }))
   }
 
-  async function handleDelete(src: any) {
-    if (!confirm(`Quelle "${src.name}" wirklich löschen?`)) return
-    await deleteSource(src.id)
+  async function handleDelete(id: string) {
+    setPendingDelete(null)
+    await deleteSource(id)
     qc.invalidateQueries({ queryKey: ['sources'] })
   }
 
@@ -256,9 +257,15 @@ export default function SourcesPage() {
                   <button onClick={() => handleTest(src.id)} style={styles.testBtn}>
                     Testen
                   </button>
-                  <button onClick={() => handleDelete(src)} style={styles.deleteBtn}>
-                    Löschen
-                  </button>
+                  {pendingDelete === src.id ? (
+                    <>
+                      <span style={{ fontSize: '0.82rem', color: '#fca5a5', alignSelf: 'center' }}>Wirklich löschen?</span>
+                      <button onClick={() => handleDelete(src.id)} style={{ ...styles.deleteBtn, background: '#7f1d1d' }}>Ja</button>
+                      <button onClick={() => setPendingDelete(null)} style={styles.testBtn}>Abbrechen</button>
+                    </>
+                  ) : (
+                    <button onClick={() => setPendingDelete(src.id)} style={styles.deleteBtn}>Löschen</button>
+                  )}
                 </div>
               </div>
               <div style={styles.path}>{src.config?.path ?? '-'}</div>

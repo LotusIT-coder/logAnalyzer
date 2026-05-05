@@ -1,8 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { AuthProvider, useAuth } from './ctx/AuthContext'
+import { AuthProvider } from './ctx/AuthContext'
+import { AIChatProvider } from './ctx/AIChatContext'
+import { SourceFilterProvider } from './ctx/SourceFilterContext'
 import Layout from './components/Layout'
-import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import EventsPage from './pages/EventsPage'
 import IncidentsPage from './pages/IncidentsPage'
@@ -16,13 +17,6 @@ const qc = new QueryClient({
 })
 
 function AppRoutes() {
-  const { token, loading } = useAuth()
-  if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#64748b', fontSize: '1rem' }}>
-      Lade…
-    </div>
-  )
-  if (!token) return <LoginPage />
   return (
     <Routes>
       <Route path="/" element={<Layout />}>
@@ -43,9 +37,13 @@ export default function App() {
   return (
     <QueryClientProvider client={qc}>
       <AuthProvider>
-        <BrowserRouter>
-          <AppRoutes />
-        </BrowserRouter>
+        <SourceFilterProvider>
+          <AIChatProvider>
+            <BrowserRouter>
+              <AppRoutes />
+            </BrowserRouter>
+          </AIChatProvider>
+        </SourceFilterProvider>
       </AuthProvider>
     </QueryClientProvider>
   )

@@ -45,7 +45,18 @@ async def get_current_token(
     Accepts token via:
     - Authorization: Bearer <token>  header  (normal API calls)
     - ?token=<token>                 query   (EventSource / SSE, can't set headers)
+
+    If DISABLE_AUTH=true (env), all requests are accepted without a token.
     """
+    if settings.disable_auth:
+        # Return a synthetic in-memory token with full admin scope
+        dummy = ApiToken(
+            id="00000000-0000-0000-0000-000000000000",
+            name="no-auth",
+            scope_json=["admin", "read", "write"],
+            token_hash="no-auth",
+        )
+        return dummy
     # Resolve raw token from header or query param
     if credentials is not None:
         raw = credentials.credentials

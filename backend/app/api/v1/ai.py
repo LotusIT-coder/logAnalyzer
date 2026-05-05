@@ -18,6 +18,7 @@ from app.schemas.domain import (
     AIAnalyzeIncidentRequest,
     AIAnalyzeWindowRequest,
     AIChatRequest,
+    AIChatAsyncRequest,
     AIChatResponse,
     AIJob,
     AIModelListResponse,
@@ -350,6 +351,113 @@ async def ai_chat(
         )
 
     return AIChatResponse(answer=answer, references=references[:10])
+
+
+# ---------------------------------------------------------------------------
+# POST /ai/chat/async
+# ---------------------------------------------------------------------------
+
+async def _run_chat_async(
+    job_id: str,
+    db_url: str,
+    model: str,
+    system: str,
+    temperature: float,
+    max_tokens: int,
+    message: str,
+    source_ids: list[str],
+    source_paths: list[str],
+    since_hours: float | None,
+) -> None:
+    from app.db.session import get_session_factory
+
+    job_store.set_running(job_id)
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            keywords = _extract_keywords(message)
+            references: list[str] = []
+            augmented = message
+
+            if keywords:
+                from datetime import timedelta
+                conditions = [Event.message.ilike(f"%{kw}%") for kw in keywords[:4]]
+                stmt = select(Event).where(or_(*conditions))
+
+                # Apply source filters
+                if source_ids:
+                    from sqlalchemy import cast
+                    from sqlalchemy import String as SAString
+                    stmt = stmt.where(cast(Event.source_id, SAString).in_(source_ids))
+                if source_paths:
+                    from app.domain.models import Source
+                    sub = select(Source.id).where(
+                        or_(*[Source.config_json["path"].astext == p for p in source_paths])
+                    )
+                    stmt = stmt.where(Event.source_id.in_(sub))
+                if since_hours:
+                    cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+                    stmt = stmt.where(Event.timestamp >= cutoff)
+
+                stmt = stmt.order_by(Event.timestamp.desc()).limit(20)
+                result = await session.execute(stmt)
+                events = result.scalars().all()
+                references = [
+                    f"[{e.timestamp.strftime('%Y-%m-%d %H:%M:%S')}] [{e.severity.upper()}] {e.message}"
+                    for e in events
+                ]
+                if references:
+                    context_block = "\n".join(references[:10])
+                    augmented = (
+                        f"{message}\n\n"
+                        f"Relevant log events from the database:\n{context_block}"
+                    )
+
+        msgs = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": augmented},
+        ]
+        answer = await ollama_client.chat(model, msgs, temperature, max_tokens)
+        job_store.set_completed(job_id, {"answer": answer, "references": references[:10]})
+    except Exception as exc:
+        job_store.set_failed(job_id, str(exc))
+
+
+@router.post("/chat/async", response_model=AsyncJobAccepted, status_code=202)
+async def ai_chat_async(
+    body: AIChatAsyncRequest,
+    background_tasks: BackgroundTasks,
+    _token=_read,
+    session: AsyncSession = Depends(get_db),
+    settings=Depends(get_settings),
+):
+    if body.model_profile_id:
+        model, system, temperature, max_tokens = await _get_model_settings(
+            session, body.model_profile_id
+        )
+    elif body.model:
+        model = body.model
+        system = _DEFAULT_SYSTEM
+        temperature = 0.2
+        max_tokens = 2048
+    else:
+        model, system, temperature, max_tokens = await _get_model_settings(session, None)
+
+    job_id = job_store.create_job()
+    background_tasks.add_task(
+        _run_chat_async,
+        job_id,
+        settings.database_url,
+        model,
+        system,
+        temperature,
+        max_tokens,
+        body.message,
+        body.source_ids or [],
+        body.source_paths or [],
+        body.since_hours,
+    )
+    return AsyncJobAccepted(job_id=job_id)
 
 
 # ---------------------------------------------------------------------------

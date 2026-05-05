@@ -54,6 +54,6 @@ async def create_token(
 
 
 @router.get("/me", response_model=MeResponse)
-async def me(token: ApiToken = Depends(get_current_token)):
+async def me(token=Depends(get_current_token)):
     """Return the current token's name (subject) and granted scopes."""
     return MeResponse(subject=token.name, scopes=token.scope_json or [])

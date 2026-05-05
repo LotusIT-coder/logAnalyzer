@@ -142,6 +142,15 @@ class AIChatRequest(BaseModel):
     context: Optional[Dict[str, Any]] = None
 
 
+class AIChatAsyncRequest(BaseModel):
+    message: str
+    model: Optional[str] = None
+    model_profile_id: Optional[str] = None
+    source_ids: Optional[List[str]] = None
+    source_paths: Optional[List[str]] = None
+    since_hours: Optional[float] = None
+
+
 class AIChatResponse(BaseModel):
     answer: str
     references: List[str] = []

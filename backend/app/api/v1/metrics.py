@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select, text
@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_scope
 from app.dependencies import get_db
-from app.domain.models import Event
+from app.domain.models import Event, Source
 from app.schemas.domain import (
     ErrorRateResponse,
     TimeseriesPoint,
@@ -34,8 +34,44 @@ _BUCKET_INTERVALS = {
 
 
 def _default_range() -> tuple[datetime, datetime]:
+    """Wide default so 'all time' queries work without explicit from/to."""
     now = datetime.now(timezone.utc)
-    return now - timedelta(hours=1), now
+    return now - timedelta(days=3650), now
+
+
+def _parse_csv(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    return [v.strip() for v in value.split(",") if v.strip()]
+
+
+async def _resolve_source_ids(
+    session: AsyncSession,
+    source_ids_csv: Optional[str],
+    source_paths_csv: Optional[str],
+) -> Optional[list[str]]:
+    """Resolve source filters to concrete source IDs.
+
+    Returns:
+      - None: no source filter specified (all sources)
+      - []: filter specified but no matching sources
+      - [ids...]: concrete source IDs to filter by
+    """
+    source_id_list = set(_parse_csv(source_ids_csv))
+    source_path_list = _parse_csv(source_paths_csv)
+
+    if source_path_list:
+        ids_result = await session.execute(
+            select(Source.id).where(
+                func.jsonb_extract_path_text(Source.config_json, "path").in_(source_path_list)
+            )
+        )
+        source_id_list.update(list(ids_result.scalars().all()))
+
+    if source_ids_csv or source_paths_csv:
+        return list(source_id_list)
+
+    return None
 
 
 @router.get("/timeseries", response_model=TimeseriesResponse)
@@ -45,9 +81,13 @@ async def timeseries(
     from_: Optional[datetime] = Query(None, alias="from"),
     to: Optional[datetime] = Query(None),
     bucket: str = Query("5m", pattern="^(1m|5m|15m|1h)$"),
+    source_ids: Optional[str] = Query(None),
+    source_paths: Optional[str] = Query(None),
 ):
     from_dt, to_dt = from_ or _default_range()[0], to or _default_range()[1]
-    interval = _BUCKET_INTERVALS.get(bucket, "5 minutes")
+    resolved_source_ids = await _resolve_source_ids(session, source_ids, source_paths)
+    if resolved_source_ids == []:
+        return TimeseriesResponse(points=[])
 
     # Use date_trunc via SQLAlchemy text for portability
     stmt = (
@@ -59,6 +99,9 @@ async def timeseries(
         .group_by(text("ts"))
         .order_by(text("ts"))
     )
+
+    if resolved_source_ids is not None:
+        stmt = stmt.where(Event.source_id.in_(resolved_source_ids))
 
     # For buckets larger than 1m, use generate_series to align to bucket boundaries
     # MVP: use plain per-minute counts grouped into bucket width in Python
@@ -83,8 +126,13 @@ async def top_errors(
     session: AsyncSession = Depends(get_db),
     from_: Optional[datetime] = Query(None, alias="from"),
     to: Optional[datetime] = Query(None),
+    source_ids: Optional[str] = Query(None),
+    source_paths: Optional[str] = Query(None),
 ):
     from_dt, to_dt = from_ or _default_range()[0], to or _default_range()[1]
+    resolved_source_ids = await _resolve_source_ids(session, source_ids, source_paths)
+    if resolved_source_ids == []:
+        return TopErrorsResponse(items=[])
 
     stmt = (
         select(Event.message, func.count().label("count"))
@@ -97,6 +145,9 @@ async def top_errors(
         .order_by(text("count DESC"))
         .limit(20)
     )
+    if resolved_source_ids is not None:
+        stmt = stmt.where(Event.source_id.in_(resolved_source_ids))
+
     result = await session.execute(stmt)
     items = [TopErrorItem(key=row.message, count=row.count) for row in result]
     return TopErrorsResponse(items=items)
@@ -108,8 +159,13 @@ async def top_services(
     session: AsyncSession = Depends(get_db),
     from_: Optional[datetime] = Query(None, alias="from"),
     to: Optional[datetime] = Query(None),
+    source_ids: Optional[str] = Query(None),
+    source_paths: Optional[str] = Query(None),
 ):
     from_dt, to_dt = from_ or _default_range()[0], to or _default_range()[1]
+    resolved_source_ids = await _resolve_source_ids(session, source_ids, source_paths)
+    if resolved_source_ids == []:
+        return TopServicesResponse(items=[])
 
     stmt = (
         select(Event.service, func.count().label("count"))
@@ -122,6 +178,9 @@ async def top_services(
         .order_by(text("count DESC"))
         .limit(20)
     )
+    if resolved_source_ids is not None:
+        stmt = stmt.where(Event.source_id.in_(resolved_source_ids))
+
     result = await session.execute(stmt)
     items = [TopServiceItem(service=row.service, count=row.count) for row in result]
     return TopServicesResponse(items=items)
@@ -133,21 +192,30 @@ async def error_rate(
     session: AsyncSession = Depends(get_db),
     from_: Optional[datetime] = Query(None, alias="from"),
     to: Optional[datetime] = Query(None),
+    source_ids: Optional[str] = Query(None),
+    source_paths: Optional[str] = Query(None),
 ):
     from_dt, to_dt = from_ or _default_range()[0], to or _default_range()[1]
+    resolved_source_ids = await _resolve_source_ids(session, source_ids, source_paths)
+    if resolved_source_ids == []:
+        return ErrorRateResponse(total_events=0, error_events=0, error_rate=0.0)
 
-    total_result = await session.execute(
-        select(func.count()).where(Event.timestamp >= from_dt, Event.timestamp <= to_dt)
-    )
+    total_stmt = select(func.count()).where(Event.timestamp >= from_dt, Event.timestamp <= to_dt)
+    if resolved_source_ids is not None:
+        total_stmt = total_stmt.where(Event.source_id.in_(resolved_source_ids))
+
+    total_result = await session.execute(total_stmt)
     total = total_result.scalar_one() or 0
 
-    error_result = await session.execute(
-        select(func.count()).where(
-            Event.timestamp >= from_dt,
-            Event.timestamp <= to_dt,
-            Event.severity.in_(["error", "critical"]),
-        )
+    error_stmt = select(func.count()).where(
+        Event.timestamp >= from_dt,
+        Event.timestamp <= to_dt,
+        Event.severity.in_(["error", "critical"]),
     )
+    if resolved_source_ids is not None:
+        error_stmt = error_stmt.where(Event.source_id.in_(resolved_source_ids))
+
+    error_result = await session.execute(error_stmt)
     errors = error_result.scalar_one() or 0
 
     rate = round(errors / total, 4) if total > 0 else 0.0

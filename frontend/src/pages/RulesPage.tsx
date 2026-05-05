@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getRules, createRule, patchRule } from '../lib/requests'
 import { useState } from 'react'
+import GlobalSourceFilterNotice from '../components/GlobalSourceFilterNotice'
 
 export default function RulesPage() {
   const qc = useQueryClient()
@@ -41,6 +42,8 @@ export default function RulesPage() {
           {showNew ? '✕ Abbrechen' : '+ Neue Regel'}
         </button>
       </div>
+
+      <GlobalSourceFilterNotice />
 
       {showNew && (
         <div style={styles.form}>

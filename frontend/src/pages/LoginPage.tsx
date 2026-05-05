@@ -1,44 +1,13 @@
-import { useState } from 'react'
-import { useAuth } from '../ctx/AuthContext'
+import { useNavigate } from 'react-router-dom'
 
 export default function LoginPage() {
-  const { login } = useAuth()
-  const [token, setToken] = useState('')
-  const [err, setErr] = useState('')
-  const [loading, setLoading] = useState(false)
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    setErr('')
-    setLoading(true)
-    try {
-      await login(token.trim())
-    } catch {
-      setErr('Token ungültig oder Server nicht erreichbar.')
-    } finally {
-      setLoading(false)
-    }
-  }
+  const navigate = useNavigate()
 
   return (
     <div style={styles.wrap}>
       <div style={styles.card}>
         <h1 style={styles.title}>Log Analyzer</h1>
-        <form onSubmit={submit} style={styles.form}>
-          <label style={styles.label}>API Token</label>
-          <input
-            type="password"
-            value={token}
-            onChange={e => setToken(e.target.value)}
-            placeholder="Bearer token..."
-            style={styles.input}
-            autoFocus
-          />
-          {err && <p style={styles.err}>{err}</p>}
-          <button type="submit" disabled={loading || !token} style={styles.btn}>
-            {loading ? 'Prüfe…' : 'Anmelden'}
-          </button>
-        </form>
+        <button onClick={() => navigate('/')} style={styles.btn}>Öffnen</button>
       </div>
     </div>
   )

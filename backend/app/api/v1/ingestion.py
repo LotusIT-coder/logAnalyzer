@@ -1,7 +1,7 @@
 """Ingestion endpoints – POST /api/v1/ingestion/run."""
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -17,8 +17,13 @@ router = APIRouter(prefix="/ingestion", tags=["Ingestion"])
 
 class IngestionRunRequest(BaseModel):
     """Optional body to restrict ingestion to specific sources or ad-hoc paths."""
+    class ExtraPath(BaseModel):
+        path: str
+        origin: Literal["preset", "custom"] = "custom"
+
     source_ids: Optional[List[str]] = None  # restrict to these IDs; None = all enabled
     extra_paths: Optional[List[str]] = None  # ad-hoc file paths (not stored persistently)
+    extra_entries: Optional[List[ExtraPath]] = None  # enriched extra paths with origin
 
 
 class IngestionRunResponse(BaseModel):
@@ -43,38 +48,70 @@ async def trigger_ingestion(
     results = []
 
     # --- configured sources ---
+    all_sources = await list_sources(session)
     if body.source_ids is not None:
         # Only ingest the requested source IDs
-        from sqlalchemy import select
-        all_sources = await list_sources(session)
         sources = [s for s in all_sources if s.id in body.source_ids]
     else:
-        sources = [s for s in await list_sources(session) if s.enabled]
+        sources = [s for s in all_sources if s.enabled]
 
     for source in sources:
         stats = await ingest_source(session, source)
         results.append(stats)
 
-    # --- ad-hoc extra paths ---
+    # --- extra paths: ensure these are ingested as real (persisted) sources ---
+    # Accept legacy extra_paths + enriched extra_entries
+    extra_entries: list[tuple[str, str]] = []
     if body.extra_paths:
+        extra_entries.extend([(p, "custom") for p in body.extra_paths])
+    if body.extra_entries:
+        extra_entries.extend([(e.path, e.origin) for e in body.extra_entries])
+
+    if extra_entries:
         import os
-        for path in body.extra_paths:
+
+        by_path = {
+            (s.config_json.get("path") or ""): s
+            for s in all_sources
+            if s.type == "file" and isinstance(s.config_json, dict)
+        }
+
+        for path, origin in extra_entries:
             path = path.strip()
             if not path:
                 continue
-            # Create a transient (in-memory only) Source object – not persisted
-            temp = Source(
-                id=f"adhoc:{path}",
-                name=os.path.basename(path),
-                type="file",
-                config_json={"path": path},
-                enabled=True,
-            )
-            # We need a real UUID for the FK in raw_log – skip raw_log for ad-hoc
-            # instead: just report what we found
+
             if not os.path.exists(path):
                 results.append({"source_id": path, "skipped": True, "reason": f"file not found: {path}"})
+                continue
+
+            source = by_path.get(path)
+            if source is None:
+                # First selection of this path: create source once and reuse it afterwards.
+                source = Source(
+                    name=os.path.basename(path) or path,
+                    type="file",
+                    config_json={"path": path, "source_origin": origin},
+                    enabled=True,
+                )
+                session.add(source)
+                await session.flush()
+                await session.refresh(source)
+                by_path[path] = source
+                all_sources.append(source)
             else:
-                results.append({"source_id": path, "adhoc": True, "lines_readable": sum(1 for _ in open(path, errors='replace'))})
+                # If this path was previously auto-created without origin, backfill origin metadata.
+                cfg = dict(source.config_json or {})
+                if "source_origin" not in cfg and origin in {"preset", "custom"}:
+                    cfg["source_origin"] = origin
+                    source.config_json = cfg
+                    session.add(source)
+                    await session.flush()
+
+            stats = await ingest_source(session, source)
+            stats["source_path"] = path
+            stats["source_name"] = source.name
+            stats["source_origin"] = origin
+            results.append(stats)
 
     return IngestionRunResponse(accepted=True, results=results)

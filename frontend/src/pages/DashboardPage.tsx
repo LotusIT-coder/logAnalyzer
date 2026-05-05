@@ -1,6 +1,17 @@
-import { useQuery } from '@tanstack/react-query'
-import { getTimeseries, getTopErrors, getTopServices, getErrorRate, runIngestion, getSources, uploadImport } from '../lib/requests'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { getTimeseries, getTopErrors, getTopServices, getErrorRate, runIngestion, getSources, uploadImport, deleteSource, type TimeRange, type MetricsFilter } from '../lib/requests'
 import { useEffect, useRef, useState } from 'react'
+import { useSourceFilter, type SourceOption } from '../ctx/SourceFilterContext'
+
+// ─── Time range presets ───────────────────────────────────────────────────────
+const TIME_PRESETS: { label: string; hours: number }[] = [
+  { label: '1 h',  hours: 1 },
+  { label: '6 h',  hours: 6 },
+  { label: '24 h', hours: 24 },
+  { label: '7 d',  hours: 168 },
+  { label: '30 d', hours: 720 },
+  { label: 'Alle', hours: 0 },
+]
 
 // ─── Preset log paths ────────────────────────────────────────────────────────
 const PRESET_PATHS = [
@@ -17,26 +28,25 @@ const PRESET_PATHS = [
   { label: 'journald (boot)', path: '/var/log/boot.log' },
 ]
 
-interface SourceOption {
-  id: string       // 'preset:<path>' | 'source:<uuid>' | 'custom:<path>'
-  label: string
-  path: string
-  kind: 'preset' | 'configured' | 'custom'
-}
+const PRESET_PATH_SET = new Set(PRESET_PATHS.map(p => p.path))
 
 // ─── Source picker dropdown ───────────────────────────────────────────────────
 function SourcePicker({
-  selected, onChange, onUploadResult,
+  selected, onChange, onUploadResult, customSources, onRemoveCustom,
 }: {
   selected: SourceOption[]
   onChange: (v: SourceOption[]) => void
   onUploadResult: (r: any) => void
+  customSources: SourceOption[]   // externally tracked custom/uploaded entries
+  onRemoveCustom: (id: string) => void
 }) {
   const [open, setOpen] = useState(false)
   const [customInput, setCustomInput] = useState('')
   const [uploading, setUploading] = useState(false)
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const { data: configuredSourcesRaw } = useQuery({ queryKey: ['sources'], queryFn: getSources })
+  const qc = useQueryClient()
   const configuredSources: any[] = Array.isArray(configuredSourcesRaw) ? configuredSourcesRaw : []
   const ref = useRef<HTMLDivElement>(null)
 
@@ -49,12 +59,21 @@ function SourcePicker({
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  const configuredOptions: SourceOption[] = configuredSources.map((s: any) => ({
-    id: `source:${s.id}`,
-    label: `${s.name} (${s.config?.path ?? '?'})`,
-    path: s.config?.path ?? '',
-    kind: 'configured',
-  }))
+  const configuredOptions: SourceOption[] = configuredSources
+    .filter((s: any) => {
+      const origin = s.config?.source_origin
+      // Exclude sources that were auto-created from preset selection
+      if (origin === 'preset') return false
+      // Exclude sources whose path matches a preset path (legacy entries without origin)
+      if (!origin && PRESET_PATH_SET.has(s.config?.path ?? '')) return false
+      return true
+    })
+    .map((s: any) => ({
+      id: `source:${s.id}`,
+      label: s.name,
+      path: s.config?.path ?? '',
+      kind: 'configured' as const,
+    }))
 
   const presetOptions: SourceOption[] = PRESET_PATHS.map(p => ({
     id: `preset:${p.path}`,
@@ -74,7 +93,7 @@ function SourcePicker({
     if (!path) return
     const opt: SourceOption = {
       id: `custom:${path}`,
-      label: path,
+      label: path.split('/').pop() || path,
       path,
       kind: 'custom',
     }
@@ -116,9 +135,49 @@ function SourcePicker({
           {configuredOptions.length > 0 && (
             <div style={pickerStyles.groupHeader}>Konfigurierte Quellen</div>
           )}
-          {configuredOptions.map(opt => (
-            <OptionRow key={opt.id} opt={opt} checked={!!selected.find(s => s.id === opt.id)} onToggle={toggle} />
-          ))}
+          {configuredOptions.map(opt => {
+            const rawId = opt.id.replace('source:', '')
+            const isPending = pendingDeleteId === rawId
+            return (
+              <div key={opt.id} style={{ ...pickerStyles.option, justifyContent: 'space-between' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, cursor: 'pointer', minWidth: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!selected.find(s => s.id === opt.id)}
+                    onChange={() => toggle(opt)}
+                    style={{ accentColor: '#3b82f6', flexShrink: 0 }}
+                  />
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{opt.label}</span>
+                  <span style={{ color: '#22c55e', fontSize: '0.7rem', flexShrink: 0 }}>●</span>
+                </label>
+                {isPending ? (
+                  <div style={{ display: 'flex', gap: '0.2rem', alignItems: 'center', flexShrink: 0 }}>
+                    <span style={{ fontSize: '0.72rem', color: '#fca5a5' }}>Löschen?</span>
+                    <button
+                      onClick={async e => {
+                        e.stopPropagation()
+                        setPendingDeleteId(null)
+                        await deleteSource(rawId)
+                        qc.invalidateQueries({ queryKey: ['sources'] })
+                        onChange(selected.filter(s => s.id !== opt.id))
+                      }}
+                      style={{ background: 'none', border: '1px solid #ef4444', color: '#ef4444', cursor: 'pointer', fontSize: '0.72rem', borderRadius: 4, padding: '1px 5px' }}
+                    >Ja</button>
+                    <button
+                      onClick={e => { e.stopPropagation(); setPendingDeleteId(null) }}
+                      style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '0.72rem', padding: '1px 3px' }}
+                    >Abbrechen</button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={e => { e.stopPropagation(); setPendingDeleteId(rawId) }}
+                    title="Quelle löschen"
+                    style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.85rem', padding: '0 0.15rem', flexShrink: 0, opacity: 0.6 }}
+                  >🗑</button>
+                )}
+              </div>
+            )
+          })}
 
           {/* Presets */}
           <div style={pickerStyles.groupHeader}>Standard-Log-Dateien</div>
@@ -126,8 +185,33 @@ function SourcePicker({
             <OptionRow key={opt.id} opt={opt} checked={!!selected.find(s => s.id === opt.id)} onToggle={toggle} />
           ))}
 
-          {/* Custom input */}
-          <div style={pickerStyles.groupHeader}>Eigener Pfad</div>
+          {/* Custom / uploaded sources */}
+          {customSources.length > 0 && (
+            <>
+              <div style={pickerStyles.groupHeader}>Eigene / Hochgeladene Quellen</div>
+              {customSources.map(opt => (
+                <div key={opt.id} style={{ ...pickerStyles.option, justifyContent: 'space-between' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={!!selected.find(s => s.id === opt.id)}
+                      onChange={() => toggle(opt)}
+                      style={{ accentColor: '#3b82f6', flexShrink: 0 }}
+                    />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{opt.label}</span>
+                  </label>
+                  <button
+                    onClick={e => { e.stopPropagation(); onRemoveCustom(opt.id) }}
+                    title="Entfernen"
+                    style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.9rem', padding: '0 0.2rem', flexShrink: 0 }}
+                  >✕</button>
+                </div>
+              ))}
+            </>
+          )}
+
+          {/* Add custom path */}
+          <div style={pickerStyles.groupHeader}>Eigener Pfad hinzufügen</div>
           <div style={pickerStyles.customRow}>
             <input
               value={customInput}
@@ -196,42 +280,107 @@ function OptionRow({ opt, checked, onToggle }: { opt: SourceOption; checked: boo
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
-  const ts = useQuery({ queryKey: ['timeseries'], queryFn: () => getTimeseries({ bucket: '5m' }) })
-  const errs = useQuery({ queryKey: ['top-errors'], queryFn: getTopErrors })
-  const svcs = useQuery({ queryKey: ['top-services'], queryFn: getTopServices })
-  const rate = useQuery({ queryKey: ['error-rate'], queryFn: getErrorRate })
-
-  const [selectedSources, setSelectedSources] = useState<SourceOption[]>([])
+  const { filter, setFilter: setGlobalSourceFilter, selectedSources, setSelectedSources, customSources, setCustomSources } = useSourceFilter()
+  const [rangeHours, setRangeHours] = useState(filter.rangeHours) // restored from context on re-mount
   const [ingesting, setIngesting] = useState(false)
   const [ingestResult, setIngestResult] = useState<any>(null)
   const [ingestError, setIngestError] = useState<string | null>(null)
   const [uploadResult, setUploadResult] = useState<any>(null)
 
+  function removeCustomSource(id: string) {
+    setCustomSources(prev => prev.filter(s => s.id !== id))
+    setSelectedSources(prev => prev.filter(s => s.id !== id))
+  }
+
+  const selectedSourceIds = selectedSources
+    .filter(s => s.kind === 'configured')
+    .map(s => s.id.replace('source:', ''))
+  const selectedSourcePaths = selectedSources
+    .filter(s => s.kind === 'preset' || s.kind === 'custom')
+    .map(s => s.path)
+
+  const timeRange: TimeRange | undefined = rangeHours === 0 ? undefined : {
+    from: new Date(Date.now() - rangeHours * 3600_000).toISOString(),
+    to: new Date().toISOString(),
+  }
+  const metricsFilter: MetricsFilter | undefined = selectedSources.length > 0
+    ? { sourceIds: selectedSourceIds, sourcePaths: selectedSourcePaths }
+    : undefined
+
+  const sourceKey = `${selectedSourceIds.join('|')}::${selectedSourcePaths.join('|')}`
+  const bucket = rangeHours === 0 || rangeHours > 24 ? '1h' : rangeHours <= 6 ? '5m' : '15m'
+
+  const ts = useQuery({
+    queryKey: ['timeseries', rangeHours, sourceKey],
+    queryFn: () => getTimeseries({
+      bucket,
+      ...(timeRange ? { from: timeRange.from, to: timeRange.to } : {}),
+      ...(metricsFilter?.sourceIds?.length ? { source_ids: metricsFilter.sourceIds.join(',') } : {}),
+      ...(metricsFilter?.sourcePaths?.length ? { source_paths: metricsFilter.sourcePaths.join(',') } : {}),
+    }),
+    enabled: selectedSources.length > 0,
+  })
+  const errs = useQuery({
+    queryKey: ['top-errors', rangeHours, sourceKey],
+    queryFn: () => getTopErrors(timeRange, metricsFilter),
+    enabled: selectedSources.length > 0,
+  })
+  const svcs = useQuery({
+    queryKey: ['top-services', rangeHours, sourceKey],
+    queryFn: () => getTopServices(timeRange, metricsFilter),
+    enabled: selectedSources.length > 0,
+  })
+  const rate = useQuery({
+    queryKey: ['error-rate', rangeHours, sourceKey],
+    queryFn: () => getErrorRate(timeRange, metricsFilter),
+    enabled: selectedSources.length > 0,
+  })
+
+  function refetchAll() { ts.refetch(); errs.refetch(); svcs.refetch(); rate.refetch() }
+
   function handleUploadResult(r: any) {
     setUploadResult(r)
-    if (!r?.error) {
-      ts.refetch(); errs.refetch(); svcs.refetch(); rate.refetch()
+    if (!r?.error && r?.stored_path) {
+      // Add uploaded file as removable custom source
+      const opt: SourceOption = {
+        id: `custom:${r.stored_path}`,
+        label: r.source_name ?? r.stored_path.split('/').pop(),
+        path: r.stored_path,
+        kind: 'custom',
+      }
+      setCustomSources(prev => prev.find(s => s.id === opt.id) ? prev : [...prev, opt])
+      setSelectedSources(prev => prev.find(s => s.id === opt.id) ? prev : [...prev, opt])
     }
+    if (!r?.error) refetchAll()
   }
+
+  useEffect(() => {
+    setGlobalSourceFilter({ sourceIds: selectedSourceIds, sourcePaths: selectedSourcePaths, rangeHours })
+  }, [selectedSourceIds.join('|'), selectedSourcePaths.join('|'), rangeHours])
+
+  // Auto-ingest when source selection changes
+  const prevSourcesRef = useRef<SourceOption[]>([])
+  useEffect(() => {
+    const prev = prevSourcesRef.current
+    prevSourcesRef.current = selectedSources
+    if (selectedSources.length === 0 && prev.length === 0) return
+    if (selectedSources.length === 0) { refetchAll(); return }
+    handleIngest()
+  }, [selectedSources])
 
   async function handleIngest() {
     setIngesting(true)
     setIngestError(null)
     setIngestResult(null)
     try {
-      const configuredIds = selectedSources
-        .filter(s => s.kind === 'configured')
-        .map(s => s.id.replace('preset:', '').replace('source:', ''))
-      const extraPaths = selectedSources
-        .filter(s => s.kind === 'preset' || s.kind === 'custom')
-        .map(s => s.path)
-
       const r = await runIngestion({
-        sourceIds: configuredIds.length ? configuredIds : undefined,
-        extraPaths: extraPaths.length ? extraPaths : undefined,
+        sourceIds: selectedSourceIds, // always pass (empty array = no configured sources)
+        extraEntries: selectedSources
+          .filter(s => s.kind === 'preset' || s.kind === 'custom')
+          .map(s => ({ path: s.path, origin: s.kind === 'preset' ? 'preset' as const : 'custom' as const })),
       })
       setIngestResult(r)
-      ts.refetch(); errs.refetch(); svcs.refetch(); rate.refetch()
+      refetchAll()
     } catch (e: any) {
       const msg = e?.response?.data?.detail ?? e?.message ?? 'Unbekannter Fehler'
       setIngestError(`Fehler: ${msg} (Status ${e?.response?.status ?? '?'})`)
@@ -248,11 +397,26 @@ export default function DashboardPage() {
     <div>
       <div style={styles.header}>
         <h2 style={styles.h2}>Dashboard</h2>
-        <div style={styles.ingestRow}>
-          <SourcePicker selected={selectedSources} onChange={setSelectedSources} onUploadResult={handleUploadResult} />
-          <button onClick={handleIngest} disabled={ingesting} style={styles.ingestBtn}>
-            {ingesting ? '⏳ Ingestiere…' : '▶ Ingestion starten'}
-          </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '0.25rem' }}>
+            {TIME_PRESETS.map(p => (
+              <button
+                key={p.hours}
+                onClick={() => setRangeHours(p.hours)}
+                style={{
+                  padding: '0.25rem 0.6rem', fontSize: '0.8rem', borderRadius: '0.375rem',
+                  border: '1px solid', cursor: 'pointer',
+                  background: rangeHours === p.hours ? '#3b82f6' : '#1e293b',
+                  color: rangeHours === p.hours ? '#fff' : '#94a3b8',
+                  borderColor: rangeHours === p.hours ? '#3b82f6' : '#334155',
+                }}
+              >{p.label}</button>
+            ))}
+          </div>
+          <div style={styles.ingestRow}>
+            <SourcePicker selected={selectedSources} onChange={setSelectedSources} onUploadResult={handleUploadResult} customSources={customSources} onRemoveCustom={removeCustomSource} />
+            {ingesting && <span style={{ fontSize: '0.82rem', color: '#fbbf24', whiteSpace: 'nowrap' }}>⏳ Analysiere…</span>}
+          </div>
         </div>
       </div>
 
@@ -264,15 +428,16 @@ export default function DashboardPage() {
 
       {ingestResult && (
         <div style={styles.ingestInfo}>
-          {ingestResult.results?.map((r: any, i: number) => (
-            <div key={i}>
-              {r.skipped
-                ? `⚠ ${r.source_id}: ${r.reason}`
-                : r.adhoc
-                  ? `📁 ${r.source_id}: ${r.lines_readable} Zeilen lesbar (nicht ingested — Quelle zuerst konfigurieren)`
-                  : `✓ ${r.source_id}: ${r.lines_ingested} Zeilen, ${r.events_created ?? 0} Events`}
-            </div>
-          ))}
+          {ingestResult.results?.map((r: any, i: number) => {
+            const label = (r.path || r.source_name) ? (r.path || r.source_name).split('/').pop() : r.source_id?.slice(0, 16)
+            return (
+              <div key={i}>
+                {r.skipped
+                  ? `⚠ ${label}: ${r.reason}`
+                  : `✓ ${label}: ${r.lines_ingested} Zeilen, ${r.events_created ?? 0} Events`}
+              </div>
+            )
+          })}
         </div>
       )}
 
@@ -294,45 +459,53 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <div style={styles.kpiRow}>
-        <KpiCard title="Gesamt Events" value={String(totalEvents)} />
-        <KpiCard title="Fehlerrate" value={`${errorRate}%`} />
-        <KpiCard title="Fehler" value={String(rr?.error_events ?? '–')} />
-      </div>
+      {selectedSources.length === 0 ? (
+        <div style={{ color: '#475569', textAlign: 'center', padding: '3rem 1rem', fontSize: '0.9rem' }}>
+          Bitte eine oder mehrere Log-Quellen auswählen, um Metriken anzuzeigen.
+        </div>
+      ) : (
+        <>
+          <div style={styles.kpiRow}>
+            <KpiCard title="Gesamt Events" value={String(totalEvents)} />
+            <KpiCard title="Fehlerrate" value={`${errorRate}%`} />
+            <KpiCard title="Fehler" value={String(rr?.error_events ?? '–')} />
+          </div>
 
-      <div style={styles.grid}>
-        <Panel title="Events / 5 Min (letzte Stunde)">
-          {ts.data ? <MiniBar points={ts.data.points} /> : <Spinner />}
-        </Panel>
+          <div style={styles.grid}>
+            <Panel title={`Events / ${bucket} (${rangeHours === 0 ? 'alle' : TIME_PRESETS.find(p => p.hours === rangeHours)?.label ?? ''})`}>
+              {ts.data ? <MiniBar points={ts.data.points} /> : <Spinner />}
+            </Panel>
 
-        <Panel title="Top Fehler-Meldungen">
-          {errs.data ? (
-            <ol style={styles.ol}>
-              {errs.data.items.slice(0, 8).map((e: any, i: number) => (
-                <li key={i} style={styles.li}>
-                  <span style={styles.count}>{e.count}</span>
-                  <span style={styles.msg}>{(e.key ?? e.message ?? '').slice(0, 80)}</span>
-                </li>
-              ))}
-              {!errs.data.items.length && <div style={{ color: '#64748b', fontSize: '0.85rem' }}>Keine Fehler-Events</div>}
-            </ol>
-          ) : <Spinner />}
-        </Panel>
+            <Panel title="Top Fehler-Meldungen">
+              {errs.data ? (
+                <ol style={styles.ol}>
+                  {errs.data.items.slice(0, 8).map((e: any, i: number) => (
+                    <li key={i} style={styles.li}>
+                      <span style={styles.count}>{e.count}</span>
+                      <span style={styles.msg}>{(e.key ?? e.message ?? '').slice(0, 80)}</span>
+                    </li>
+                  ))}
+                  {!errs.data.items.length && <div style={{ color: '#64748b', fontSize: '0.85rem' }}>Keine Fehler-Events</div>}
+                </ol>
+              ) : <Spinner />}
+            </Panel>
 
-        <Panel title="Top Services">
-          {svcs.data ? (
-            <ol style={styles.ol}>
-              {svcs.data.items.slice(0, 8).map((s: any, i: number) => (
-                <li key={i} style={styles.li}>
-                  <span style={styles.count}>{s.count}</span>
-                  <span style={styles.msg}>{s.service ?? '(unbekannt)'}</span>
-                </li>
-              ))}
-              {!svcs.data.items.length && <div style={{ color: '#64748b', fontSize: '0.85rem' }}>Keine Service-Daten</div>}
-            </ol>
-          ) : <Spinner />}
-        </Panel>
-      </div>
+            <Panel title="Top Services">
+              {svcs.data ? (
+                <ol style={styles.ol}>
+                  {svcs.data.items.slice(0, 8).map((s: any, i: number) => (
+                    <li key={i} style={styles.li}>
+                      <span style={styles.count}>{s.count}</span>
+                      <span style={styles.msg}>{s.service ?? '(unbekannt)'}</span>
+                    </li>
+                  ))}
+                  {!svcs.data.items.length && <div style={{ color: '#64748b', fontSize: '0.85rem' }}>Keine Service-Daten</div>}
+                </ol>
+              ) : <Spinner />}
+            </Panel>
+          </div>
+        </>
+      )}
     </div>
   )
 }
