@@ -9,11 +9,9 @@ Freigabe: Produktowner bestaetigt alle Scope-Punkte am 2026-05-03
 
 Der MVP liefert einen lokal installierbaren Log Analyzer mit:
 
-- lokalem Backend (auf dem Rechner des Betreibers)
+- Backend auf lokalem oder dediziertem Ubuntu-Server (On-Premises)
 - API-basierter Architektur
-- flexibel einbindbarem Frontend (Standalone + Embed)
-- Einbindung in externe Website (hier: Wego) per Embed
-- oeffentlicher, abgesicherter Erreichbarkeit ueber DuckDNS
+- Standalone-Frontend (React/Vite SPA)
 - lokaler KI-Analyse ueber Ollama mit waehlbaren Modellen
 
 ## 2) Verbindliche Contracts (fixiert)
@@ -77,8 +75,7 @@ Regel:
 
 ### 3.7 Frontend
 
-- API-faehiges Frontend als eigene App
-- Embed-Widget fuer externe Website (Wego)
+- API-faehiges Frontend als eigene Standalone-App
 
 ## 4) Non-Goals fuer den MVP (out)
 
@@ -92,6 +89,8 @@ Diese Punkte werden bewusst nicht im MVP umgesetzt:
 - Mobile App
 - Vollautomatische Incident-Routing-Workflows
 - Hochverfuegbarkeits-Setup
+- Embed-Widget fuer externe Websites
+- WebGo / Shared-Hosting-Deployment
 
 ## 5) Architektur- und Betriebsgrenzen (MVP)
 
@@ -99,7 +98,7 @@ Diese Punkte werden bewusst nicht im MVP umgesetzt:
 - Eine primäre Datenbankinstanz (PostgreSQL)
 - Optional Redis erst ab Performance-Bedarf
 - Keine verpflichtende Queue-Infrastruktur im MVP
-- Deploymentziel: Wego-Frontend + DuckDNS + lokaler Backend-Host
+- Deploymentziel: dedizierter Ubuntu-Server (On-Premises oder Root-/VPS-Server)
 
 ## 6) Definition of Done fuer Punkt 1
 

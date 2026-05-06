@@ -1,0 +1,107 @@
+"""Integration tests for Incidents API (/api/v1/incidents)."""
+from __future__ import annotations
+
+import pytest
+from datetime import datetime, timezone
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domain.models import Incident
+
+
+pytestmark = pytest.mark.asyncio
+
+
+async def _seed_incident(db: AsyncSession, **kwargs) -> Incident:
+    now = datetime.now(timezone.utc)
+    inc = Incident(
+        title=kwargs.get("title", "Test incident"),
+        status=kwargs.get("status", "open"),
+        severity=kwargs.get("severity", "warning"),
+        first_seen=kwargs.get("first_seen", now),
+        last_seen=kwargs.get("last_seen", now),
+        event_count=kwargs.get("event_count", 3),
+        tags_json=[],
+    )
+    db.add(inc)
+    await db.flush()
+    await db.refresh(inc)
+    return inc
+
+
+class TestIncidentsAPI:
+    async def test_list_incidents_empty(self, client: AsyncClient):
+        resp = await client.get("/api/v1/incidents")
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []
+
+    async def test_list_incidents_returns_seeded(self, client: AsyncClient, db_session: AsyncSession):
+        await _seed_incident(db_session, title="OOM spike")
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/incidents")
+        items = resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["title"] == "OOM spike"
+
+    async def test_filter_by_status(self, client: AsyncClient, db_session: AsyncSession):
+        await _seed_incident(db_session, status="open")
+        await _seed_incident(db_session, status="resolved")
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/incidents?status=open")
+        items = resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["status"] == "open"
+
+    async def test_filter_by_invalid_status_returns_422(self, client: AsyncClient):
+        resp = await client.get("/api/v1/incidents?status=banana")
+        assert resp.status_code == 422
+
+    async def test_filter_by_severity(self, client: AsyncClient, db_session: AsyncSession):
+        await _seed_incident(db_session, severity="critical")
+        await _seed_incident(db_session, severity="warning")
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/incidents?severity=critical")
+        items = resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["severity"] == "critical"
+
+    async def test_patch_incident_status(self, client: AsyncClient, db_session: AsyncSession):
+        inc = await _seed_incident(db_session, status="open")
+        await db_session.commit()
+
+        resp = await client.patch(f"/api/v1/incidents/{inc.id}", json={"status": "investigating"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "investigating"
+
+    async def test_patch_to_resolved(self, client: AsyncClient, db_session: AsyncSession):
+        inc = await _seed_incident(db_session, status="investigating")
+        await db_session.commit()
+
+        resp = await client.patch(f"/api/v1/incidents/{inc.id}", json={"status": "resolved"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "resolved"
+
+    async def test_patch_to_invalid_status_returns_422(self, client: AsyncClient, db_session: AsyncSession):
+        inc = await _seed_incident(db_session)
+        await db_session.commit()
+
+        resp = await client.patch(f"/api/v1/incidents/{inc.id}", json={"status": "invalid_state"})
+        assert resp.status_code == 422
+
+    async def test_patch_nonexistent_returns_404(self, client: AsyncClient):
+        resp = await client.patch(
+            "/api/v1/incidents/00000000-0000-0000-0000-000000000000",
+            json={"status": "resolved"}
+        )
+        assert resp.status_code == 404
+
+    async def test_get_incident_by_id(self, client: AsyncClient, db_session: AsyncSession):
+        inc = await _seed_incident(db_session, title="disk full")
+        await db_session.commit()
+
+        resp = await client.get(f"/api/v1/incidents/{inc.id}")
+        assert resp.status_code == 200
+        assert resp.json()["title"] == "disk full"

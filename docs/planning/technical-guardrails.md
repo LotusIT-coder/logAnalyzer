@@ -115,14 +115,13 @@ Regel:
 - Integrationsfluss:
   - file log -> event -> incident -> ai analysis -> api response
 
-## 10) Deployment-Topologie (fixiert zum Scope)
+## 10) Deployment-Topologie (aktualisiert 2026-05-05)
 
-- WebGo hostet statischen Build (React/Vite dist/) und/oder Embed-Snippet per FTP/SFTP
-- WebGo = Shared Hosting (kein Python/Node-Server, nur statische Dateien + PHP)
-- DuckDNS zeigt auf Heimnetzanschluss
-- Reverse Proxy termininiert TLS
-- Proxy leitet auf lokales Backend
-- Backend spricht lokal mit DB und Ollama
+- Zielplattform: Ubuntu-Server (On-Premises oder dedizierter Root-/VPS-Server)
+- Reverse Proxy (Caddy) termininiert TLS und leitet auf lokales Backend
+- Frontend: statischer Vite-Build wird vom Caddy als SPA ausgeliefert
+- Backend, DB (PostgreSQL) und Ollama laufen auf demselben Server oder im lokalen Netz
+- Kein Shared-Hosting, kein WebGo, kein Embed-Widget benoetigt
 
 ## 11) Bestaetigte Stack-Entscheidungen (2026-05-03)
 
@@ -130,6 +129,6 @@ Regel:
 2. React + Vite + TypeScript fuer Frontend: bestaetigt.
 3. Caddy statt Nginx fuer MVP-Deploy: bestaetigt.
 4. Alembic + SQLAlchemy als DB-Stack: bestaetigt.
-5. WebGo Shared Hosting: nur statische Assets (HTML/CSS/JS) deployfaehig, kein Server-Python.
+5. Deployment-Ziel: Ubuntu On-Premises / dedizierter Server (aktualisiert 2026-05-05, WebGo entfaellt).
 
 Punkt 2 ist abgeschlossen.
