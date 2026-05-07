@@ -6,7 +6,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE source (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('file', 'syslog', 'journald', 'docker')),
+    type TEXT NOT NULL CHECK (type IN ('file', 'syslog', 'journald', 'docker', 'netflow', 'sflow', 'socket_observer', 'packet_capture')),
     config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -60,6 +60,55 @@ CREATE INDEX idx_event_service ON event (service);
 CREATE INDEX idx_event_host ON event (host);
 CREATE INDEX idx_event_fingerprint ON event (fingerprint);
 CREATE INDEX idx_event_fields_gin ON event USING GIN (fields_json);
+
+CREATE TABLE network_flow (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    source_id UUID NOT NULL REFERENCES source(id) ON DELETE CASCADE,
+    collector_node_id TEXT,
+    telemetry_type TEXT NOT NULL CHECK (telemetry_type IN ('netflow', 'ipfix', 'sflow', 'socket_observer')),
+    observed_at_start TIMESTAMPTZ NOT NULL,
+    observed_at_end TIMESTAMPTZ NOT NULL,
+    host_id TEXT,
+    exporter_addr INET,
+    observation_domain_id BIGINT,
+    src_ip INET NOT NULL,
+    dst_ip INET NOT NULL,
+    src_port INTEGER,
+    dst_port INTEGER,
+    protocol TEXT NOT NULL,
+    bytes BIGINT NOT NULL DEFAULT 0,
+    packets BIGINT NOT NULL DEFAULT 0,
+    connections INTEGER NOT NULL DEFAULT 1,
+    direction TEXT,
+    action TEXT,
+    app_hint TEXT,
+    process_name TEXT,
+    sample_factor NUMERIC(12,4) NOT NULL DEFAULT 1.0,
+    confidence NUMERIC(5,4) NOT NULL DEFAULT 1.0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_network_flow_observed_at_end ON network_flow (observed_at_end DESC);
+CREATE INDEX idx_network_flow_source_id_time ON network_flow (source_id, observed_at_end DESC);
+CREATE INDEX idx_network_flow_src_ip_time ON network_flow (src_ip, observed_at_end DESC);
+CREATE INDEX idx_network_flow_dst_ip_time ON network_flow (dst_ip, observed_at_end DESC);
+CREATE INDEX idx_network_flow_protocol_port ON network_flow (protocol, dst_port);
+CREATE INDEX idx_network_flow_host_process ON network_flow (host_id, process_name);
+
+CREATE TABLE network_ingest_batch (
+    batch_id UUID PRIMARY KEY,
+    collector_node_id TEXT NOT NULL,
+    source_id UUID NOT NULL REFERENCES source(id) ON DELETE CASCADE,
+    telemetry_type TEXT NOT NULL CHECK (telemetry_type IN ('netflow', 'ipfix', 'sflow', 'socket_observer')),
+    schema_version INTEGER NOT NULL,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    status TEXT NOT NULL CHECK (status IN ('accepted', 'rejected')),
+    item_count INTEGER NOT NULL DEFAULT 0,
+    error_text TEXT
+);
+
+CREATE INDEX idx_network_ingest_batch_source_received ON network_ingest_batch (source_id, received_at DESC);
+CREATE INDEX idx_network_ingest_batch_status_received ON network_ingest_batch (status, received_at DESC);
 
 CREATE TABLE rule (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -137,9 +186,22 @@ CREATE TABLE ai_analysis (
 CREATE INDEX idx_ai_analysis_target ON ai_analysis (target_type, target_ref);
 CREATE INDEX idx_ai_analysis_created_at ON ai_analysis (created_at DESC);
 
+CREATE TABLE user_account (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT,
+    role TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('viewer', 'analyst', 'operator', 'admin')),
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE api_token (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
+    user_id UUID REFERENCES user_account(id) ON DELETE SET NULL,
+    role TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('viewer', 'analyst', 'operator', 'admin')),
     scope_json JSONB NOT NULL DEFAULT '[]'::jsonb,
     token_hash TEXT NOT NULL UNIQUE,
     expires_at TIMESTAMPTZ,
@@ -195,5 +257,10 @@ EXECUTE FUNCTION set_updated_at();
 
 CREATE TRIGGER model_profile_set_updated_at
 BEFORE UPDATE ON model_profile
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER user_account_set_updated_at
+BEFORE UPDATE ON user_account
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();

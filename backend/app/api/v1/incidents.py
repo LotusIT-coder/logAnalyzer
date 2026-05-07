@@ -4,12 +4,13 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.source_filters import resolve_source_ids
 from app.auth import require_scope
 from app.dependencies import get_db
-from app.domain.models import Event, Incident, IncidentEvent, Source
+from app.domain.models import Event, Incident, IncidentEvent
 from app.schemas.domain import (
     IncidentListResponse,
     IncidentPatchRequest,
@@ -24,31 +25,6 @@ _write = Depends(require_scope("write"))
 _VALID_STATUSES = {"open", "investigating", "resolved", "false_positive"}
 
 
-def _parse_csv(value: Optional[str]) -> list[str]:
-    if not value:
-        return []
-    return [v.strip() for v in value.split(",") if v.strip()]
-
-
-async def _resolve_source_ids(
-    session: AsyncSession,
-    source_ids_csv: Optional[str],
-    source_paths_csv: Optional[str],
-) -> Optional[list[str]]:
-    ids = set(_parse_csv(source_ids_csv))
-    paths = _parse_csv(source_paths_csv)
-
-    if paths:
-        result = await session.execute(
-            select(Source.id).where(func.jsonb_extract_path_text(Source.config_json, "path").in_(paths))
-        )
-        ids.update(result.scalars().all())
-
-    if source_ids_csv or source_paths_csv:
-        return list(ids)
-    return None
-
-
 @router.get("", response_model=IncidentListResponse)
 async def list_incidents(
     _token=_read,
@@ -58,7 +34,7 @@ async def list_incidents(
     source_ids: Optional[str] = Query(None),
     source_paths: Optional[str] = Query(None),
 ):
-    resolved_source_ids = await _resolve_source_ids(session, source_ids, source_paths)
+    resolved_source_ids = await resolve_source_ids(session, source_ids_csv=source_ids, source_paths_csv=source_paths)
     if resolved_source_ids == []:
         return IncidentListResponse(items=[])
 

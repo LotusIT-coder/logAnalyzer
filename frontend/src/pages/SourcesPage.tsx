@@ -2,6 +2,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getSources, createSource, testSource, patchSource, deleteSource } from '../lib/requests'
 import { useEffect, useRef, useState } from 'react'
 import { getApiBase, getStoredToken } from '../lib/api'
+import { hasScope, useAuth } from '../ctx/AuthContext'
+import HelpTip from '../components/HelpTip'
 
 // ─── Edit Modal ───────────────────────────────────────────────────────────────
 function EditSourceModal({ source, onClose, onSaved }: { source: any; onClose: () => void; onSaved: () => void }) {
@@ -105,6 +107,7 @@ function LiveTailModal({ source, onClose }: { source: any; onClose: () => void }
             <span style={{ ...modal.dot, background: connected ? '#22c55e' : '#ef4444' }} />
             <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{connected ? 'verbunden' : 'getrennt'}</span>
             {paused && <span style={{ fontSize: '0.72rem', color: '#f97316', fontWeight: 700 }}>PAUSIERT</span>}
+            <HelpTip content="Pause stoppt nur den sichtbaren Stream, Leeren entfernt den bisherigen Puffer und der Filter wirkt nur auf die gerade angezeigten Zeilen." ariaLabel="Live-Tail erklaeren" />
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <input
@@ -155,6 +158,8 @@ function LiveTailModal({ source, onClose }: { source: any; onClose: () => void }
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function SourcesPage() {
   const qc = useQueryClient()
+  const { me } = useAuth()
+  const canWrite = hasScope(me, 'write')
   const { data, isLoading } = useQuery({ queryKey: ['sources'], queryFn: getSources })
   const [showNew, setShowNew] = useState(false)
   const [name, setName] = useState('')
@@ -197,26 +202,49 @@ export default function SourcesPage() {
       {editSource && <EditSourceModal source={editSource} onClose={() => setEditSource(null)} onSaved={() => qc.invalidateQueries({ queryKey: ['sources'] })} />}
 
       <div style={styles.header}>
-        <h2 style={styles.h2}>Log-Quellen</h2>
-        <button onClick={() => setShowNew(v => !v)} style={styles.addBtn}>
-          {showNew ? 'x Abbrechen' : '+ Neue Quelle'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <h2 style={styles.h2}>Log-Quellen</h2>
+          <HelpTip content="Hier verwaltest du die angebundenen Logdateien. Quellen koennen getestet, live beobachtet, bearbeitet und bei Bedarf entfernt werden." ariaLabel="Log-Quellen erklaeren" />
+        </div>
+        {canWrite && (
+          <button onClick={() => setShowNew(v => !v)} style={styles.addBtn}>
+            {showNew ? 'x Abbrechen' : '+ Neue Quelle'}
+          </button>
+        )}
       </div>
 
-      <div style={styles.liveHint}>
-        Live-Ansicht wird pro Quelle gestartet: bei der gewuenschten Quelle auf <strong>Live-Ansicht</strong> klicken.
+      <div style={{ ...styles.liveHint, display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <span>
+          Live-Ansicht wird pro Quelle gestartet: bei der gewuenschten Quelle auf <strong>Live-Ansicht</strong> klicken.
+        </span>
+        <HelpTip content="Die Live-Ansicht zeigt neu eintreffende Logzeilen der gewaehlten Datei in Echtzeit. Das ist besonders hilfreich nach Parser-, Ingestion- oder Quellenaenderungen." ariaLabel="Live-Ansicht der Quellen erklaeren" />
       </div>
 
-      {showNew && (
+      {!canWrite && (
+        <div style={styles.readOnlyNotice}>
+          Quellen koennen mit diesem Token nur gelesen und getestet werden.
+        </div>
+      )}
+
+      {canWrite && showNew && (
         <div style={styles.form}>
-          <h3 style={{ margin: '0 0 0.75rem 0', fontSize: '0.95rem', color: '#94a3b8' }}>Neue Quelle (Typ: file)</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <h3 style={{ margin: 0, fontSize: '0.95rem', color: '#94a3b8' }}>Neue Quelle (Typ: file)</h3>
+            <HelpTip content="Lege hier eine neue Datei-Quelle an. Der Name erscheint spaeter in Filtern und Listen, waehrend der Dateipfad auf die tatsaechliche Logdatei zeigt." ariaLabel="Neue Quelle erklaeren" />
+          </div>
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
             <div style={styles.field}>
-              <label style={styles.label}>Name</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                <label style={styles.label}>Name</label>
+                <HelpTip content="Verstaendlicher Anzeigename fuer die Quelle. Dieser Name wird spaeter in Filtern, Reports und Drilldowns verwendet." ariaLabel="Quellname erklaeren" />
+              </div>
               <input value={name} onChange={e => setName(e.target.value)} style={styles.input} placeholder="z.B. syslog" />
             </div>
             <div style={{ ...styles.field, flex: 2 }}>
-              <label style={styles.label}>Dateipfad</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                <label style={styles.label}>Dateipfad</label>
+                <HelpTip content="Absoluter Pfad zur Logdatei auf dem Host. Nur aus dieser Datei wird spaeter eingelesen oder live getailt." ariaLabel="Dateipfad erklaeren" />
+              </div>
               <input value={path} onChange={e => setPath(e.target.value)} style={styles.input} placeholder="/var/log/syslog" />
             </div>
           </div>
@@ -229,9 +257,14 @@ export default function SourcesPage() {
       {isLoading ? (
         <div style={{ color: '#64748b', padding: '2rem' }}>Lade...</div>
       ) : (
-        <div style={styles.list}>
-          {sources.map(src => (
-            <div key={src.id} style={styles.card}>
+        <>
+          <div style={styles.sectionHeader}>
+            <span style={styles.sectionTitle}>Quellenbestand</span>
+            <HelpTip content="Jede Karte zeigt Status, Typ, Dateipfad und die wichtigsten Aktionen der Quelle. Testen prueft die Erreichbarkeit, Live-Ansicht streamt neue Zeilen, Bearbeiten aendert Konfigurationen." ariaLabel="Quellenkarten erklaeren" />
+          </div>
+          <div style={styles.list}>
+            {sources.map(src => (
+              <div key={src.id} style={styles.card}>
               <div style={styles.cardTop}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <span style={styles.srcName}>{src.name}</span>
@@ -251,21 +284,23 @@ export default function SourcesPage() {
                   >
                     Live-Ansicht
                   </button>
-                  <button onClick={() => setEditSource(src)} style={styles.testBtn}>
-                    Bearbeiten
-                  </button>
+                  {canWrite && (
+                    <button onClick={() => setEditSource(src)} style={styles.testBtn}>
+                      Bearbeiten
+                    </button>
+                  )}
                   <button onClick={() => handleTest(src.id)} style={styles.testBtn}>
                     Testen
                   </button>
-                  {pendingDelete === src.id ? (
+                  {canWrite && pendingDelete === src.id ? (
                     <>
                       <span style={{ fontSize: '0.82rem', color: '#fca5a5', alignSelf: 'center' }}>Wirklich löschen?</span>
                       <button onClick={() => handleDelete(src.id)} style={{ ...styles.deleteBtn, background: '#7f1d1d' }}>Ja</button>
                       <button onClick={() => setPendingDelete(null)} style={styles.testBtn}>Abbrechen</button>
                     </>
-                  ) : (
+                  ) : canWrite ? (
                     <button onClick={() => setPendingDelete(src.id)} style={styles.deleteBtn}>Löschen</button>
-                  )}
+                  ) : null}
                 </div>
               </div>
               <div style={styles.path}>{src.config?.path ?? '-'}</div>
@@ -276,15 +311,16 @@ export default function SourcesPage() {
                     : `Fehler: ${testResults[src.id].error ?? testResults[src.id].details}`}
                 </div>
               )}
-            </div>
-          ))}
-          {!sources.length && (
-            <div style={styles.emptyState}>
-              <div style={{ marginBottom: '0.6rem' }}>Keine Quellen konfiguriert.</div>
-              <button onClick={() => setShowNew(true)} style={styles.addBtn}>+ Erste Quelle anlegen</button>
-            </div>
-          )}
-        </div>
+              </div>
+            ))}
+            {!sources.length && (
+              <div style={styles.emptyState}>
+                <div style={{ marginBottom: '0.6rem' }}>Keine Quellen konfiguriert.</div>
+                <button onClick={() => setShowNew(true)} style={styles.addBtn}>+ Erste Quelle anlegen</button>
+              </div>
+            )}
+          </div>
+        </>
       )}
     </div>
   )
@@ -295,11 +331,14 @@ const styles: Record<string, React.CSSProperties> = {
   h2: { margin: 0, fontSize: '1.5rem' },
   addBtn: { background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1rem', cursor: 'pointer', fontWeight: 600 },
   liveHint: { background: '#10223f', color: '#bfdbfe', border: '1px solid #1e3a8a', borderRadius: 8, padding: '0.65rem 0.9rem', marginBottom: '1rem', fontSize: '0.86rem' },
+  readOnlyNotice: { background: '#1f2937', color: '#cbd5e1', border: '1px solid #334155', borderRadius: 8, padding: '0.65rem 0.9rem', marginBottom: '1rem', fontSize: '0.86rem' },
   form: { background: '#1e293b', borderRadius: 10, padding: '1.25rem', border: '1px solid #334155', marginBottom: '1.5rem' },
   field: { display: 'flex', flexDirection: 'column', gap: '0.3rem', flex: 1 },
   label: { color: '#64748b', fontSize: '0.78rem' },
   input: { background: '#0f172a', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.65rem', fontSize: '0.9rem' },
   saveBtn: { marginTop: '0.75rem', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1.25rem', cursor: 'pointer', fontWeight: 600 },
+  sectionHeader: { display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.65rem' },
+  sectionTitle: { color: '#94a3b8', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' },
   list: { display: 'flex', flexDirection: 'column', gap: '0.75rem' },
   card: { background: '#1e293b', borderRadius: 10, padding: '1rem 1.25rem', border: '1px solid #334155' },
   cardTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.5rem' },

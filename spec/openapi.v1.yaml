@@ -18,6 +18,7 @@ tags:
   - name: System
   - name: Sources
   - name: Ingestion
+  - name: Network
   - name: Parser
   - name: Events
   - name: Rules
@@ -202,6 +203,21 @@ paths:
       parameters:
         - $ref: '#/components/parameters/FromParam'
         - $ref: '#/components/parameters/ToParam'
+        - name: source_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: source_ids
+          in: query
+          schema:
+            type: string
+          description: Comma-separated source UUIDs.
+        - name: source_paths
+          in: query
+          schema:
+            type: string
+          description: Comma-separated source paths resolved to source IDs.
         - name: severity
           in: query
           schema:
@@ -665,10 +681,461 @@ paths:
                     format: float
                 required: [total_events, error_events, error_rate]
 
+  /api/v1/metrics/network/map:
+    get:
+      tags: [Metrics]
+      summary: Aggregated network communication graph
+      parameters:
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+        - name: source_ids
+          in: query
+          schema:
+            type: string
+          description: Comma-separated source IDs to include
+        - name: source_paths
+          in: query
+          schema:
+            type: string
+          description: Comma-separated source paths to include
+      responses:
+        "200":
+          description: Network topology graph
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nodes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        label:
+                          type: string
+                        kind:
+                          type: string
+                        total_bytes:
+                          type: integer
+                        total_connections:
+                          type: integer
+                        risk_score:
+                          type: number
+                          format: float
+                      required: [id, label, kind, total_bytes, total_connections, risk_score]
+                  edges:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        source:
+                          type: string
+                        target:
+                          type: string
+                        app:
+                          type: string
+                          nullable: true
+                        protocol:
+                          type: string
+                          nullable: true
+                        dst_port:
+                          type: integer
+                          nullable: true
+                        bytes:
+                          type: integer
+                        connections:
+                          type: integer
+                        allowed_count:
+                          type: integer
+                        blocked_count:
+                          type: integer
+                        anomaly_score:
+                          type: number
+                          format: float
+                      required: [source, target, bytes, connections, allowed_count, blocked_count, anomaly_score]
+                required: [nodes, edges]
+
+  /api/v1/network/flows:
+    get:
+      tags: [Metrics]
+      summary: List normalized network flows
+      parameters:
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - name: source_ids
+          in: query
+          schema:
+            type: string
+        - name: source_paths
+          in: query
+          schema:
+            type: string
+        - name: src_ip
+          in: query
+          schema:
+            type: string
+        - name: dst_ip
+          in: query
+          schema:
+            type: string
+        - name: protocol
+          in: query
+          schema:
+            type: string
+        - name: dst_port
+          in: query
+          schema:
+            type: integer
+        - name: app_hint
+          in: query
+          schema:
+            type: string
+        - name: process_name
+          in: query
+          schema:
+            type: string
+        - name: direction
+          in: query
+          schema:
+            type: string
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: telemetry_type
+          in: query
+          schema:
+            type: string
+            enum: [netflow, ipfix, sflow, socket_observer]
+      responses:
+        "200":
+          description: Paged network flow list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkFlowListResponse'
+
+  /api/v1/network/flows/{id}:
+    get:
+      tags: [Metrics]
+      summary: Get normalized network flow details
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        "200":
+          description: Flow details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkFlow'
+
+  /api/v1/network/flows/summary:
+    get:
+      tags: [Metrics]
+      summary: Summary KPIs for network traffic
+      parameters:
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+        - name: source_ids
+          in: query
+          schema:
+            type: string
+        - name: source_paths
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Network summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkFlowSummary'
+
+  /api/v1/network/flows/map:
+    get:
+      tags: [Metrics]
+      summary: Aggregated network topology graph from normalized flows
+      parameters:
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+        - name: source_ids
+          in: query
+          schema:
+            type: string
+        - name: source_paths
+          in: query
+          schema:
+            type: string
+        - name: group_by
+          in: query
+          schema:
+            type: string
+            enum: [host, process, app, ip]
+            default: host
+      responses:
+        "200":
+          description: Network topology graph
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkMapResponse'
+
+  /api/v1/network/interfaces:
+    get:
+      tags: [Metrics]
+      summary: List latest interface measurements
+      parameters:
+        - name: host_id
+          in: query
+          schema:
+            type: string
+        - name: interface_name
+          in: query
+          schema:
+            type: string
+        - name: source_ids
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Interface measurements
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/InterfaceSampleView'
+                required: [items]
+
+  /api/v1/network/interfaces/timeseries:
+    get:
+      tags: [Metrics]
+      summary: Interface counters over time
+      parameters:
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+        - name: bucket
+          in: query
+          schema:
+            type: string
+            enum: [1m, 5m, 15m, 1h]
+            default: 5m
+        - name: host_id
+          in: query
+          schema:
+            type: string
+        - name: interface_name
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Interface timeseries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  points:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/InterfaceSampleView'
+                required: [points]
+
+  /api/v1/network/sockets:
+    get:
+      tags: [Metrics]
+      summary: List observed host sockets and process connections
+      parameters:
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+        - name: host_id
+          in: query
+          schema:
+            type: string
+        - name: pid
+          in: query
+          schema:
+            type: integer
+        - name: process_name
+          in: query
+          schema:
+            type: string
+        - name: remote_ip
+          in: query
+          schema:
+            type: string
+        - name: protocol
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Socket sample list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SocketSample'
+                required: [items]
+
+  /api/v1/network/exporters:
+    get:
+      tags: [Metrics]
+      summary: List NetFlow, IPFIX, and sFlow exporter health states
+      responses:
+        "200":
+          description: Exporter health list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/NetworkExporterState'
+                required: [items]
+
+  /api/v1/network/capture/jobs:
+    get:
+      tags: [Metrics]
+      summary: List packet capture jobs
+      responses:
+        "200":
+          description: Capture job list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CaptureJob'
+                required: [items]
+    post:
+      tags: [Metrics]
+      summary: Create packet capture job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptureJobCreateRequest'
+      responses:
+        "202":
+          description: Capture job accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureJob'
+
+  /api/v1/network/capture/jobs/{id}:
+    get:
+      tags: [Metrics]
+      summary: Get packet capture job details
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        "200":
+          description: Capture job details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureJob'
+
+  /api/v1/network/capture/jobs/{id}/stop:
+    post:
+      tags: [Metrics]
+      summary: Stop a running packet capture job
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        "202":
+          description: Capture stop accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureJob'
+
+  /api/v1/network/capture/artifacts/{id}:
+    get:
+      tags: [Metrics]
+      summary: Get packet capture artifact metadata
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        "200":
+          description: Capture artifact metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureArtifact'
+
+  /api/v1/network/capture/artifacts/{id}/download:
+    get:
+      tags: [Metrics]
+      summary: Download packet capture artifact
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        "200":
+          description: Binary capture artifact stream
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  /api/v1/network/ingest/flows:
+    post:
+      tags: [Network]
+      summary: Ingest normalized flow batches from collectors or host agents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NetworkFlowIngestBatch'
+      responses:
+        "200":
+          description: Batch accepted or recognized as duplicate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkFlowIngestResponse'
+
   /api/v1/auth/login:
     post:
       tags: [Auth]
-      summary: Exchange credentials for access token (optional local login mode)
+      summary: Exchange user credentials for an API token
       security: []
       requestBody:
         required: true
@@ -677,11 +1144,12 @@ paths:
             schema:
               type: object
               properties:
-                username:
+                email:
                   type: string
+                  format: email
                 password:
                   type: string
-              required: [username, password]
+              required: [email, password]
       responses:
         "200":
           description: Access token
@@ -690,14 +1158,12 @@ paths:
               schema:
                 type: object
                 properties:
-                  access_token:
+                  token:
                     type: string
-                  token_type:
+                  token_id:
                     type: string
-                    enum: [Bearer]
-                  expires_in:
-                    type: integer
-                required: [access_token, token_type]
+                    format: uuid
+                required: [token, token_id]
 
   /api/v1/auth/token:
     post:
@@ -712,6 +1178,14 @@ paths:
               properties:
                 name:
                   type: string
+                role:
+                  type: string
+                  enum: [viewer, analyst, operator, admin]
+                  default: viewer
+                user_id:
+                  type: string
+                  format: uuid
+                  nullable: true
                 scopes:
                   type: array
                   items:
@@ -719,7 +1193,7 @@ paths:
                 expires_at:
                   type: string
                   format: date-time
-              required: [name, scopes]
+              required: [name]
       responses:
         "201":
           description: Created token (shown once)
@@ -735,6 +1209,193 @@ paths:
                     format: uuid
                 required: [token, token_id]
 
+  /api/v1/auth/tokens:
+    get:
+      tags: [Auth]
+      summary: List issued API tokens (admin)
+      responses:
+        "200":
+          description: Token list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        name:
+                          type: string
+                        user_id:
+                          type: string
+                          format: uuid
+                          nullable: true
+                        role:
+                          type: string
+                          enum: [viewer, analyst, operator, admin]
+                        scopes:
+                          type: array
+                          items:
+                            type: string
+                        expires_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        last_used_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        created_at:
+                          type: string
+                          format: date-time
+                        revoked_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                      required: [id, name, role, scopes, created_at]
+                required: [items]
+
+  /api/v1/auth/tokens/{id}/revoke:
+    post:
+      tags: [Auth]
+      summary: Revoke API token (admin)
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        "200":
+          description: Revoked token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  name:
+                    type: string
+                  user_id:
+                    type: string
+                    format: uuid
+                    nullable: true
+                  role:
+                    type: string
+                    enum: [viewer, analyst, operator, admin]
+                  scopes:
+                    type: array
+                    items:
+                      type: string
+                  expires_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  last_used_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  created_at:
+                    type: string
+                    format: date-time
+                  revoked_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                required: [id, name, role, scopes, created_at]
+
+  /api/v1/auth/users:
+    get:
+      tags: [Auth]
+      summary: List users (admin)
+      responses:
+        "200":
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        name:
+                          type: string
+                        email:
+                          type: string
+                        role:
+                          type: string
+                            password:
+                              type: string
+                          enum: [viewer, analyst, operator, admin]
+                        enabled:
+                          type: boolean
+                        created_at:
+                          type: string
+                          format: date-time
+                          required: [name, email, password]
+                          type: string
+                          format: date-time
+                      required: [id, name, email, role, enabled, created_at, updated_at]
+                required: [items]
+    post:
+      tags: [Auth]
+      summary: Create user (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                email:
+                  type: string
+                role:
+                  type: string
+                  enum: [viewer, analyst, operator, admin]
+                  default: viewer
+                enabled:
+                  type: boolean
+                  default: true
+              required: [name, email]
+      responses:
+        "201":
+          description: Created user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  name:
+                    type: string
+                  email:
+                    type: string
+                  role:
+                    type: string
+                    enum: [viewer, analyst, operator, admin]
+                  enabled:
+                    type: boolean
+                  created_at:
+                    type: string
+                    format: date-time
+                  updated_at:
+                    type: string
+                    format: date-time
+                required: [id, name, email, role, enabled, created_at, updated_at]
+
   /api/v1/auth/me:
     get:
       tags: [Auth]
@@ -749,11 +1410,18 @@ paths:
                 properties:
                   subject:
                     type: string
+                  user_id:
+                    type: string
+                    format: uuid
+                    nullable: true
+                  role:
+                    type: string
+                    enum: [viewer, analyst, operator, admin]
                   scopes:
                     type: array
                     items:
                       type: string
-                required: [subject, scopes]
+                required: [subject, role, scopes]
 
   /api/v1/audit:
     get:
@@ -825,7 +1493,7 @@ components:
           type: string
         type:
           type: string
-          enum: [file, syslog, journald, docker]
+          enum: [file, syslog, journald, docker, netflow, sflow, socket_observer, packet_capture]
         config:
           type: object
           additionalProperties: true
@@ -846,7 +1514,7 @@ components:
           type: string
         type:
           type: string
-          enum: [file, syslog, journald, docker]
+          enum: [file, syslog, journald, docker, netflow, sflow, socket_observer, packet_capture]
         config:
           type: object
           additionalProperties: true
@@ -860,11 +1528,488 @@ components:
       properties:
         name:
           type: string
+        type:
+          type: string
+          enum: [file, syslog, journald, docker, netflow, sflow, socket_observer, packet_capture]
         config:
           type: object
           additionalProperties: true
         enabled:
           type: boolean
+
+    NetworkFlow:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        source_id:
+          type: string
+          format: uuid
+        telemetry_type:
+          type: string
+          enum: [netflow, ipfix, sflow, socket_observer]
+        observed_at_start:
+          type: string
+          format: date-time
+        observed_at_end:
+          type: string
+          format: date-time
+        host_id:
+          type: string
+          nullable: true
+        exporter_addr:
+          type: string
+          nullable: true
+        src_ip:
+          type: string
+        dst_ip:
+          type: string
+        src_port:
+          type: integer
+          nullable: true
+        dst_port:
+          type: integer
+          nullable: true
+        protocol:
+          type: string
+        bytes:
+          type: integer
+        packets:
+          type: integer
+        connections:
+          type: integer
+        direction:
+          type: string
+          nullable: true
+        app_hint:
+          type: string
+          nullable: true
+        process_name:
+          type: string
+          nullable: true
+        action:
+          type: string
+          nullable: true
+        sample_factor:
+          type: number
+          format: float
+        confidence:
+          type: number
+          format: float
+        created_at:
+          type: string
+          format: date-time
+      required: [id, source_id, telemetry_type, observed_at_start, observed_at_end, src_ip, dst_ip, protocol, bytes, packets, connections, sample_factor, confidence, created_at]
+
+    NetworkFlowListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/NetworkFlow'
+        next_cursor:
+          type: string
+          nullable: true
+      required: [items]
+
+    NetworkFlowSummary:
+      type: object
+      properties:
+        total_flows:
+          type: integer
+        total_bytes:
+          type: integer
+        total_packets:
+          type: integer
+        total_connections:
+          type: integer
+        unique_sources:
+          type: integer
+        unique_destinations:
+          type: integer
+        blocked_flows:
+          type: integer
+        sampled_flows:
+          type: integer
+        new_destination_count:
+          type: integer
+      required: [total_flows, total_bytes, total_packets, total_connections, unique_sources, unique_destinations, blocked_flows, sampled_flows, new_destination_count]
+
+    NetworkFlowIngestItem:
+      type: object
+      properties:
+        item_id:
+          type: string
+          format: uuid
+        observed_at_start:
+          type: string
+          format: date-time
+        observed_at_end:
+          type: string
+          format: date-time
+        host_id:
+          type: string
+          nullable: true
+        exporter_addr:
+          type: string
+          nullable: true
+        observation_domain_id:
+          type: integer
+          nullable: true
+        src_ip:
+          type: string
+        dst_ip:
+          type: string
+        src_port:
+          type: integer
+          nullable: true
+        dst_port:
+          type: integer
+          nullable: true
+        protocol:
+          type: string
+        bytes:
+          type: integer
+          minimum: 0
+        packets:
+          type: integer
+          minimum: 0
+        connections:
+          type: integer
+          minimum: 0
+        direction:
+          type: string
+          nullable: true
+        action:
+          type: string
+          nullable: true
+        app_hint:
+          type: string
+          nullable: true
+        process_name:
+          type: string
+          nullable: true
+        sample_factor:
+          type: number
+          format: float
+          minimum: 0
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+      required:
+        - item_id
+        - observed_at_start
+        - observed_at_end
+        - src_ip
+        - dst_ip
+        - protocol
+        - bytes
+        - packets
+        - connections
+        - sample_factor
+        - confidence
+
+    NetworkFlowIngestBatch:
+      type: object
+      properties:
+        batch_id:
+          type: string
+          format: uuid
+        collector_node_id:
+          type: string
+        source_id:
+          type: string
+          format: uuid
+        telemetry_type:
+          type: string
+          enum: [netflow, ipfix, sflow, socket_observer]
+        schema_version:
+          type: integer
+          enum: [1]
+        created_at:
+          type: string
+          format: date-time
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/NetworkFlowIngestItem'
+      required: [batch_id, collector_node_id, source_id, telemetry_type, schema_version, created_at, items]
+
+    NetworkFlowIngestResponse:
+      type: object
+      properties:
+        batch_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [accepted, duplicate, rejected]
+        accepted_count:
+          type: integer
+          minimum: 0
+        rejected_count:
+          type: integer
+          minimum: 0
+        duplicate:
+          type: boolean
+        errors:
+          type: array
+          items:
+            type: string
+      required: [batch_id, status, accepted_count, rejected_count, duplicate, errors]
+
+    NetworkMapNode:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        kind:
+          type: string
+          enum: [host, process, app, subnet, external]
+        total_bytes:
+          type: integer
+        total_connections:
+          type: integer
+        risk_score:
+          type: number
+          format: float
+      required: [id, label, kind, total_bytes, total_connections, risk_score]
+
+    NetworkMapEdge:
+      type: object
+      properties:
+        source:
+          type: string
+        target:
+          type: string
+        app_hint:
+          type: string
+          nullable: true
+        protocol:
+          type: string
+          nullable: true
+        dst_port:
+          type: integer
+          nullable: true
+        bytes:
+          type: integer
+        packets:
+          type: integer
+        connections:
+          type: integer
+        blocked_count:
+          type: integer
+        anomaly_score:
+          type: number
+          format: float
+      required: [source, target, bytes, packets, connections, blocked_count, anomaly_score]
+
+    NetworkMapResponse:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/NetworkMapNode'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/NetworkMapEdge'
+      required: [nodes, edges]
+
+    InterfaceSampleView:
+      type: object
+      properties:
+        host_id:
+          type: string
+        interface_name:
+          type: string
+        ts:
+          type: string
+          format: date-time
+        rx_bytes:
+          type: integer
+        tx_bytes:
+          type: integer
+        rx_drops:
+          type: integer
+        tx_drops:
+          type: integer
+        rx_errors:
+          type: integer
+        tx_errors:
+          type: integer
+        oper_state:
+          type: string
+      required: [host_id, interface_name, ts, rx_bytes, tx_bytes, rx_drops, tx_drops, rx_errors, tx_errors, oper_state]
+
+    SocketSample:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        host_id:
+          type: string
+        ts:
+          type: string
+          format: date-time
+        pid:
+          type: integer
+          nullable: true
+        process_name:
+          type: string
+          nullable: true
+        executable:
+          type: string
+          nullable: true
+        local_ip:
+          type: string
+        local_port:
+          type: integer
+          nullable: true
+        remote_ip:
+          type: string
+        remote_port:
+          type: integer
+          nullable: true
+        protocol:
+          type: string
+        state:
+          type: string
+        bytes_in:
+          type: integer
+          nullable: true
+        bytes_out:
+          type: integer
+          nullable: true
+      required: [id, host_id, ts, local_ip, remote_ip, protocol, state]
+
+    NetworkExporterState:
+      type: object
+      properties:
+        source_id:
+          type: string
+          format: uuid
+        collector_node_id:
+          type: string
+        telemetry_type:
+          type: string
+          enum: [netflow, ipfix, sflow]
+        exporter_addr:
+          type: string
+        observation_domain_id:
+          type: integer
+          nullable: true
+        last_seen_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+        template_ok:
+          type: boolean
+        sequence_gap_count:
+          type: integer
+        decode_error_count:
+          type: integer
+        sample_factor:
+          type: number
+          format: float
+          nullable: true
+      required: [source_id, collector_node_id, telemetry_type, exporter_addr, last_seen_at, status, template_ok, sequence_gap_count, decode_error_count]
+
+    CaptureJobCreateRequest:
+      type: object
+      properties:
+        source_id:
+          type: string
+          format: uuid
+        target_host:
+          type: string
+        interface_name:
+          type: string
+        bpf_filter:
+          type: string
+        snaplen:
+          type: integer
+          minimum: 64
+          maximum: 65535
+        duration_seconds:
+          type: integer
+          minimum: 1
+        retention_hours:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+      required: [source_id, target_host, interface_name, bpf_filter, snaplen, duration_seconds, retention_hours, reason]
+
+    CaptureJob:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        source_id:
+          type: string
+          format: uuid
+        target_host:
+          type: string
+        interface_name:
+          type: string
+        bpf_filter:
+          type: string
+        snaplen:
+          type: integer
+        duration_seconds:
+          type: integer
+        status:
+          type: string
+          enum: [pending, running, stopping, completed, failed, expired]
+        retention_until:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+      required: [id, source_id, target_host, interface_name, bpf_filter, snaplen, duration_seconds, status, retention_until]
+
+    CaptureArtifact:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        storage_backend:
+          type: string
+        object_path:
+          type: string
+        sha256:
+          type: string
+        packet_count:
+          type: integer
+        byte_size:
+          type: integer
+        encrypted:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+      required: [id, job_id, storage_backend, object_path, sha256, packet_count, byte_size, encrypted, created_at]
 
     Event:
       type: object

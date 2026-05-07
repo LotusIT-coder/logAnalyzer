@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { getEvents, getSources } from '../lib/requests'
 import dayjs from 'dayjs'
 import { getApiBase, getStoredToken } from '../lib/api'
+import HelpTip from '../components/HelpTip'
 
 const SEV_COLOR: Record<string, string> = {
   critical: '#ef4444',
@@ -13,6 +15,44 @@ const SEV_COLOR: Record<string, string> = {
 }
 
 const SEVERITIES = ['debug', 'info', 'warning', 'error', 'critical']
+
+function formatDateRange(fromTime: string, toTime: string) {
+  if (!fromTime && !toTime) return null
+  const fromLabel = fromTime ? dayjs(fromTime).format('DD.MM.YYYY HH:mm') : 'offen'
+  const toLabel = toTime ? dayjs(toTime).format('DD.MM.YYYY HH:mm') : 'jetzt'
+  return `${fromLabel} - ${toLabel}`
+}
+
+function buildContextItems(params: {
+  sourceId: string
+  sourceIdsCsv: string
+  sourcePathsCsv: string
+  fromTime: string
+  toTime: string
+  severity: string
+  host: string
+  service: string
+  search: string
+  sources: any[]
+}) {
+  const items: string[] = []
+  const source = params.sourceId ? params.sources.find((entry: any) => entry.id === params.sourceId) : null
+  const sourceIds = params.sourceIdsCsv ? params.sourceIdsCsv.split(',').map(value => value.trim()).filter(Boolean) : []
+  const sourcePaths = params.sourcePathsCsv ? params.sourcePathsCsv.split(',').map(value => value.trim()).filter(Boolean) : []
+  const rangeLabel = formatDateRange(params.fromTime, params.toTime)
+
+  if (source) items.push(`Quelle: ${source.name}`)
+  else if (params.sourceId) items.push(`Quelle: ${params.sourceId}`)
+  if (sourceIds.length) items.push(`Quellen: ${sourceIds.length}`)
+  if (sourcePaths.length) items.push(`Pfade: ${sourcePaths.length}`)
+  if (rangeLabel) items.push(`Zeitraum: ${rangeLabel}`)
+  if (params.severity) items.push(`Severity: ${params.severity}`)
+  if (params.host) items.push(`Host: ${params.host}`)
+  if (params.service) items.push(`Service: ${params.service}`)
+  if (params.search) items.push(`Suche: ${params.search}`)
+
+  return items
+}
 
 function LiveTailModal({ source, onClose }: { source: any; onClose: () => void }) {
   const [lines, setLines] = useState<string[]>([])
@@ -107,8 +147,13 @@ function LiveTailModal({ source, onClose }: { source: any; onClose: () => void }
 }
 
 export default function EventsPage() {
+  const [searchParams] = useSearchParams()
   const [cursor, setCursor] = useState<string | undefined>()
   const [sourceId, setSourceId] = useState('')
+  const [sourceIdsCsv, setSourceIdsCsv] = useState('')
+  const [sourcePathsCsv, setSourcePathsCsv] = useState('')
+  const [fromTime, setFromTime] = useState('')
+  const [toTime, setToTime] = useState('')
   const [severity, setSeverity] = useState('')
   const [host, setHost] = useState('')
   const [service, setService] = useState('')
@@ -122,12 +167,31 @@ export default function EventsPage() {
   const sources: any[] = Array.isArray(sourcesRaw) ? sourcesRaw : []
   const selectedSource = sourceId ? sources.find((s: any) => s.id === sourceId) ?? null : null
 
+  useEffect(() => {
+    setCursor(undefined)
+    setSourceId(searchParams.get('source_id') ?? '')
+    setSourceIdsCsv(searchParams.get('source_ids') ?? '')
+    setSourcePathsCsv(searchParams.get('source_paths') ?? '')
+    setFromTime(searchParams.get('from') ?? '')
+    setToTime(searchParams.get('to') ?? '')
+    setSeverity(searchParams.get('severity') ?? '')
+    setHost(searchParams.get('host') ?? '')
+    setService(searchParams.get('service') ?? '')
+    const query = searchParams.get('q') ?? ''
+    setSearch(query)
+    setSearchInput(query)
+  }, [searchParams])
+
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['events', cursor, sourceId, severity, host, service, search, refreshTick],
+    queryKey: ['events', cursor, sourceId, sourceIdsCsv, sourcePathsCsv, fromTime, toTime, severity, host, service, search, refreshTick],
     queryFn: () => getEvents({
       limit: 50,
       cursor: cursor || undefined,
+      from: fromTime || undefined,
+      to: toTime || undefined,
       source_id: sourceId || undefined,
+      source_ids: sourceIdsCsv || undefined,
+      source_paths: sourcePathsCsv || undefined,
       severity: severity || undefined,
       host: host || undefined,
       service: service || undefined,
@@ -143,6 +207,10 @@ export default function EventsPage() {
   function resetFilters() {
     setCursor(undefined)
     setSourceId('')
+    setSourceIdsCsv('')
+    setSourcePathsCsv('')
+    setFromTime('')
+    setToTime('')
     setSeverity('')
     setHost('')
     setService('')
@@ -160,26 +228,42 @@ export default function EventsPage() {
     setRefreshTick(v => v + 1)
   }
 
-  const hasFilters = sourceId || severity || host || service || search
+  const hasFilters = sourceId || sourceIdsCsv || sourcePathsCsv || fromTime || toTime || severity || host || service || search
+  const contextItems = buildContextItems({
+    sourceId,
+    sourceIdsCsv,
+    sourcePathsCsv,
+    fromTime,
+    toTime,
+    severity,
+    host,
+    service,
+    search,
+    sources,
+  })
 
   return (
     <div>
       {tailSource && <LiveTailModal source={tailSource} onClose={() => setTailSource(null)} />}
 
       <div style={styles.header}>
-        <h2 style={styles.h2}>Events</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <h2 style={styles.h2}>Events</h2>
+          <HelpTip content="Die Eventliste zeigt Rohereignisse mit allen aktiven Filtern. Ein Klick auf eine Zeile oeffnet die Detailansicht des jeweiligen Events." ariaLabel="Events erklaeren" />
+        </div>
         <button onClick={refreshLatest} disabled={isFetching} style={styles.refBtn}>
           {isFetching ? 'Aktualisiere...' : 'Aktualisieren'}
         </button>
       </div>
 
       <div style={styles.filters}>
-        <select value={sourceId} onChange={e => { setSourceId(e.target.value); setCursor(undefined) }} style={{ ...styles.select, minWidth: 220 }}>
+        <select value={sourceId} onChange={e => { setSourceId(e.target.value); setSourceIdsCsv(''); setSourcePathsCsv(''); setCursor(undefined) }} style={{ ...styles.select, minWidth: 220 }}>
           <option value="">Alle Quellen</option>
           {sources.map((s: any) => (
             <option key={s.id} value={s.id}>{s.name}{s.config?.path ? ` (${s.config.path})` : ''}</option>
           ))}
         </select>
+        <HelpTip content="Filtert die Eventliste auf genau eine konfigurierte Quelle. Die Live-Ansicht ist nur aktiv, wenn hier eine Datei-Quelle ausgewaehlt wurde." ariaLabel="Quellenfilter erklaeren" />
         <button
           onClick={() => selectedSource && setTailSource(selectedSource)}
           disabled={!selectedSource || selectedSource.type !== 'file'}
@@ -188,11 +272,13 @@ export default function EventsPage() {
         >
           Live-Ansicht
         </button>
+        <HelpTip content="Die Live-Ansicht streamt neue Zeilen der aktuell gewaehlten Datei-Quelle direkt in ein Tail-Fenster. Damit pruefst du schnell, ob gerade frische Daten ankommen." ariaLabel="Live-Ansicht erklaeren" />
 
         <select value={severity} onChange={e => { setSeverity(e.target.value); setCursor(undefined) }} style={styles.select}>
           <option value="">Alle Schweregrade</option>
           {SEVERITIES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        <HelpTip content="Schweregrade helfen beim Priorisieren. Fehler und kritische Events deuten auf unmittelbaren Handlungsbedarf hin, waehrend Info- und Debug-Events meist Kontext liefern." ariaLabel="Severity-Filter erklaeren" />
         <input
           value={host}
           onChange={e => setHost(e.target.value)}
@@ -214,18 +300,30 @@ export default function EventsPage() {
           placeholder="Nachricht suchen..."
           style={styles.search}
         />
+        <HelpTip content="Die Textsuche durchsucht die Eventnachricht. Host- und Service-Felder grenzen dagegen strukturierte Metadaten ein." ariaLabel="Textsuche erklaeren" />
         <button onClick={applySearch} style={styles.btn}>Suchen</button>
         {hasFilters && (
           <button onClick={resetFilters} style={styles.resetBtn}>Filter zurücksetzen</button>
         )}
       </div>
 
+      {contextItems.length > 0 && (
+        <div aria-label="Aktiver Kontext" style={styles.contextBar}>
+          <span style={styles.contextLabel}>Aktiver Kontext</span>
+          <HelpTip content="Diese Chips zeigen, welche Quelle, Zeit- oder Inhaltsfilter aktuell aktiv sind. So erkennst du sofort, warum die Eventliste gerade so eingeschraenkt ist." ariaLabel="Aktiven Kontext erklaeren" />
+          {contextItems.map(item => (
+            <span key={item} style={styles.contextChip}>{item}</span>
+          ))}
+        </div>
+      )}
+
       {isLoading ? (
         <div style={{ color: '#64748b', padding: '2rem' }}>Lade...</div>
       ) : (
         <>
-          <div style={{ fontSize: '0.78rem', color: '#475569', marginBottom: '0.5rem' }}>
-            {data?.items.length ?? 0} Einträge (neueste zuerst)
+          <div style={styles.resultsMeta}>
+            <span>{data?.items.length ?? 0} Einträge (neueste zuerst)</span>
+            <HelpTip content="Die Liste ist standardmaessig absteigend nach Zeit sortiert. Ein Klick auf eine Zeile klappt die vollstaendigen Felder und die Originalnachricht aus." ariaLabel="Eventliste erklaeren" />
           </div>
           <div style={styles.table}>
             <div style={styles.theader}>
@@ -290,6 +388,9 @@ export default function EventsPage() {
             {data?.next_cursor && (
               <button onClick={() => setCursor(data.next_cursor)} style={styles.btn}>Aeltere laden</button>
             )}
+            {(cursor || data?.next_cursor) && (
+              <HelpTip content="'Neueste' springt an den Anfang der Liste zurueck. 'Aeltere laden' laedt die naechste Seite, ohne den aktuellen Filterkontext zu verlieren." ariaLabel="Pagination erklaeren" />
+            )}
           </div>
         </>
       )}
@@ -304,6 +405,13 @@ const styles: Record<string, React.CSSProperties> = {
   liveBtn: { background: '#1e3a5f', border: '1px solid #1d4ed8', color: '#93c5fd', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap' },
   liveBtnDisabled: { background: '#0f172a', border: '1px solid #334155', color: '#64748b', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'not-allowed', fontWeight: 700, whiteSpace: 'nowrap' },
   filters: { display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center' },
+  contextBar: {
+    display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '1rem',
+    background: '#111827', border: '1px solid #1f2937', borderRadius: 10, padding: '0.75rem 0.9rem',
+  },
+  contextLabel: { color: '#94a3b8', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.08em' },
+  contextChip: { background: '#0f2d46', color: '#bae6fd', borderRadius: 999, padding: '0.2rem 0.65rem', fontSize: '0.82rem' },
+  resultsMeta: { display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', color: '#475569', marginBottom: '0.5rem' },
   select: { background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.6rem' },
   search: { flex: 1, minWidth: 120, background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.75rem' },
   btn: { background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', whiteSpace: 'nowrap' },

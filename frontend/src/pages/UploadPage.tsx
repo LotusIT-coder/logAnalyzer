@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
-import { getAIModels } from '../lib/requests'
-import { api } from '../lib/api'
+import { analyzeUpload, getAIModels, uploadImport } from '../lib/requests'
 import { useRef, useState } from 'react'
+import { hasScope, useAuth } from '../ctx/AuthContext'
 
 interface AnalysisResult {
   lines_parsed: number
@@ -10,7 +10,17 @@ interface AnalysisResult {
   analysis: string
 }
 
+interface ImportResult {
+  source_id: string
+  source_name: string
+  stored_path: string
+  lines_ingested: number
+  events_created: number
+}
+
 export default function UploadPage() {
+  const { me } = useAuth()
+  const canWrite = hasScope(me, 'write')
   const { data: models = [] } = useQuery({ queryKey: ['ai-models'], queryFn: getAIModels })
 
   const [model, setModel] = useState('')
@@ -18,26 +28,37 @@ export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<AnalysisResult | null>(null)
+  const [importResult, setImportResult] = useState<ImportResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const effectiveModel = model || models[0]?.name || ''
 
-  async function handleUpload() {
+  async function handleAnalyze() {
     if (!file) return
     setLoading(true)
     setResult(null)
+    setImportResult(null)
     setError(null)
     try {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('model', effectiveModel)
-      if (customPrompt.trim()) form.append('custom_prompt', customPrompt.trim())
+      const data = await analyzeUpload(file, effectiveModel, customPrompt.trim() || undefined)
+      setResult(data)
+    } catch (e: any) {
+      setError(e?.response?.data?.detail ?? e?.message ?? 'Unbekannter Fehler')
+    } finally {
+      setLoading(false)
+    }
+  }
 
-      const r = await api.post('/upload/analyze', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      })
-      setResult(r.data)
+  async function handleImport() {
+    if (!file || !canWrite) return
+    setLoading(true)
+    setResult(null)
+    setImportResult(null)
+    setError(null)
+    try {
+      const data = await uploadImport(file, undefined)
+      setImportResult(data)
     } catch (e: any) {
       setError(e?.response?.data?.detail ?? e?.message ?? 'Unbekannter Fehler')
     } finally {
@@ -52,6 +73,12 @@ export default function UploadPage() {
         Lade eine beliebige Log-Datei hoch – sie wird geparst und von Ollama analysiert.
         Bis zu 500 Zeilen werden ausgewertet (max. 10 MB).
       </p>
+
+      {!canWrite && (
+        <div style={styles.readOnlyNotice}>
+          Analyse-only: Dieses Token darf Uploads pruefen, aber nicht importieren.
+        </div>
+      )}
 
       <div style={styles.card}>
         <div style={styles.row}>
@@ -100,13 +127,24 @@ export default function UploadPage() {
           />
         </div>
 
-        <button
-          onClick={handleUpload}
-          disabled={!file || loading || !effectiveModel}
-          style={styles.analyzeBtn}
-        >
-          {loading ? '⏳ Analysiere…' : '🔍 Analysieren'}
-        </button>
+        <div style={styles.actionRow}>
+          <button
+            onClick={handleAnalyze}
+            disabled={!file || loading || !effectiveModel}
+            style={styles.analyzeBtn}
+          >
+            {loading ? '⏳ Analysiere…' : '🔍 Analysieren'}
+          </button>
+          {canWrite && (
+            <button
+              onClick={handleImport}
+              disabled={!file || loading}
+              style={styles.importBtn}
+            >
+              {loading ? '⏳ Importiere…' : 'In Quelle importieren'}
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -124,6 +162,18 @@ export default function UploadPage() {
           <pre style={styles.resultText}>{result.analysis}</pre>
         </div>
       )}
+
+      {importResult && (
+        <div style={styles.resultCard}>
+          <h3 style={styles.resultTitle}>Import abgeschlossen</h3>
+          <div style={styles.resultMeta}>
+            <span>Quelle: {importResult.source_name}</span>
+            <span>{importResult.lines_ingested} Zeilen ingestiert</span>
+            <span>{importResult.events_created} Events erstellt</span>
+          </div>
+          <div style={styles.fileName}>{importResult.stored_path}</div>
+        </div>
+      )}
     </div>
   )
 }
@@ -132,6 +182,10 @@ const styles: Record<string, React.CSSProperties> = {
   root: { maxWidth: 900 },
   h2: { margin: '0 0 0.5rem 0', fontSize: '1.5rem' },
   sub: { color: '#64748b', fontSize: '0.88rem', marginBottom: '1.5rem' },
+  readOnlyNotice: {
+    background: '#1f2937', color: '#cbd5e1', borderRadius: 8,
+    padding: '0.75rem 1rem', marginBottom: '1rem', border: '1px solid #334155', fontSize: '0.87rem',
+  },
   card: {
     background: '#1e293b', borderRadius: 10, padding: '1.5rem',
     border: '1px solid #334155', marginBottom: '1.25rem',
@@ -154,8 +208,14 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#0f172a', color: '#f1f5f9', border: '1px solid #334155',
     borderRadius: 6, padding: '0.5rem 0.75rem', resize: 'vertical', fontSize: '0.88rem',
   },
+  actionRow: { display: 'flex', gap: '0.75rem', flexWrap: 'wrap' },
   analyzeBtn: {
     background: '#3b82f6', color: '#fff', border: 'none',
+    borderRadius: 8, padding: '0.65rem 1.5rem', cursor: 'pointer',
+    fontWeight: 700, fontSize: '0.95rem', alignSelf: 'flex-start',
+  },
+  importBtn: {
+    background: '#16a34a', color: '#fff', border: 'none',
     borderRadius: 8, padding: '0.65rem 1.5rem', cursor: 'pointer',
     fontWeight: 700, fontSize: '0.95rem', alignSelf: 'flex-start',
   },

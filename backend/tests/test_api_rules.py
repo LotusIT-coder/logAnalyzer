@@ -1,8 +1,12 @@
 """Integration tests for Rules API (/api/v1/rules)."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from httpx import AsyncClient
+
+from app.domain.models import Event, Source
 
 
 pytestmark = pytest.mark.asyncio
@@ -76,3 +80,93 @@ class TestRulesCRUD:
         assert "would_create_incident" in body
         assert body["matched_events"] == 0
         assert body["would_create_incident"] is False
+
+    async def test_dry_run_matches_fields_json_condition(self, client: AsyncClient, db_session):
+        source = Source(
+            name="auth-log",
+            type="file",
+            enabled=True,
+            config_json={"path": "/var/log/auth.log"},
+        )
+        db_session.add(source)
+        await db_session.flush()
+
+        db_session.add(
+            Event(
+                source_id=source.id,
+                timestamp=datetime.now(timezone.utc),
+                severity="warning",
+                message="Failed password for root from 10.0.0.5 port 22 ssh2",
+                service="sshd",
+                host="srv-auth-01",
+                environment="test",
+                event_type="auth",
+                fields_json={"username": "root", "source_ip": "10.0.0.5", "event_action": "failed_password"},
+                fingerprint="auth-failed-root-1",
+            )
+        )
+        await db_session.commit()
+
+        create = await client.post(
+            "/api/v1/rules",
+            json={
+                "name": "SSH Failed Password Burst",
+                "description": "Correlates failed password attempts for the same user",
+                "condition": {"service": "sshd", "field": "event_action", "value": "failed_password"},
+                "threshold": 1,
+                "window_seconds": 300,
+                "severity": "warning",
+                "enabled": True,
+            },
+        )
+        rule_id = create.json()["id"]
+
+        resp = await client.post(f"/api/v1/rules/{rule_id}/dry-run", json={})
+        assert resp.status_code == 200
+        assert resp.json()["matched_events"] == 1
+        assert resp.json()["would_create_incident"] is True
+
+    async def test_dry_run_matches_deployment_condition(self, client: AsyncClient, db_session):
+        source = Source(
+            name="deploy-log",
+            type="file",
+            enabled=True,
+            config_json={"path": "/var/log/deploy.log"},
+        )
+        db_session.add(source)
+        await db_session.flush()
+
+        db_session.add(
+            Event(
+                source_id=source.id,
+                timestamp=datetime.now(timezone.utc),
+                severity="info",
+                message="Deployment finished for release 2026.05.06-1",
+                service="deploy-agent",
+                host="srv-app-01",
+                environment="production",
+                event_type="deployment",
+                fields_json={"release": "2026.05.06-1", "deployment_status": "completed"},
+                fingerprint="deploy-prod-20260506-1",
+            )
+        )
+        await db_session.commit()
+
+        create = await client.post(
+            "/api/v1/rules",
+            json={
+                "name": "Production Deployment Seen",
+                "description": "Matches deployment events in production",
+                "condition": {"event_type": "deployment", "environment": "production"},
+                "threshold": 1,
+                "window_seconds": 300,
+                "severity": "info",
+                "enabled": True,
+            },
+        )
+        rule_id = create.json()["id"]
+
+        resp = await client.post(f"/api/v1/rules/{rule_id}/dry-run", json={})
+        assert resp.status_code == 200
+        assert resp.json()["matched_events"] == 1
+        assert resp.json()["would_create_incident"] is True

@@ -3,7 +3,7 @@
  * Pending jobs are polled every 2 s until completed/failed.
  */
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { aiChatAsync, getAIJob } from '../lib/requests'
+import { aiChatAsync, getAIJob, type AIContextPayload } from '../lib/requests'
 import { useSourceFilter } from './SourceFilterContext'
 
 export interface ChatMessage {
@@ -22,9 +22,22 @@ interface AIChatCtx {
   pendingCount: number
   send: (text: string) => Promise<void>
   clearMessages: () => void
+  attachedContext: AIContextPayload | null
+  attachContext: (context: AIContextPayload | null) => void
+  clearAttachedContext: () => void
 }
 
-const Ctx = createContext<AIChatCtx>({} as AIChatCtx)
+const Ctx = createContext<AIChatCtx>({
+  messages: [],
+  model: '',
+  setModel: () => undefined,
+  pendingCount: 0,
+  send: async () => undefined,
+  clearMessages: () => undefined,
+  attachedContext: null,
+  attachContext: () => undefined,
+  clearAttachedContext: () => undefined,
+})
 
 const POLL_INTERVAL_MS = 2000
 
@@ -39,10 +52,13 @@ function extractErrorMessage(err: any): string {
 export function AIChatProvider({ children }: { children: React.ReactNode }) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [model, setModel] = useState('')
+  const [attachedContext, setAttachedContext] = useState<AIContextPayload | null>(null)
   const { filter: globalSourceFilter } = useSourceFilter()
   // Always-current ref so send() never reads stale filter from closure
   const sourceFilterRef = useRef(globalSourceFilter)
+  const attachedContextRef = useRef<AIContextPayload | null>(attachedContext)
   useEffect(() => { sourceFilterRef.current = globalSourceFilter }, [globalSourceFilter])
+  useEffect(() => { attachedContextRef.current = attachedContext }, [attachedContext])
   // jobId -> message index mapping for polling
   const pendingJobs = useRef<Map<string, number>>(new Map())
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -102,7 +118,10 @@ export function AIChatProvider({ children }: { children: React.ReactNode }) {
 
     // Submit async job
     try {
-      const { job_id } = await aiChatAsync(model, text, sourceFilterRef.current)
+      const { job_id } = await aiChatAsync(model, text, {
+        ...sourceFilterRef.current,
+        context: attachedContextRef.current,
+      })
       // Find the placeholder index: it's the last pending message
       setMessages(prev => {
         const idx = prev.findLastIndex(m => m.pending && !m.jobId)
@@ -128,8 +147,26 @@ export function AIChatProvider({ children }: { children: React.ReactNode }) {
     setMessages([])
   }, [])
 
+  const attachContext = useCallback((context: AIContextPayload | null) => {
+    setAttachedContext(context)
+  }, [])
+
+  const clearAttachedContext = useCallback(() => {
+    setAttachedContext(null)
+  }, [])
+
   return (
-    <Ctx.Provider value={{ messages, model, setModel, pendingCount, send, clearMessages }}>
+    <Ctx.Provider value={{
+      messages,
+      model,
+      setModel,
+      pendingCount,
+      send,
+      clearMessages,
+      attachedContext,
+      attachContext,
+      clearAttachedContext,
+    }}>
       {children}
     </Ctx.Provider>
   )

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from typing import Optional
 
 import httpx
@@ -61,6 +62,21 @@ def _extract_keywords(text: str) -> list[str]:
         if len(w) >= 4 and w not in _STOP_WORDS:
             seen[w] = None
     return list(seen.keys())
+
+
+def _augment_message(message: str, context: dict | None, references: list[str]) -> str:
+    parts = [message]
+    if context:
+        parts.append(
+            "Structured application context:\n"
+            + json.dumps(context, ensure_ascii=False, indent=2, default=str)
+        )
+    if references:
+        parts.append(
+            "Relevant log events from the database:\n"
+            + "\n".join(references[:10])
+        )
+    return "\n\n".join(parts)
 
 
 async def _get_model_settings(
@@ -330,12 +346,7 @@ async def ai_chat(
             f"[{e.timestamp.strftime('%Y-%m-%d %H:%M:%S')}] [{e.severity.upper()}] {e.message}"
             for e in events
         ]
-        if references:
-            context_block = "\n".join(references[:10])
-            augmented_message = (
-                f"{body.message}\n\n"
-                f"Relevant log events from the database:\n{context_block}"
-            )
+    augmented_message = _augment_message(body.message, body.context, references)
 
     messages = [
         {"role": "system", "content": system},
@@ -368,6 +379,7 @@ async def _run_chat_async(
     source_ids: list[str],
     source_paths: list[str],
     since_hours: float | None,
+    context: dict | None,
 ) -> None:
     from app.db.session import get_session_factory
 
@@ -406,12 +418,7 @@ async def _run_chat_async(
                     f"[{e.timestamp.strftime('%Y-%m-%d %H:%M:%S')}] [{e.severity.upper()}] {e.message}"
                     for e in events
                 ]
-                if references:
-                    context_block = "\n".join(references[:10])
-                    augmented = (
-                        f"{message}\n\n"
-                        f"Relevant log events from the database:\n{context_block}"
-                    )
+            augmented = _augment_message(message, context, references)
 
         msgs = [
             {"role": "system", "content": system},
@@ -456,6 +463,7 @@ async def ai_chat_async(
         body.source_ids or [],
         body.source_paths or [],
         body.since_hours,
+        body.context,
     )
     return AsyncJobAccepted(job_id=job_id)
 

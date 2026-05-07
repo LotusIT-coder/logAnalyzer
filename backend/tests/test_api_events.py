@@ -6,14 +6,15 @@ from datetime import datetime, timezone
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1.events import _stream_events_stmt, _stream_start_seen_ids
 from app.domain.models import Event, Source
 
 
 pytestmark = pytest.mark.asyncio
 
 
-async def _seed_source(db: AsyncSession, name: str = "test-src") -> Source:
-    src = Source(name=name, type="file", config_json={"path": "/var/log/test.log"}, enabled=True)
+async def _seed_source(db: AsyncSession, name: str = "test-src", path: str = "/var/log/test.log") -> Source:
+    src = Source(name=name, type="file", config_json={"path": path}, enabled=True)
     db.add(src)
     await db.flush()
     await db.refresh(src)
@@ -80,6 +81,31 @@ class TestEventsAPI:
         assert len(items) == 1
         assert items[0]["message"] == "from-src1"
 
+    async def test_filter_by_multiple_source_ids(self, client: AsyncClient, db_session: AsyncSession):
+        src1 = await _seed_source(db_session, "src1", "/var/log/src1.log")
+        src2 = await _seed_source(db_session, "src2", "/var/log/src2.log")
+        src3 = await _seed_source(db_session, "src3", "/var/log/src3.log")
+        await _seed_event(db_session, src1.id, message="from-src1")
+        await _seed_event(db_session, src2.id, message="from-src2")
+        await _seed_event(db_session, src3.id, message="from-src3")
+        await db_session.commit()
+
+        resp = await client.get(f"/api/v1/events?source_ids={src1.id},{src2.id}")
+        items = resp.json()["items"]
+        assert {item["message"] for item in items} == {"from-src1", "from-src2"}
+
+    async def test_filter_by_source_paths(self, client: AsyncClient, db_session: AsyncSession):
+        src1 = await _seed_source(db_session, "src1", "/var/log/app.log")
+        src2 = await _seed_source(db_session, "src2", "/var/log/db.log")
+        await _seed_event(db_session, src1.id, message="from-app")
+        await _seed_event(db_session, src2.id, message="from-db")
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/events?source_paths=/var/log/app.log")
+        items = resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["message"] == "from-app"
+
     async def test_filter_by_full_text_query(self, client: AsyncClient, db_session: AsyncSession):
         src = await _seed_source(db_session)
         await _seed_event(db_session, src.id, message="OOM killer activated on node1")
@@ -117,3 +143,22 @@ class TestEventsAPI:
     async def test_limit_too_high_returns_422(self, client: AsyncClient):
         resp = await client.get("/api/v1/events?limit=9999")
         assert resp.status_code == 422
+
+    async def test_event_stream_starts_at_current_time_and_emits_only_new_events(self, client: AsyncClient, db_session: AsyncSession):
+        src = await _seed_source(db_session)
+        historical = await _seed_event(db_session, src.id, message="historical event")
+        await db_session.commit()
+
+        seen_ids = await _stream_start_seen_ids(db_session)
+        assert historical.id in seen_ids
+
+        result = await db_session.execute(_stream_events_stmt())
+        rows = [row for row in reversed(result.scalars().all()) if row.id not in seen_ids]
+        assert rows == []
+
+        fresh = await _seed_event(db_session, src.id, message="fresh live event", event_type="network_flow", fields_json={"src_ip": "app01", "dst_ip": "8.8.8.8", "bytes": 42})
+        await db_session.commit()
+
+        result = await db_session.execute(_stream_events_stmt())
+        rows = [row for row in reversed(result.scalars().all()) if row.id not in seen_ids]
+        assert [row.id for row in rows] == [fresh.id]

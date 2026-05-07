@@ -1,45 +1,65 @@
 import { NavLink, Outlet } from 'react-router-dom'
+import HelpTip from './HelpTip'
+import QuickTutorial from './QuickTutorial'
 import { useAuth } from '../ctx/AuthContext'
 
-const NAV: { to: string; label: string }[] = [
-  { to: '/', label: 'Dashboard' },
-  { to: '/events', label: 'Events' },
-  { to: '/incidents', label: 'Incidents' },
-  { to: '/rules', label: 'Regeln' },
-  { to: '/sources', label: 'Quellen' },
-  { to: '/ai', label: 'AI Chat' },
+const NAV: { to: string; label: string; help: string }[] = [
+  { to: '/', label: 'Dashboard', help: 'Zentrale Metriken, Quellenauswahl und Zeitraeume fuer den aktuellen Arbeitskontext.' },
+  { to: '/events', label: 'Events', help: 'Detailansicht der Rohereignisse mit Filtern fuer Quelle, Host, Service, Schweregrad und Zeit.' },
+  { to: '/incidents', label: 'Incidents', help: 'Gruppierte Auffaelligkeiten und bereits erkannte Stoerungen mit Status und Bearbeitungshinweisen.' },
+  { to: '/rules', label: 'Regeln', help: 'Erkennungslogik fuer wiederkehrende Muster, Schwellwerte und automatische Incident-Erzeugung.' },
+  { to: '/sources', label: 'Quellen', help: 'Verwaltung der angebundenen Logdateien und Datenquellen.' },
+  { to: '/network', label: 'Netzwerk', help: 'Topologie und Kommunikationspfade zwischen Hosts, Diensten und externen Zielen.' },
+  { to: '/ai', label: 'AI Chat', help: 'Analyseassistent fuer Logs, Incidents und jetzt auch Netzwerk-Kontext aus dem Netzwerktab.' },
 ]
 
+function hasAdminAccess(me: ReturnType<typeof useAuth>['me']) {
+  return me?.role === 'admin' || me?.scopes.includes('admin')
+}
+
 export default function Layout() {
-  const { me } = useAuth()
+  const { me, logout } = useAuth()
+  const navItems: typeof NAV = hasAdminAccess(me)
+    ? [...NAV, { to: '/access', label: 'Zugriff', help: 'Benutzer, Rollen und persoenliche API-Tokens fuer den Zugriff auf den LotusAnalyzer.' }]
+    : NAV
 
   return (
     <div style={styles.root}>
       <aside style={styles.sidebar}>
         <div style={styles.logo}>Log<span style={{ color: '#3b82f6' }}>Analyzer</span></div>
         <nav style={styles.nav}>
-          {NAV.map(n => (
-            <NavLink
-              key={n.to}
-              to={n.to}
-              end={n.to === '/'}
-              style={({ isActive }) => ({
-                ...styles.link,
-                background: isActive ? '#1e3a5f' : 'transparent',
-                color: isActive ? '#93c5fd' : '#94a3b8',
-              })}
-            >
-              {n.label}
-            </NavLink>
+          {navItems.map(n => (
+            <div key={n.to} style={styles.navRow}>
+              <NavLink
+                to={n.to}
+                end={n.to === '/'}
+                style={({ isActive }) => ({
+                  ...styles.link,
+                  background: isActive ? '#1e3a5f' : 'transparent',
+                  color: isActive ? '#93c5fd' : '#94a3b8',
+                })}
+              >
+                {n.label}
+              </NavLink>
+              <HelpTip content={n.help} ariaLabel={`${n.label} erklaeren`} />
+            </div>
           ))}
         </nav>
         {me?.subject && (
           <div style={styles.footer}>
             <span style={{ color: '#64748b', fontSize: '0.75rem' }}>{me.subject}</span>
+            <button onClick={logout} style={styles.logoutBtn}>Abmelden</button>
           </div>
         )}
       </aside>
       <main style={styles.main}>
+        <div style={styles.mainToolbar}>
+          <div style={styles.mainToolbarHint}>
+            <span>i-Buttons erklaeren Bedienelemente direkt im Kontext.</span>
+            <HelpTip content="Nutze die kleinen i-Schaltflaechen neben Bereichen, Filtern und Navigationseintraegen fuer kurze Erklaerungen." ariaLabel="Hinweis zu Hilfeschaltflaechen" />
+          </div>
+          <QuickTutorial />
+        </div>
         <Outlet />
       </main>
     </div>
@@ -58,8 +78,9 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: '2rem', paddingLeft: '0.5rem',
   },
   nav: { display: 'flex', flexDirection: 'column', gap: '0.15rem', flex: 1 },
+  navRow: { display: 'flex', alignItems: 'center', gap: '0.4rem' },
   link: {
-    display: 'block', padding: '0.55rem 0.75rem', borderRadius: 6,
+    display: 'block', flex: 1, padding: '0.55rem 0.75rem', borderRadius: 6,
     textDecoration: 'none', fontWeight: 500, fontSize: '0.9rem',
     transition: 'background 0.15s',
   },
@@ -71,5 +92,20 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'none', border: '1px solid #334155', color: '#94a3b8',
     borderRadius: 6, padding: '0.35rem 0.75rem', cursor: 'pointer', fontSize: '0.8rem',
   },
-  main: { flex: 1, padding: '2rem', overflow: 'auto' },
+  main: { flex: 1, padding: '1.2rem 2rem 2rem 2rem', overflow: 'auto' },
+  mainToolbar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '1rem',
+    marginBottom: '1rem',
+    flexWrap: 'wrap',
+  },
+  mainToolbarHint: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    color: '#94a3b8',
+    fontSize: '0.82rem',
+  },
 }

@@ -149,6 +149,7 @@ class AIChatAsyncRequest(BaseModel):
     source_ids: Optional[List[str]] = None
     source_paths: Optional[List[str]] = None
     since_hours: Optional[float] = None
+    context: Optional[Dict[str, Any]] = None
 
 
 class AIChatResponse(BaseModel):
@@ -191,6 +192,45 @@ class ErrorRateResponse(BaseModel):
     total_events: int
     error_events: int
     error_rate: float
+
+
+class NetworkGeoPoint(BaseModel):
+    resolved_ip: Optional[str] = None
+    latitude: float
+    longitude: float
+    city: Optional[str] = None
+    region: Optional[str] = None
+    country: Optional[str] = None
+    country_code: Optional[str] = None
+    source: str
+
+
+class NetworkMapNode(BaseModel):
+    id: str
+    label: str
+    kind: str
+    total_bytes: int
+    total_connections: int
+    risk_score: float
+    geo: Optional[NetworkGeoPoint] = None
+
+
+class NetworkMapEdge(BaseModel):
+    source: str
+    target: str
+    app: Optional[str] = None
+    protocol: Optional[str] = None
+    dst_port: Optional[int] = None
+    bytes: int
+    connections: int
+    allowed_count: int
+    blocked_count: int
+    anomaly_score: float
+
+
+class NetworkMapResponse(BaseModel):
+    nodes: List[NetworkMapNode]
+    edges: List[NetworkMapEdge]
 
 
 # ---------------------------------------------------------------------------

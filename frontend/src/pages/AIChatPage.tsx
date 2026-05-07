@@ -3,6 +3,7 @@ import { getAIModels } from '../lib/requests'
 import { useState, useRef, useEffect } from 'react'
 import { useAIChat } from '../ctx/AIChatContext'
 import { useSourceFilter } from '../ctx/SourceFilterContext'
+import HelpTip from '../components/HelpTip'
 
 function ReferencedLogs({ lines }: { lines: string[] }) {
   const [open, setOpen] = useState(false)
@@ -29,7 +30,7 @@ function ReferencedLogs({ lines }: { lines: string[] }) {
   )
 }
 
-function ContextBadge() {
+function ContextBadge({ attachedContext }: { attachedContext: { title: string; summary: string } | null }) {
   const { filter } = useSourceFilter()
   const { selectedSources } = useSourceFilter()
 
@@ -43,7 +44,7 @@ function ContextBadge() {
     : filter.rangeHours <= 168 ? 'Letzte 7 Tage'
     : 'Letzte 30 Tage'
 
-  if (!hasFilter) {
+  if (!hasFilter && !attachedContext) {
     return (
       <div style={badgeStyles.wrap}>
         <span style={badgeStyles.noFilter}>
@@ -56,12 +57,17 @@ function ContextBadge() {
   return (
     <div style={badgeStyles.wrap}>
       <span style={badgeStyles.label}>Kontext:</span>
-      <span style={badgeStyles.pill}>🕐 {rangeLabel}</span>
+      {hasFilter && <span style={badgeStyles.pill}>🕐 {rangeLabel}</span>}
       {selectedSources.map(s => (
         <span key={s.id} style={{ ...badgeStyles.pill, background: '#1e3a5f', color: '#93c5fd' }}>
           {s.label}
         </span>
       ))}
+      {attachedContext && (
+        <span style={{ ...badgeStyles.pill, background: '#082f49', color: '#bae6fd' }}>
+          Netzkontext: {attachedContext.title}
+        </span>
+      )}
     </div>
   )
 }
@@ -75,7 +81,7 @@ const badgeStyles: Record<string, React.CSSProperties> = {
 
 export default function AIChatPage() {
   const { data: models = [] } = useQuery({ queryKey: ['ai-models'], queryFn: getAIModels })
-  const { messages, model, setModel, pendingCount, send, clearMessages } = useAIChat()
+  const { messages, model, setModel, pendingCount, send, clearMessages, attachedContext, clearAttachedContext } = useAIChat()
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -87,6 +93,12 @@ export default function AIChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  useEffect(() => {
+    if (attachedContext?.prompt && !input.trim()) {
+      setInput(attachedContext.prompt)
+    }
+  }, [attachedContext?.prompt])
+
   function handleSend() {
     if (!input.trim() || pendingCount > 0) return
     send(input.trim())
@@ -96,18 +108,37 @@ export default function AIChatPage() {
   return (
     <div style={styles.root}>
       <div style={styles.header}>
-        <h2 style={styles.h2}>AI Chat</h2>
+        <div style={styles.titleRow}>
+          <h2 style={styles.h2}>AI Chat</h2>
+          <HelpTip content="Der Chat beantwortet Fragen zu Logs, Vorfaellen und angehaengtem Netzwerk-Kontext. Die aktuelle Kontextkarte zeigt, was bei der naechsten Frage mitgesendet wird." ariaLabel="AI Chat erklaeren" />
+        </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           {messages.length > 0 && (
             <button onClick={clearMessages} style={styles.clearBtn} title="Verlauf löschen">✕ Verlauf</button>
           )}
-          <select value={model} onChange={e => setModel(e.target.value)} style={styles.select}>
-            {(models as any[]).map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
-          </select>
+          <div style={styles.modelWrap}>
+            <select value={model} onChange={e => setModel(e.target.value)} style={styles.select}>
+              {(models as any[]).map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
+            </select>
+            <HelpTip content="Hier waehlst du das lokale Sprachmodell fuer die Analyse aus. Unterschiedliche Modelle reagieren unterschiedlich schnell und tiefgehend." ariaLabel="Modellauswahl erklaeren" />
+          </div>
         </div>
       </div>
 
-      <ContextBadge />
+      <ContextBadge attachedContext={attachedContext ? { title: attachedContext.title, summary: attachedContext.summary } : null} />
+
+      {attachedContext && (
+        <div style={styles.contextPanel}>
+          <div>
+            <div style={styles.contextTitleRow}>
+              <strong>{attachedContext.title}</strong>
+              <HelpTip content="Dieser strukturierte Kontext wird automatisch zusammen mit deiner naechsten Chat-Nachricht an die AI uebergeben." ariaLabel="Netzwerk-Kontext erklaeren" />
+            </div>
+            <div style={styles.contextBody}>{attachedContext.summary}</div>
+          </div>
+          <button type="button" onClick={clearAttachedContext} style={styles.contextBtn}>Kontext entfernen</button>
+        </div>
+      )}
 
       <div style={styles.messages}>
         {messages.length === 0 && (
@@ -131,6 +162,9 @@ export default function AIChatPage() {
       </div>
 
       <div style={styles.inputRow}>
+        <div style={styles.inputHelpWrap}>
+          <HelpTip content="Beschreibe das Problem oder stelle eine konkrete Frage. Der angezeigte Kontext und die referenzierten Logs werden der AI als Hilfsmaterial mitgegeben." ariaLabel="Eingabefeld erklaeren" />
+        </div>
         <textarea
           value={input}
           onChange={e => setInput(e.target.value)}
@@ -151,9 +185,33 @@ export default function AIChatPage() {
 const styles: Record<string, React.CSSProperties> = {
   root: { display: 'flex', flexDirection: 'column', height: 'calc(100vh - 4rem)' },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' },
+  titleRow: { display: 'flex', alignItems: 'center', gap: '0.5rem' },
   h2: { margin: 0, fontSize: '1.5rem' },
+  modelWrap: { display: 'flex', alignItems: 'center', gap: '0.45rem' },
   select: { background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.75rem', minWidth: 220 },
   clearBtn: { background: 'none', border: '1px solid #334155', color: '#64748b', borderRadius: 6, padding: '0.35rem 0.65rem', cursor: 'pointer', fontSize: '0.78rem' },
+  contextPanel: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '1rem',
+    alignItems: 'center',
+    padding: '0.8rem 0.95rem',
+    borderRadius: 12,
+    border: '1px solid #164e63',
+    background: '#08212f',
+    marginBottom: '0.85rem',
+  },
+  contextTitleRow: { display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.25rem' },
+  contextBody: { color: '#cbd5e1', fontSize: '0.84rem', lineHeight: 1.5 },
+  contextBtn: {
+    background: 'none',
+    border: '1px solid #0891b2',
+    color: '#bae6fd',
+    borderRadius: 8,
+    padding: '0.45rem 0.75rem',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  },
   messages: {
     flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column',
     gap: '1rem', paddingRight: '0.5rem', marginBottom: '1rem',
@@ -166,6 +224,7 @@ const styles: Record<string, React.CSSProperties> = {
   role: { fontSize: '0.72rem', fontWeight: 700, color: '#64748b', display: 'block', marginBottom: '0.35rem' },
   pre: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '0.88rem', fontFamily: 'inherit' },
   inputRow: { display: 'flex', gap: '0.75rem', alignItems: 'flex-end' },
+  inputHelpWrap: { paddingBottom: '0.4rem' },
   textarea: {
     flex: 1, background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155',
     borderRadius: 8, padding: '0.65rem 0.85rem', fontSize: '0.9rem',

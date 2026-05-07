@@ -8,6 +8,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models import Event, Incident, Rule
+from app.services.ai_auto_triage import mark_incident_for_auto_triage
+from app.services.notifications import mark_incident_for_notification
 
 
 def _matches_condition(event: "Event", condition: dict) -> bool:
@@ -41,6 +43,24 @@ def _matches_condition(event: "Event", condition: dict) -> bool:
 
     if "host" in condition:
         if event.host != condition["host"]:
+            return False
+
+    if "environment" in condition:
+        if event.environment != condition["environment"]:
+            return False
+
+    if "event_type" in condition:
+        if event.event_type != condition["event_type"]:
+            return False
+
+    if "field" in condition:
+        field_name = condition["field"]
+        field_value = (event.fields_json or {}).get(field_name)
+
+        if "value" in condition and field_value != condition["value"]:
+            return False
+
+        if "value_in" in condition and field_value not in condition["value_in"]:
             return False
 
     return True
@@ -98,6 +118,9 @@ async def fire_incident_if_needed(
         tags_json=[],
     )
     session.add(incident)
+    await session.flush()
+    mark_incident_for_auto_triage(session, incident.id)
+    mark_incident_for_notification(session, incident.id)
     return incident
 
 

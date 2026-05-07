@@ -20,6 +20,17 @@ from app.parser.pipeline import parse_line
 
 
 _MAX_LINES_PER_RUN = 10_000  # safety cap per source per ingestion cycle
+_PATH_BASED_SOURCE_TYPES = {"file", "docker", "journald"}
+_JOURNALD_PRIORITY_MAP = {
+    "0": "critical",
+    "1": "critical",
+    "2": "critical",
+    "3": "error",
+    "4": "warning",
+    "5": "info",
+    "6": "info",
+    "7": "debug",
+}
 
 
 async def _get_last_cursor(session: AsyncSession, source_id: str) -> Optional[int]:
@@ -41,6 +52,46 @@ async def _get_last_cursor(session: AsyncSession, source_id: str) -> Optional[in
 
 def _line_hash(line: str) -> str:
     return hashlib.sha256(line.encode()).hexdigest()
+
+
+def _source_path(source: Source) -> str:
+    cfg = source.config_json or {}
+    return (
+        cfg.get("path")
+        or cfg.get("log_path")
+        or cfg.get("docker_log_path")
+        or cfg.get("journal_path")
+        or ""
+    )
+
+
+def _parse_specialized_source_line(source: Source, line: str) -> Optional[Dict[str, Any]]:
+    if source.type == "docker":
+        parsed = parse_line(line, "json", None, {"log": "message", "time": "timestamp"})
+        if parsed is not None and isinstance(parsed.get("message"), str):
+            parsed["message"] = parsed["message"].rstrip("\r\n")
+        return parsed
+
+    if source.type == "journald":
+        parsed = parse_line(
+            line,
+            "json",
+            None,
+            {
+                "MESSAGE": "message",
+                "_HOSTNAME": "host",
+                "SYSLOG_IDENTIFIER": "service",
+                "__REALTIME_TIMESTAMP": "timestamp",
+                "PRIORITY": "severity",
+            },
+        )
+        if parsed is not None:
+            priority = str(parsed.get("severity", "")).strip()
+            if priority in _JOURNALD_PRIORITY_MAP:
+                parsed["severity"] = _JOURNALD_PRIORITY_MAP[priority]
+        return parsed
+
+    return None
 
 
 # ISO 8601 rsyslog: "2026-05-03T00:00:02.097521+02:00 hostname process[pid]: message"
@@ -97,10 +148,10 @@ def _parse_syslog_header(line: str) -> Optional[Dict[str, Any]]:
 
 async def ingest_source(session: AsyncSession, source: Source) -> dict:
     """Read new lines from a file source, persist raw_log rows, return stats."""
-    if source.type != "file":
+    if source.type not in _PATH_BASED_SOURCE_TYPES:
         return {"source_id": source.id, "skipped": True, "reason": "non-file source"}
 
-    path: str = source.config_json.get("path", "")
+    path = _source_path(source)
     if not path or not os.path.exists(path):
         return {"source_id": source.id, "skipped": True, "reason": f"file not found: {path}"}
 
@@ -144,12 +195,14 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
             new_cursor = fh.tell()
             lines_ingested += 1
 
+            parsed = _parse_specialized_source_line(source, stripped)
+
             # Attempt parsing with first matching profile
-            parsed: Optional[Dict[str, Any]] = None
-            for profile in profiles:
-                parsed = parse_line(stripped, profile.format, profile.pattern, profile.mapping_json)
-                if parsed is not None:
-                    break
+            if parsed is None:
+                for profile in profiles:
+                    parsed = parse_line(stripped, profile.format, profile.pattern, profile.mapping_json)
+                    if parsed is not None:
+                        break
 
             # Syslog RFC3164 pre-parser: extracts real timestamp/host/service/message
             syslog_base = _parse_syslog_header(stripped)

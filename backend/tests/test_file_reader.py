@@ -1,8 +1,13 @@
 """Unit tests for file_reader helpers (syslog parsing, cursor logic)."""
 from __future__ import annotations
 
+import json
+
 import pytest
-from app.ingestion.file_reader import _parse_syslog_header
+from sqlalchemy import select
+
+from app.domain.models import Event, Source
+from app.ingestion.file_reader import _parse_syslog_header, ingest_source
 
 
 class TestSyslogHeaderParsing:
@@ -49,3 +54,68 @@ class TestSyslogHeaderParsing:
         result = _parse_syslog_header(line)
         assert result is not None
         assert result["service"] == "crond"
+
+
+@pytest.mark.asyncio
+class TestSpecializedSourceIngestion:
+    async def test_docker_source_ingests_json_log_file(self, db_session, tmp_path):
+        log_path = tmp_path / "container-json.log"
+        log_path.write_text(
+            json.dumps({
+                "log": "container booted\n",
+                "stream": "stdout",
+                "time": "2026-05-06T10:00:00+00:00",
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        source = Source(
+            name="docker-nginx",
+            type="docker",
+            config_json={"path": str(log_path)},
+            enabled=True,
+        )
+        db_session.add(source)
+        await db_session.flush()
+
+        stats = await ingest_source(db_session, source)
+
+        assert stats["events_created"] == 1
+        result = await db_session.execute(select(Event).where(Event.source_id == source.id))
+        event = result.scalar_one()
+        assert event.message == "container booted"
+        assert event.fields_json["stream"] == "stdout"
+        assert event.timestamp.isoformat().startswith("2026-05-06T10:00:00")
+
+    async def test_journald_source_ingests_exported_json_file(self, db_session, tmp_path):
+        log_path = tmp_path / "journald-export.jsonl"
+        log_path.write_text(
+            json.dumps({
+                "MESSAGE": "Failed password for root",
+                "PRIORITY": "3",
+                "_HOSTNAME": "srv-auth-01",
+                "SYSLOG_IDENTIFIER": "sshd",
+                "__REALTIME_TIMESTAMP": "2026-05-06T10:01:00+00:00",
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        source = Source(
+            name="journald-auth",
+            type="journald",
+            config_json={"path": str(log_path)},
+            enabled=True,
+        )
+        db_session.add(source)
+        await db_session.flush()
+
+        stats = await ingest_source(db_session, source)
+
+        assert stats["events_created"] == 1
+        result = await db_session.execute(select(Event).where(Event.source_id == source.id))
+        event = result.scalar_one()
+        assert event.message == "Failed password for root"
+        assert event.service == "sshd"
+        assert event.host == "srv-auth-01"
+        assert event.severity == "error"
+        assert event.timestamp.isoformat().startswith("2026-05-06T10:01:00")

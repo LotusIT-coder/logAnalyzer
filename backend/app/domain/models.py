@@ -199,17 +199,48 @@ class AIAnalysis(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class User(Base):
+    __tablename__ = "user_account"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    password_hash: Mapped[str | None] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(
+        Text,
+        CheckConstraint("role IN ('viewer','analyst','operator','admin')"),
+        nullable=False,
+        default="viewer",
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    tokens: Mapped[list["ApiToken"]] = relationship(back_populates="user")
+
+
 class ApiToken(Base):
     __tablename__ = "api_token"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    user_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("user_account.id", ondelete="SET NULL"))
+    role: Mapped[str] = mapped_column(
+        Text,
+        CheckConstraint("role IN ('viewer','analyst','operator','admin')"),
+        nullable=False,
+        default="viewer",
+    )
     scope_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped["User | None"] = relationship(back_populates="tokens")
 
 
 class AuditLog(Base):

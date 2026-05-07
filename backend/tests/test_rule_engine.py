@@ -4,9 +4,9 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
-from app.services.rule_engine import _matches_condition, evaluate_rule
+from app.services.rule_engine import _matches_condition, evaluate_rule, fire_incident_if_needed
 from app.domain.models import Event, Rule
 
 
@@ -102,6 +102,34 @@ class TestMatchesCondition:
         e = _make_event(severity="info", message="connection refused")
         assert _matches_condition(e, {"severity": "error", "message_contains": "connection"}) is False
 
+    def test_environment_match(self):
+        e = _make_event(environment="production")
+        assert _matches_condition(e, {"environment": "production"}) is True
+
+    def test_environment_no_match(self):
+        e = _make_event(environment="staging")
+        assert _matches_condition(e, {"environment": "production"}) is False
+
+    def test_event_type_match(self):
+        e = _make_event(event_type="deployment")
+        assert _matches_condition(e, {"event_type": "deployment"}) is True
+
+    def test_event_type_no_match(self):
+        e = _make_event(event_type="auth")
+        assert _matches_condition(e, {"event_type": "deployment"}) is False
+
+    def test_field_match_uses_fields_json(self):
+        e = _make_event(fields_json={"username": "root", "source_ip": "10.0.0.5"})
+        assert _matches_condition(e, {"field": "username", "value": "root"}) is True
+
+    def test_field_match_fails_for_different_value(self):
+        e = _make_event(fields_json={"username": "admin"})
+        assert _matches_condition(e, {"field": "username", "value": "root"}) is False
+
+    def test_field_in_matches_any_value(self):
+        e = _make_event(fields_json={"event_action": "failed_password"})
+        assert _matches_condition(e, {"field": "event_action", "value_in": ["failed_password", "invalid_user"]}) is True
+
 
 # ---------------------------------------------------------------------------
 # evaluate_rule tests (mocked DB session)
@@ -193,3 +221,53 @@ class TestEvaluateRule:
 
         assert count == 3
         assert would_fire is True
+
+
+class TestFireIncidentIfNeeded:
+    @pytest.mark.asyncio
+    async def test_created_incident_is_marked_for_auto_triage(self):
+        now = datetime.now(timezone.utc)
+        matched_events = [
+            _make_event(timestamp=now - timedelta(seconds=5)),
+            _make_event(timestamp=now),
+        ]
+
+        existing = MagicMock()
+        existing.scalar_one_or_none.return_value = None
+
+        session = AsyncMock()
+        session.add = MagicMock()
+        session.info = {}
+        session.execute = AsyncMock(return_value=existing)
+
+        rule = _make_rule(id="rule-1", name="SSH burst", severity="warning")
+
+        with patch("app.services.rule_engine.mark_incident_for_auto_triage") as mark_triage:
+            incident = await fire_incident_if_needed(session, rule, matched_events, now)
+
+        assert incident is not None
+        mark_triage.assert_called_once_with(session, ANY)
+
+    @pytest.mark.asyncio
+    async def test_created_incident_is_marked_for_notification(self):
+        now = datetime.now(timezone.utc)
+        matched_events = [
+            _make_event(timestamp=now - timedelta(seconds=5)),
+            _make_event(timestamp=now),
+        ]
+
+        existing = MagicMock()
+        existing.scalar_one_or_none.return_value = None
+
+        session = AsyncMock()
+        session.add = MagicMock()
+        session.info = {}
+        session.execute = AsyncMock(return_value=existing)
+
+        rule = _make_rule(id="rule-1", name="SSH burst", severity="warning")
+
+        with patch("app.services.rule_engine.mark_incident_for_notification") as mark_notification:
+            incident = await fire_incident_if_needed(session, rule, matched_events, now)
+
+        assert incident is not None
+        mark_notification.assert_called_once_with(session, ANY)

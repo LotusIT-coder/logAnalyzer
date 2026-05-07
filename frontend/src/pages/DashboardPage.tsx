@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getTimeseries, getTopErrors, getTopServices, getErrorRate, runIngestion, getSources, uploadImport, deleteSource, type TimeRange, type MetricsFilter } from '../lib/requests'
 import { useEffect, useRef, useState } from 'react'
+import HelpTip from '../components/HelpTip'
 import { useSourceFilter, type SourceOption } from '../ctx/SourceFilterContext'
 
 // ─── Time range presets ───────────────────────────────────────────────────────
@@ -123,6 +124,9 @@ function SourcePicker({
 
       {open && (
         <div style={pickerStyles.dropdown}>
+          <div style={pickerStyles.helperNote}>
+            Konfigurierte Quellen sind dauerhaft in der App hinterlegt. Standard- und eigene Pfade erweitern den aktuellen Analysekontext nur fuer deine laufende Arbeit.
+          </div>
           {/* Clear selection */}
           <div
             style={{ ...pickerStyles.option, color: '#64748b', borderBottom: '1px solid #334155', paddingBottom: '0.5rem', marginBottom: '0.25rem' }}
@@ -396,9 +400,12 @@ export default function DashboardPage() {
   return (
     <div>
       <div style={styles.header}>
-        <h2 style={styles.h2}>Dashboard</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <h2 style={styles.h2}>Dashboard</h2>
+          <HelpTip content="Hier waehlst du Quellen und Zeitfenster fuer den aktuellen Analysekontext. Alle Metriken auf dieser Seite reagieren direkt auf diese Auswahl." ariaLabel="Dashboard erklaeren" />
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', gap: '0.25rem' }}>
+          <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
             {TIME_PRESETS.map(p => (
               <button
                 key={p.hours}
@@ -412,9 +419,11 @@ export default function DashboardPage() {
                 }}
               >{p.label}</button>
             ))}
+            <HelpTip content="Das Zeitfenster steuert, wie weit die Metriken in die Vergangenheit schauen. 'Alle' verwendet den kompletten verfuegbaren Datenbestand." ariaLabel="Zeitfenster erklaeren" />
           </div>
           <div style={styles.ingestRow}>
             <SourcePicker selected={selectedSources} onChange={setSelectedSources} onUploadResult={handleUploadResult} customSources={customSources} onRemoveCustom={removeCustomSource} />
+            <HelpTip content="Hier waehlst du konfigurierte Quellen, Standard-Logpfade oder hochgeladene Dateien aus. Die Auswahl definiert gleichzeitig den globalen Datenkontext fuer die Metriken." ariaLabel="Quellenauswahl erklaeren" />
             {ingesting && <span style={{ fontSize: '0.82rem', color: '#fbbf24', whiteSpace: 'nowrap' }}>⏳ Analysiere…</span>}
           </div>
         </div>
@@ -465,18 +474,26 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
+          <div style={styles.sectionHeader}>
+            <span style={styles.sectionTitle}>Kennzahlen</span>
+            <HelpTip content="Diese Karten verdichten den aktuell ausgewaehlten Datenbestand. Gesamt-Events zeigt die Menge, Fehlerrate den Anteil problematischer Events und Fehler die absolute Fehlerzahl." ariaLabel="Kennzahlen erklaeren" />
+          </div>
           <div style={styles.kpiRow}>
-            <KpiCard title="Gesamt Events" value={String(totalEvents)} />
-            <KpiCard title="Fehlerrate" value={`${errorRate}%`} />
-            <KpiCard title="Fehler" value={String(rr?.error_events ?? '–')} />
+            <KpiCard title="Gesamt Events" value={String(totalEvents)} help="Alle Events, die innerhalb des aktiven Zeitfensters und der ausgewaehlten Quellen gefunden wurden." />
+            <KpiCard title="Fehlerrate" value={`${errorRate}%`} help="Anteil aller Events, die als error oder kritischer klassifiziert wurden." />
+            <KpiCard title="Fehler" value={String(rr?.error_events ?? '–')} help="Absolute Anzahl fehlerhafter Events im aktuellen Kontext. Das ist der direkte Zaehler zur Fehlerrate." />
           </div>
 
+          <div style={styles.sectionHeader}>
+            <span style={styles.sectionTitle}>Aufschluesselungen</span>
+            <HelpTip content="Diese Bereiche erklaeren, wie sich das Volumen ueber die Zeit verteilt und welche Fehlermeldungen oder Services besonders haeufig auftreten." ariaLabel="Dashboard-Aufschluesselungen erklaeren" />
+          </div>
           <div style={styles.grid}>
-            <Panel title={`Events / ${bucket} (${rangeHours === 0 ? 'alle' : TIME_PRESETS.find(p => p.hours === rangeHours)?.label ?? ''})`}>
+            <Panel title={`Events / ${bucket} (${rangeHours === 0 ? 'alle' : TIME_PRESETS.find(p => p.hours === rangeHours)?.label ?? ''})`} help="Die Balken zeigen, wie viele Events pro Zeitintervall eingegangen sind. Hoehere Balken markieren Lastspitzen oder Stoerungsphasen.">
               {ts.data ? <MiniBar points={ts.data.points} /> : <Spinner />}
             </Panel>
 
-            <Panel title="Top Fehler-Meldungen">
+            <Panel title="Top Fehler-Meldungen" help="Hier siehst du die haeufigsten Fehlermeldungen im aktuellen Datenfenster. Das hilft beim Clustern wiederkehrender Stoerungen.">
               {errs.data ? (
                 <ol style={styles.ol}>
                   {errs.data.items.slice(0, 8).map((e: any, i: number) => (
@@ -490,7 +507,7 @@ export default function DashboardPage() {
               ) : <Spinner />}
             </Panel>
 
-            <Panel title="Top Services">
+            <Panel title="Top Services" help="Zeigt, welche Services besonders haeufig Events erzeugen. So erkennst du schnell dominante Systeme oder Hotspots.">
               {svcs.data ? (
                 <ol style={styles.ol}>
                   {svcs.data.items.slice(0, 8).map((s: any, i: number) => (
@@ -510,19 +527,25 @@ export default function DashboardPage() {
   )
 }
 
-function KpiCard({ title, value }: { title: string; value: string }) {
+function KpiCard({ title, value, help }: { title: string; value: string; help?: string }) {
   return (
     <div style={styles.kpi}>
       <div style={styles.kpiVal}>{value}</div>
-      <div style={styles.kpiLabel}>{title}</div>
+      <div style={styles.kpiLabelRow}>
+        <div style={styles.kpiLabel}>{title}</div>
+        {help && <HelpTip content={help} ariaLabel={`${title} erklaeren`} />}
+      </div>
     </div>
   )
 }
 
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+function Panel({ title, help, children }: { title: string; help?: string; children: React.ReactNode }) {
   return (
     <div style={styles.panel}>
-      <h3 style={styles.panelTitle}>{title}</h3>
+      <div style={styles.panelTitleRow}>
+        <h3 style={styles.panelTitle}>{title}</h3>
+        {help && <HelpTip content={help} ariaLabel={`${title} erklaeren`} />}
+      </div>
       {children}
     </div>
   )
@@ -560,13 +583,28 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: '1.5rem', fontSize: '0.85rem', color: '#93c5fd',
     display: 'flex', flexDirection: 'column', gap: '0.25rem',
   },
+  sectionHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.45rem',
+    marginBottom: '0.65rem',
+  },
+  sectionTitle: {
+    color: '#94a3b8',
+    fontSize: '0.78rem',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+  },
   kpiRow: { display: 'flex', gap: '1rem', marginBottom: '1.5rem' },
   kpi: { flex: 1, background: '#1e293b', borderRadius: 10, padding: '1.25rem 1.5rem', border: '1px solid #334155' },
   kpiVal: { fontSize: '2rem', fontWeight: 700, color: '#93c5fd' },
   kpiLabel: { color: '#64748b', fontSize: '0.85rem', marginTop: '0.25rem' },
+  kpiLabelRow: { display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '0.25rem' },
   grid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' },
   panel: { background: '#1e293b', borderRadius: 10, padding: '1.25rem', border: '1px solid #334155' },
   panelTitle: { margin: '0 0 1rem 0', fontSize: '0.95rem', color: '#94a3b8' },
+  panelTitleRow: { display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '1rem' },
   ol: { margin: 0, padding: '0 0 0 1.2rem' },
   li: { display: 'flex', gap: '0.75rem', marginBottom: '0.4rem', fontSize: '0.82rem', color: '#f1f5f9' },
   count: { background: '#1e3a5f', color: '#93c5fd', borderRadius: 4, padding: '0 0.4rem', flexShrink: 0 },
@@ -585,6 +623,14 @@ const pickerStyles: Record<string, React.CSSProperties> = {
     background: '#1e293b', border: '1px solid #334155', borderRadius: 10,
     boxShadow: '0 8px 32px #0006', padding: '0.5rem', minWidth: 320, maxHeight: 380,
     overflowY: 'auto',
+  },
+  helperNote: {
+    color: '#94a3b8',
+    fontSize: '0.76rem',
+    lineHeight: 1.45,
+    padding: '0.45rem 0.55rem 0.65rem',
+    borderBottom: '1px solid #334155',
+    marginBottom: '0.35rem',
   },
   groupHeader: {
     color: '#475569', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase',

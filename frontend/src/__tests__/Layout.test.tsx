@@ -4,12 +4,16 @@
  */
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { vi } from 'vitest'
 import Layout from '../components/Layout'
 import { AuthProvider } from '../ctx/AuthContext'
 
-function renderLayout(initialPath = '/') {
+function renderLayout(
+  initialPath = '/',
+  authValue?: Parameters<typeof AuthProvider>[0]['value'],
+) {
   return render(
-    <AuthProvider>
+    <AuthProvider value={authValue}>
       <MemoryRouter initialEntries={[initialPath]}>
         <Layout />
       </MemoryRouter>
@@ -25,13 +29,28 @@ describe('Layout', () => {
   })
 
   test('renders all navigation links', () => {
-    renderLayout()
+    renderLayout('/', {
+      me: { subject: 'admin@example.com', role: 'admin', scopes: ['admin'] },
+      isLoading: false,
+      login: vi.fn(),
+      logout: vi.fn(),
+    })
     expect(screen.getByRole('link', { name: 'Dashboard' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Events' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Incidents' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Regeln' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Quellen' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Netzwerk' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'AI Chat' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Zugriff' })).toBeInTheDocument()
+  })
+
+  test('hides admin navigation for non-admin users', () => {
+    renderLayout('/', {
+      me: { subject: 'viewer@example.com', role: 'viewer', scopes: ['events:read'] },
+    })
+
+    expect(screen.queryByRole('link', { name: 'Zugriff' })).not.toBeInTheDocument()
   })
 
   test('Dashboard link points to /', () => {
@@ -50,6 +69,17 @@ describe('Layout', () => {
     renderLayout()
     const link = screen.getByRole('link', { name: 'AI Chat' })
     expect(link).toHaveAttribute('href', '/ai')
+  })
+
+  test('Network link points to /network', () => {
+    renderLayout('/', {
+      me: { subject: 'viewer@example.com', role: 'viewer', scopes: ['read'] },
+      isLoading: false,
+      login: vi.fn(),
+      logout: vi.fn(),
+    })
+    const link = screen.getByRole('link', { name: 'Netzwerk' })
+    expect(link).toHaveAttribute('href', '/network')
   })
 
   test('active link has highlighted style on matching route', () => {

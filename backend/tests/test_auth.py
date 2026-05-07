@@ -6,7 +6,10 @@ disable_auth bypass behaviour — without a real DB connection.
 from __future__ import annotations
 
 import pytest
-from app.auth import hash_token, generate_raw_token
+from fastapi import HTTPException
+
+from app.auth import generate_raw_token, hash_token, hash_password, require_scope, verify_password
+from app.domain.models import ApiToken
 
 
 class TestTokenHashing:
@@ -44,6 +47,18 @@ class TestTokenHashing:
         assert len(tokens) == 50
 
 
+class TestPasswordHashing:
+    def test_password_hash_verifies_plaintext(self):
+        password_hash = hash_password("Str0ng!Pass")
+
+        assert verify_password("Str0ng!Pass", password_hash) is True
+
+    def test_password_hash_rejects_wrong_plaintext(self):
+        password_hash = hash_password("Str0ng!Pass")
+
+        assert verify_password("wrong-pass", password_hash) is False
+
+
 class TestDisableAuthEndpoint:
     """Smoke test: with DISABLE_AUTH=true the API accepts requests without a token."""
 
@@ -56,3 +71,26 @@ class TestDisableAuthEndpoint:
     async def test_rules_accessible_without_token(self, client):
         resp = await client.get("/api/v1/rules")
         assert resp.status_code == 200
+
+
+class TestRoleBasedAuthorization:
+    def test_viewer_role_allows_read(self):
+        checker = require_scope("read")
+        token = ApiToken(name="viewer", role="viewer", scope_json=[], token_hash="x")
+
+        assert checker(token) is token
+
+    def test_viewer_role_blocks_write(self):
+        checker = require_scope("write")
+        token = ApiToken(name="viewer", role="viewer", scope_json=[], token_hash="x")
+
+        with pytest.raises(HTTPException) as exc:
+            checker(token)
+
+        assert exc.value.status_code == 403
+
+    def test_admin_role_allows_admin_scope_without_explicit_scope_json(self):
+        checker = require_scope("admin")
+        token = ApiToken(name="admin", role="admin", scope_json=[], token_hash="x")
+
+        assert checker(token) is token

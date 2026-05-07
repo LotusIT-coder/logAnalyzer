@@ -2,9 +2,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getRules, createRule, patchRule } from '../lib/requests'
 import { useState } from 'react'
 import GlobalSourceFilterNotice from '../components/GlobalSourceFilterNotice'
+import HelpTip from '../components/HelpTip'
+import { hasScope, useAuth } from '../ctx/AuthContext'
 
 export default function RulesPage() {
   const qc = useQueryClient()
+  const { me } = useAuth()
+  const canWrite = hasScope(me, 'write')
   const { data, isLoading } = useQuery({ queryKey: ['rules'], queryFn: getRules })
   const [showNew, setShowNew] = useState(false)
   const [form, setForm] = useState({ name: '', severity: 'error', threshold: 5, window_seconds: 300, condition_field: 'severity', condition_value: 'error' })
@@ -37,38 +41,48 @@ export default function RulesPage() {
   return (
     <div>
       <div style={styles.header}>
-        <h2 style={styles.h2}>Regeln</h2>
-        <button onClick={() => setShowNew(v => !v)} style={styles.addBtn}>
-          {showNew ? '✕ Abbrechen' : '+ Neue Regel'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <h2 style={styles.h2}>Regeln</h2>
+          <HelpTip content="Regeln erkennen wiederkehrende Muster in Events. Wenn die Bedingung im definierten Zeitfenster oft genug zutrifft, kann daraus ein Incident entstehen." ariaLabel="Regeln erklaeren" />
+        </div>
+        {canWrite && (
+          <button onClick={() => setShowNew(v => !v)} style={styles.addBtn}>
+            {showNew ? '✕ Abbrechen' : '+ Neue Regel'}
+          </button>
+        )}
       </div>
 
       <GlobalSourceFilterNotice />
 
-      {showNew && (
+      {!canWrite && <div style={styles.readOnlyNotice}>Regeln koennen mit diesem Token nur gelesen werden.</div>}
+
+      {canWrite && showNew && (
         <div style={styles.form}>
-          <h3 style={{ margin: '0 0 1rem 0', fontSize: '0.95rem', color: '#94a3b8' }}>Neue Regel</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+            <h3 style={{ margin: 0, fontSize: '0.95rem', color: '#94a3b8' }}>Neue Regel</h3>
+            <HelpTip content="Definiere hier Name, Severity, Schwellwert und Bedingung fuer eine neue Erkennungsregel. Die Kombination steuert, wann aus Events ein Incident wird." ariaLabel="Neue Regel erklaeren" />
+          </div>
           <div style={styles.formGrid}>
-            <Field label="Name">
+            <Field label="Name" help="Eindeutiger Anzeigename fuer die Regel. Er erscheint spaeter in Incident-Listen und Auswertungen.">
               <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={styles.input} />
             </Field>
-            <Field label="Severity">
+            <Field label="Severity" help="Legt fest, mit welcher Dringlichkeit ein ausgeloester Incident markiert wird.">
               <select value={form.severity} onChange={e => setForm(f => ({ ...f, severity: e.target.value }))} style={styles.input}>
                 {['info', 'warning', 'error', 'critical'].map(s => <option key={s}>{s}</option>)}
               </select>
             </Field>
-            <Field label="Schwellenwert">
+            <Field label="Schwellenwert" help="Anzahl passender Events, die innerhalb des Zeitfensters auftreten muessen, bevor die Regel ausloest.">
               <input type="number" min={1} value={form.threshold} onChange={e => setForm(f => ({ ...f, threshold: +e.target.value }))} style={styles.input} />
             </Field>
-            <Field label="Zeitfenster (s)">
+            <Field label="Zeitfenster (s)" help="Zeitspanne in Sekunden, in der passende Events fuer den Schwellwert zusammengezaehlt werden.">
               <input type="number" min={1} value={form.window_seconds} onChange={e => setForm(f => ({ ...f, window_seconds: +e.target.value }))} style={styles.input} />
             </Field>
-            <Field label="Condition Feld">
+            <Field label="Condition Feld" help="Das Event-Feld, das fuer die Bedingung herangezogen wird, zum Beispiel Severity, Service oder Host.">
               <select value={form.condition_field} onChange={e => setForm(f => ({ ...f, condition_field: e.target.value }))} style={styles.input}>
                 {['severity', 'service', 'host'].map(s => <option key={s}>{s}</option>)}
               </select>
             </Field>
-            <Field label="Condition Wert">
+            <Field label="Condition Wert" help="Der konkrete Wert, auf den das ausgewaehlte Feld geprueft wird. Beispiel: severity=error oder service=nginx.">
               <input value={form.condition_value} onChange={e => setForm(f => ({ ...f, condition_value: e.target.value }))} style={styles.input} />
             </Field>
           </div>
@@ -81,46 +95,57 @@ export default function RulesPage() {
       {isLoading ? (
         <div style={{ color: '#64748b', padding: '2rem' }}>Lade…</div>
       ) : (
-        <div style={styles.table}>
-          <div style={styles.thead}>
-            <span style={{ flex: 2 }}>Name</span>
-            <span style={{ width: 80 }}>Severity</span>
-            <span style={{ width: 80 }}>Schwelle</span>
-            <span style={{ width: 100 }}>Zeitfenster</span>
-            <span style={{ width: 80 }}>Status</span>
-            <span style={{ width: 80 }}>Aktion</span>
+        <>
+          <div style={styles.sectionHeader}>
+            <span style={styles.sectionTitle}>Aktive Regelbasis</span>
+            <HelpTip content="Die Tabelle zeigt, welche Regeln aktiv sind und mit welchem Schwellwert sie arbeiten. Ueber die Aktion schaltest du Regeln schnell an oder aus, ohne sie neu anzulegen." ariaLabel="Regelliste erklaeren" />
           </div>
-          {data?.items.map(r => (
-            <div key={r.id} style={styles.row}>
-              <span style={{ flex: 2, fontWeight: 500 }}>{r.name}</span>
-              <span style={{ width: 80, color: '#f97316' }}>{r.severity}</span>
-              <span style={{ width: 80, color: '#94a3b8' }}>{r.threshold}</span>
-              <span style={{ width: 100, color: '#94a3b8' }}>{r.window_seconds}s</span>
-              <span style={{ width: 80 }}>
-                <span style={{ ...styles.pill, background: r.enabled ? '#16a34a' : '#475569' }}>
-                  {r.enabled ? 'aktiv' : 'inaktiv'}
-                </span>
-              </span>
-              <span style={{ width: 80 }}>
-                <button onClick={() => toggleRule(r.id, r.enabled)} style={styles.toggleBtn}>
-                  {r.enabled ? 'Deakt.' : 'Akt.'}
-                </button>
-              </span>
+          <div style={styles.table}>
+            <div style={styles.thead}>
+              <span style={{ flex: 2 }}>Name</span>
+              <span style={{ width: 80 }}>Severity</span>
+              <span style={{ width: 80 }}>Schwelle</span>
+              <span style={{ width: 100 }}>Zeitfenster</span>
+              <span style={{ width: 80 }}>Status</span>
+              {canWrite && <span style={{ width: 80 }}>Aktion</span>}
             </div>
-          ))}
-          {!data?.items.length && (
-            <div style={{ padding: '2rem', color: '#64748b', textAlign: 'center' }}>Keine Regeln definiert</div>
-          )}
-        </div>
+            {data?.items.map(r => (
+              <div key={r.id} style={styles.row}>
+                <span style={{ flex: 2, fontWeight: 500 }}>{r.name}</span>
+                <span style={{ width: 80, color: '#f97316' }}>{r.severity}</span>
+                <span style={{ width: 80, color: '#94a3b8' }}>{r.threshold}</span>
+                <span style={{ width: 100, color: '#94a3b8' }}>{r.window_seconds}s</span>
+                <span style={{ width: 80 }}>
+                  <span style={{ ...styles.pill, background: r.enabled ? '#16a34a' : '#475569' }}>
+                    {r.enabled ? 'aktiv' : 'inaktiv'}
+                  </span>
+                </span>
+                {canWrite && (
+                  <span style={{ width: 80 }}>
+                    <button onClick={() => toggleRule(r.id, r.enabled)} style={styles.toggleBtn}>
+                      {r.enabled ? 'Deakt.' : 'Akt.'}
+                    </button>
+                  </span>
+                )}
+              </div>
+            ))}
+            {!data?.items.length && (
+              <div style={{ padding: '2rem', color: '#64748b', textAlign: 'center' }}>Keine Regeln definiert</div>
+            )}
+          </div>
+        </>
       )}
     </div>
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, help, children }: { label: string; help?: string; children: React.ReactNode }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-      <label style={{ color: '#64748b', fontSize: '0.78rem' }}>{label}</label>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+        <label style={{ color: '#64748b', fontSize: '0.78rem' }}>{label}</label>
+        {help && <HelpTip content={help} ariaLabel={`${label} erklaeren`} />}
+      </div>
       {children}
     </div>
   )
@@ -130,10 +155,13 @@ const styles: Record<string, React.CSSProperties> = {
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' },
   h2: { margin: 0, fontSize: '1.5rem' },
   addBtn: { background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1rem', cursor: 'pointer', fontWeight: 600 },
+  readOnlyNotice: { background: '#10223f', color: '#bfdbfe', border: '1px solid #1e3a8a', borderRadius: 8, padding: '0.65rem 0.9rem', marginBottom: '1rem', fontSize: '0.86rem' },
   form: { background: '#1e293b', borderRadius: 10, padding: '1.25rem', border: '1px solid #334155', marginBottom: '1.5rem' },
   formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginBottom: '1rem' },
   input: { background: '#0f172a', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.65rem', fontSize: '0.9rem' },
   saveBtn: { background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1.25rem', cursor: 'pointer', fontWeight: 600 },
+  sectionHeader: { display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.65rem' },
+  sectionTitle: { color: '#94a3b8', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' },
   table: { background: '#1e293b', borderRadius: 10, border: '1px solid #334155', overflow: 'hidden' },
   thead: { display: 'flex', gap: '1rem', padding: '0.6rem 1rem', background: '#0f172a', color: '#475569', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase' },
   row: { display: 'flex', gap: '1rem', padding: '0.6rem 1rem', borderTop: '1px solid #1e293b', alignItems: 'center', fontSize: '0.87rem' },

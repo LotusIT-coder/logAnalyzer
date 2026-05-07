@@ -11,7 +11,9 @@ from app.api.v1.router import router as v1_router
 from app.config import get_settings
 from app.db.session import get_engine
 from app.errors import http_exception_handler, unhandled_exception_handler
+from app.ingestion.watcher import WatcherService
 from app.logging_config import RequestLoggingMiddleware, configure_logging
+from app.services.rule_scheduler import RuleSchedulerService
 
 
 @asynccontextmanager
@@ -22,7 +24,17 @@ async def lifespan(app: FastAPI):
     engine = get_engine()
     async with engine.connect():
         pass
+    # Start ingestion watcher
+    watcher = WatcherService(interval_seconds=settings.watcher_interval_seconds)
+    app.state.watcher = watcher
+    await watcher.start()
+    # Start rule evaluation scheduler
+    rule_scheduler = RuleSchedulerService(interval_seconds=settings.rule_scheduler_interval_seconds)
+    app.state.rule_scheduler = rule_scheduler
+    await rule_scheduler.start()
     yield
+    await watcher.stop()
+    await rule_scheduler.stop()
     await engine.dispose()
 
 

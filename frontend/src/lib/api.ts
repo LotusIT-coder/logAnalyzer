@@ -1,7 +1,17 @@
 import axios from 'axios'
 
+function resolveApiBase() {
+  const configuredBase = import.meta.env.VITE_API_BASE_URL?.trim()
+  if (!configuredBase) return '/api/v1'
+
+  const normalizedBase = configuredBase.replace(/\/$/, '')
+  return normalizedBase.endsWith('/api/v1') ? normalizedBase : `${normalizedBase}/api/v1`
+}
+
+const API_BASE = resolveApiBase()
+
 export const api = axios.create({
-  baseURL: '/api/v1',
+  baseURL: API_BASE,
 })
 
 export function setToken(token: string) {
@@ -26,5 +36,5 @@ export function getStoredToken() {
 
 /** Base URL for direct (non-axios) requests like EventSource */
 export function getApiBase() {
-  return '/api/v1'
+  return API_BASE
 }
