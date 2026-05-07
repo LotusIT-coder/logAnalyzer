@@ -1,0 +1,16 @@
+2026-05-08 00:00:57.811 CEST [296687] LOG:  starting PostgreSQL 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
+2026-05-08 00:00:57.811 CEST [296687] LOG:  listening on IPv4 address "127.0.0.1", port 55432
+2026-05-08 00:00:57.813 CEST [296687] FATAL:  could not create lock file "/var/run/postgresql/.s.PGSQL.55432.lock": Keine Berechtigung
+2026-05-08 00:00:57.815 CEST [296687] LOG:  database system is shut down
+2026-05-08 00:01:28.688 CEST [296958] LOG:  starting PostgreSQL 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
+2026-05-08 00:01:28.688 CEST [296958] LOG:  listening on IPv4 address "127.0.0.1", port 55432
+2026-05-08 00:01:28.688 CEST [296958] LOG:  listening on Unix socket "/home/helge/Dokumente/LotusIT/Projekte/logAnalyzer/backend/.local-postgres/run/.s.PGSQL.55432"
+2026-05-08 00:01:28.690 CEST [296961] LOG:  database system was shut down at 2026-05-08 00:00:40 CEST
+2026-05-08 00:01:28.694 CEST [296958] LOG:  database system is ready to accept connections
+2026-05-08 00:02:12.085 CEST [297506] FATAL:  database "loganalyzer" does not exist
+2026-05-08 00:02:35.299 CEST [297698] FATAL:  database "loganalyzer" does not exist
+2026-05-08 00:03:13.451 CEST [298015] FATAL:  database "loganalyzer" does not exist
+2026-05-08 00:06:28.789 CEST [296959] LOG:  checkpoint starting: time
+2026-05-08 00:08:12.176 CEST [296959] LOG:  checkpoint complete: wrote 1038 buffers (6.3%); 0 WAL file(s) added, 0 removed, 0 recycled; write=103.387 s, sync=0.001 s, total=103.387 s; sync files=0, longest=0.000 s, average=0.000 s; distance=5061 kB, estimate=5061 kB; lsn=0/19EB490, redo lsn=0/19E6088
+2026-05-08 00:11:28.267 CEST [296959] LOG:  checkpoint starting: time
+2026-05-08 00:12:35.489 CEST [296959] LOG:  checkpoint complete: wrote 674 buffers (4.1%); 0 WAL file(s) added, 0 removed, 1 recycled; write=67.222 s, sync=0.001 s, total=67.223 s; sync files=0, longest=0.000 s, average=0.000 s; distance=10418 kB, estimate=10418 kB; lsn=0/243C3E0, redo lsn=0/2412A78

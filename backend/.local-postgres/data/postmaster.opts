@@ -1,0 +1,1 @@
+/usr/lib/postgresql/16/bin/postgres "-D" "/home/helge/Dokumente/LotusIT/Projekte/logAnalyzer/backend/.local-postgres/data" "-F" "-p" "55432" "-h" "127.0.0.1" "-k" "/home/helge/Dokumente/LotusIT/Projekte/logAnalyzer/backend/.local-postgres/run"
