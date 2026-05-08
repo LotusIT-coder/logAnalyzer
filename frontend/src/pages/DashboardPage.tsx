@@ -623,9 +623,33 @@ function PanelError({ error }: { error: unknown }) {
 function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
   if (!points.length) return <div style={{ color: '#64748b' }}>Keine Daten</div>
 
-  const W = 400
-  const H = 80
-  const pad = { top: 6, right: 4, bottom: 18, left: 28 }
+  function getChartHeight() {
+    if (typeof window === 'undefined') return 200
+    const w = window.innerWidth
+    if (w < 768) return 140
+    if (w < 1200) return 170
+    return 200
+  }
+
+  function formatCount(v: number) {
+    if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`
+    if (v >= 1_000) return `${(v / 1_000).toFixed(1)}k`
+    return String(v)
+  }
+
+  const [chartHeight, setChartHeight] = useState(getChartHeight)
+
+  useEffect(() => {
+    function onResize() {
+      setChartHeight(getChartHeight())
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  const W = 1000
+  const H = chartHeight
+  const pad = { top: 12, right: 10, bottom: 42, left: 58 }
   const innerW = W - pad.left - pad.right
   const innerH = H - pad.top - pad.bottom
 
@@ -639,21 +663,29 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
   // Y-axis: 0 and max labels
   const yLabels = [
     { val: max, yPos: pad.top },
+    { val: Math.round(max / 2), yPos: pad.top + innerH / 2 },
     { val: 0,   yPos: pad.top + innerH },
   ]
 
-  // X-axis: first and last label
-  const xLabels = points.length > 1
-    ? [
-        { label: dayjs(points[0].ts).format('HH:mm'), xPos: pad.left },
-        { label: dayjs(points[points.length - 1].ts).format('HH:mm'), xPos: pad.left + innerW },
-      ]
-    : []
+  // X-axis: first, 1/3, 2/3, last label (deduplicated for small arrays)
+  const xLabelIndices = Array.from(new Set([
+    0,
+    Math.max(0, Math.floor((points.length - 1) / 3)),
+    Math.max(0, Math.floor(((points.length - 1) * 2) / 3)),
+    Math.max(0, points.length - 1),
+  ]))
+
+  const xLabels = xLabelIndices.map((idx, i) => ({
+    key: i,
+    label: dayjs(points[idx].ts).format('DD.MM HH:mm'),
+    xPos: x(idx),
+  }))
 
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
-      style={{ width: '100%', height: 80, overflow: 'visible' }}
+      preserveAspectRatio="none"
+      style={{ width: '100%', height: chartHeight, overflow: 'visible', display: 'block' }}
       aria-label="Zeitreihen-Liniendiagramm"
     >
       {/* grid line at max */}
@@ -681,14 +713,14 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
         points={polyline}
         fill="none"
         stroke="#3b82f6"
-        strokeWidth={2}
+        strokeWidth={3}
         strokeLinejoin="round"
         strokeLinecap="round"
       />
 
       {/* data-point dots (only when few points) */}
       {points.length <= 30 && points.map((p, i) => (
-        <circle key={i} cx={x(i)} cy={y(p.count)} r={2.5} fill="#3b82f6">
+        <circle key={i} cx={x(i)} cy={y(p.count)} r={3} fill="#3b82f6">
           <title>{`${dayjs(p.ts).format('DD.MM HH:mm')}: ${p.count}`}</title>
         </circle>
       ))}
@@ -701,21 +733,21 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
           y={yPos}
           textAnchor="end"
           dominantBaseline="middle"
-          fontSize={9}
+          fontSize={12}
           fill="#64748b"
         >
-          {val}
+          {formatCount(val)}
         </text>
       ))}
 
       {/* X-axis labels */}
-      {xLabels.map(({ label, xPos }, i) => (
+      {xLabels.map(({ key, label, xPos }, i) => (
         <text
-          key={i}
+          key={key}
           x={xPos}
-          y={H - 2}
-          textAnchor={i === 0 ? 'start' : 'end'}
-          fontSize={9}
+          y={H - 6}
+          textAnchor={i === 0 ? 'start' : i === xLabels.length - 1 ? 'end' : 'middle'}
+          fontSize={13}
           fill="#64748b"
         >
           {label}
