@@ -6,7 +6,7 @@ from math import floor
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select, text
+from sqlalchemy import Integer, cast, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.source_filters import resolve_source_ids
@@ -63,13 +63,13 @@ async def timeseries(
         # not one row per event. Scales to millions of events with no extra memory.
         bucket_expr = (
             func.date_trunc("hour", Event.timestamp)
-            + func.cast(
+            + cast(
                 func.floor(
                     func.extract("minute", Event.timestamp) / bucket_minutes
                 ) * bucket_minutes,
-                text("int"),
+                Integer,
             )
-            * text(f"interval '1 minute'")
+            * text("interval '1 minute'")
         ).label("bucket")
         stmt = (
             select(bucket_expr, func.count().label("count"))
