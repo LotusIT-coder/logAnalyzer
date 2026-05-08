@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
+from app.db.session import get_session_factory
 from app.schemas.source import (
     SourceCreateRequest,
     SourceListResponse,
@@ -85,20 +86,24 @@ async def tail_source(
     source_id: str,
     request: Request,
     lines: int = 50,
-    session: AsyncSession = Depends(get_db),
 ):
     """Server-Sent Events stream that tails the source file in real-time.
 
     Sends the last `lines` lines on connect, then streams new lines as they appear.
     Each SSE event has the form: ``data: <raw log line>\\n\\n``
     """
-    source = await source_service.get_source(session, source_id)
-    if source is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found.")
-    if source.type != "file":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Live-tail only supported for file sources.")
-
-    path: str = source.config_json.get("path", "")
+    # Use a short-lived session only for the source lookup so that no DB
+    # connection is held open for the duration of the (potentially long-lived)
+    # SSE connection.
+    factory = get_session_factory()
+    async with factory() as session:
+        source = await source_service.get_source(session, source_id)
+        if source is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found.")
+        if source.type != "file":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Live-tail only supported for file sources.")
+        path: str = source.config_json.get("path", "")
+    # Session is now closed — the generator below is purely file-based.
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File not found: {path}")
     if not os.access(path, os.R_OK):

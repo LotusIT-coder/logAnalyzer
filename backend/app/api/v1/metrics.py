@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from math import floor
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -9,6 +10,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.source_filters import resolve_source_ids
+from app.config import get_settings
 from app.dependencies import get_db
 from app.domain.models import Event
 from app.schemas.domain import (
@@ -29,6 +31,8 @@ _BUCKET_INTERVALS = {
     "15m": "15 minutes",
     "1h": "1 hour",
 }
+# Safety cap for the Python-fallback timeseries path (SQLite / tests).
+_TIMESERIES_PYTHON_LIMIT = 200_000
 
 
 def _default_range() -> tuple[datetime, datetime]:
@@ -51,11 +55,41 @@ async def timeseries(
     if resolved_source_ids == []:
         return TimeseriesResponse(points=[])
 
-    # Fetch raw timestamps — bucket in Python for DB portability (SQLite + PostgreSQL).
+    bucket_minutes = {"1m": 1, "5m": 5, "15m": 15, "1h": 60}.get(bucket, 5)
+    is_postgres = get_settings().database_url.startswith("postgresql")
+
+    if is_postgres:
+        # Push bucketing entirely into PostgreSQL — returns one row per bucket,
+        # not one row per event. Scales to millions of events with no extra memory.
+        bucket_expr = (
+            func.date_trunc("hour", Event.timestamp)
+            + func.cast(
+                func.floor(
+                    func.extract("minute", Event.timestamp) / bucket_minutes
+                ) * bucket_minutes,
+                text("int"),
+            )
+            * text(f"interval '1 minute'")
+        ).label("bucket")
+        stmt = (
+            select(bucket_expr, func.count().label("count"))
+            .where(Event.timestamp >= from_dt, Event.timestamp <= to_dt)
+            .group_by(text("bucket"))
+            .order_by(text("bucket"))
+        )
+        if resolved_source_ids is not None:
+            stmt = stmt.where(Event.source_id.in_(resolved_source_ids))
+        result = await session.execute(stmt)
+        points = [TimeseriesPoint(ts=row.bucket, count=row.count) for row in result]
+        return TimeseriesResponse(points=points)
+
+    # SQLite fallback (used in tests): fetch timestamps with a safety LIMIT
+    # and bucket in Python.
     stmt = (
         select(Event.timestamp)
         .where(Event.timestamp >= from_dt, Event.timestamp <= to_dt)
         .order_by(Event.timestamp)
+        .limit(_TIMESERIES_PYTHON_LIMIT)
     )
     if resolved_source_ids is not None:
         stmt = stmt.where(Event.source_id.in_(resolved_source_ids))
@@ -63,13 +97,11 @@ async def timeseries(
     result = await session.execute(stmt)
     timestamps = [row[0] for row in result.all()]
 
-    bucket_minutes = {"1m": 1, "5m": 5, "15m": 15, "1h": 60}.get(bucket, 5)
     merged: dict[datetime, int] = {}
     for ts in timestamps:
-        # Ensure timezone-aware for consistent bucketing
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
-        minutes = (ts.minute // bucket_minutes) * bucket_minutes
+        minutes = floor(ts.minute / bucket_minutes) * bucket_minutes
         bucket_ts = ts.replace(minute=minutes, second=0, microsecond=0)
         merged[bucket_ts] = merged.get(bucket_ts, 0) + 1
 
