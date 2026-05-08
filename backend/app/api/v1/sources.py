@@ -102,17 +102,20 @@ async def tail_source(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found.")
         if source.type != "file":
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Live-tail only supported for file sources.")
-        path: str = source.config_json.get("path", "")
+        resolved_path, resolve_err = source_service.resolve_source_path(source)
     # Session is now closed — the generator below is purely file-based.
-    if not path or not os.path.exists(path):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File not found: {path}")
-    if not os.access(path, os.R_OK):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"File not readable: {path}")
+    if resolve_err or not resolved_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=resolve_err or "File not found.")
+    if not os.access(resolved_path, os.R_OK):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"File not readable: {resolved_path}")
 
     async def _generator():
+        active_path = resolved_path
+        regex_mode = source_service.source_path_is_regex(source)
+
         # --- send last N lines on connect ---
         try:
-            with open(path, "r", errors="replace") as fh:
+            with open(active_path, "r", errors="replace") as fh:
                 all_lines = fh.readlines()
                 tail_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
                 for line in tail_lines:
@@ -127,8 +130,13 @@ async def tail_source(
         while True:
             if await request.is_disconnected():
                 break
+            if regex_mode:
+                latest_path, _ = source_service.resolve_source_path(source)
+                if latest_path and latest_path != active_path:
+                    active_path = latest_path
+                    pos = 0
             try:
-                with open(path, "r", errors="replace") as fh:
+                with open(active_path, "r", errors="replace") as fh:
                     fh.seek(0, 2)
                     new_size = fh.tell()
                     if new_size < pos:

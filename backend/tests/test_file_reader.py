@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 from sqlalchemy import select
@@ -119,3 +120,41 @@ class TestSpecializedSourceIngestion:
         assert event.host == "srv-auth-01"
         assert event.severity == "error"
         assert event.timestamp.isoformat().startswith("2026-05-06T10:01:00")
+
+    async def test_file_source_regex_path_tracks_rotated_filenames(self, db_session, tmp_path):
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        day1 = log_dir / "lotus-client-2026-05-01.log"
+        day2 = log_dir / "lotus-client-2026-05-02.log"
+        day1.write_text("line-1\n", encoding="utf-8")
+
+        source = Source(
+            name="lotus-client",
+            type="file",
+            config_json={
+                "path": str(log_dir / r"lotus-client-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log"),
+                "path_regex": True,
+            },
+            enabled=True,
+        )
+        db_session.add(source)
+        await db_session.flush()
+
+        first = await ingest_source(db_session, source)
+        assert first["events_created"] == 1
+
+        day1.write_text("line-1\nline-2\n", encoding="utf-8")
+        second = await ingest_source(db_session, source)
+        assert second["events_created"] == 1
+
+        day2.write_text("line-a\n", encoding="utf-8")
+        os.utime(day2, None)
+
+        third = await ingest_source(db_session, source)
+        assert third["events_created"] == 1
+
+        result = await db_session.execute(select(Event).where(Event.source_id == source.id))
+        events = list(result.scalars().all())
+        assert len(events) == 3
+        messages = sorted(e.message for e in events)
+        assert messages == ["line-1", "line-2", "line-a"]

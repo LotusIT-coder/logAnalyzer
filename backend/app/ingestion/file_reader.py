@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models import Event, ParserProfile, RawLog, Source
 from app.parser.pipeline import parse_line
+from app.services.source_service import resolve_source_path, source_path_is_regex
 
 
 _MAX_LINES_PER_RUN = 10_000  # safety cap per source per ingestion cycle
@@ -35,8 +36,13 @@ _JOURNALD_PRIORITY_MAP = {
 }
 
 
-async def _get_last_cursor(session: AsyncSession, source_id: str) -> Optional[int]:
-    """Return the byte offset stored in the most-recently ingested raw_log row."""
+async def _get_last_cursor(session: AsyncSession, source_id: str) -> tuple[Optional[str], Optional[int]]:
+    """Return (path, byte_offset) from the most-recent raw_log cursor row.
+
+    Backward compatibility:
+    - old format: "<offset>"
+    - new format: "<path>\t<offset>"
+    """
     result = await session.execute(
         select(RawLog.cursor)
         .where(RawLog.source_id == source_id, RawLog.cursor.isnot(None))
@@ -45,26 +51,22 @@ async def _get_last_cursor(session: AsyncSession, source_id: str) -> Optional[in
     )
     row = result.scalar_one_or_none()
     if row is None:
-        return None
+        return None, None
+    row_str = str(row)
+    if "\t" in row_str:
+        maybe_path, maybe_off = row_str.rsplit("\t", 1)
+        try:
+            return maybe_path, int(maybe_off)
+        except (ValueError, TypeError):
+            return maybe_path, None
     try:
-        return int(row)
+        return None, int(row_str)
     except (ValueError, TypeError):
-        return None
+        return None, None
 
 
 def _line_hash(line: str) -> str:
     return hashlib.sha256(line.encode()).hexdigest()
-
-
-def _source_path(source: Source) -> str:
-    cfg = source.config_json or {}
-    return (
-        cfg.get("path")
-        or cfg.get("log_path")
-        or cfg.get("docker_log_path")
-        or cfg.get("journal_path")
-        or ""
-    )
 
 
 def _parse_specialized_source_line(source: Source, line: str) -> Optional[Dict[str, Any]]:
@@ -153,15 +155,30 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
     if source.type not in _PATH_BASED_SOURCE_TYPES:
         return {"source_id": source.id, "skipped": True, "reason": "non-file source"}
 
-    path = _source_path(source)
-    if not path or not os.path.exists(path):
-        return {"source_id": source.id, "skipped": True, "reason": f"file not found: {path}"}
+    path, path_err = resolve_source_path(source)
+    if path_err or not path:
+        return {
+            "source_id": source.id,
+            "skipped": True,
+            "reason": path_err or "file path could not be resolved",
+        }
 
     file_size = os.path.getsize(path)
-    last_cursor = await _get_last_cursor(session, source.id)
+    last_path, last_cursor = await _get_last_cursor(session, source.id)
 
-    # Handle log rotation: file shrunk since last read
-    start_offset = 0 if (last_cursor is None or last_cursor > file_size) else last_cursor
+    # Handle rotation and regex filename changes safely.
+    if last_cursor is None:
+        start_offset = 0
+    elif last_cursor > file_size:
+        start_offset = 0
+    elif last_path is not None and last_path != path:
+        start_offset = 0
+    elif last_path is None and source_path_is_regex(source):
+        # Legacy cursor format had no path info; with regex we cannot verify if
+        # the filename changed, so we ingest from start once to avoid skipping.
+        start_offset = 0
+    else:
+        start_offset = last_cursor
 
     # Load enabled parser profiles ordered by priority
     profiles_result = await session.execute(
@@ -198,7 +215,7 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
                 "source_id": source.id,
                 "raw_line": stripped,
                 "raw_hash": _line_hash(stripped),
-                "cursor": str(new_cursor),
+                "cursor": f"{path}\t{new_cursor}",
             })
             lines_ingested += 1
 

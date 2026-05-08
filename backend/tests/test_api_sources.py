@@ -97,3 +97,26 @@ class TestSourcesCRUD:
         payload = {"name": "bad", "type": "invalid_type", "config": {}, "enabled": True}
         resp = await client.post("/api/v1/sources", json=payload)
         assert resp.status_code == 422
+
+    async def test_source_test_supports_regex_path(self, client: AsyncClient, tmp_path):
+        logs_dir = tmp_path / "lotus-logs"
+        logs_dir.mkdir()
+        (logs_dir / "lotus-client-2026-05-01.log").write_text("hello\n", encoding="utf-8")
+
+        create = await client.post("/api/v1/sources", json={
+            "name": "lotus-client",
+            "type": "file",
+            "config": {
+                "path": str(logs_dir / r"lotus-client-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log"),
+                "path_regex": True,
+            },
+            "enabled": True,
+        })
+        assert create.status_code == 201
+        source_id = create.json()["id"]
+
+        tested = await client.post(f"/api/v1/sources/{source_id}/test")
+        assert tested.status_code == 200
+        body = tested.json()
+        assert body["ok"] is True
+        assert "File accessible:" in (body.get("details") or "")

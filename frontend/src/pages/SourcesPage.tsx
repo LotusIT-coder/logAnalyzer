@@ -9,6 +9,7 @@ import { getApiErrorMessage } from '../lib/errors'
 function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(source.name ?? '')
   const [path, setPath] = useState(source.config?.path ?? '')
+  const [pathRegex, setPathRegex] = useState(Boolean(source.config?.path_regex))
   const [enabled, setEnabled] = useState(source.enabled ?? true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -17,7 +18,11 @@ function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse;
     setSaving(true)
     setError('')
     try {
-      await patchSource(source.id, { name, config: { path }, enabled })
+      await patchSource(source.id, {
+        name,
+        config: { ...source.config, path, path_regex: pathRegex },
+        enabled,
+      })
       onSaved()
       onClose()
     } catch (error: unknown) {
@@ -40,6 +45,10 @@ function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse;
             <label style={styles.label}>Dateipfad</label>
             <input value={path} onChange={e => setPath(e.target.value)} style={styles.input} />
           </div>
+          <label style={styles.inlineCheckbox}>
+            <input type="checkbox" checked={pathRegex} onChange={e => setPathRegex(e.target.checked)} />
+            Dateipfad als Regex behandeln (Dateiname)
+          </label>
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.88rem', color: '#94a3b8', cursor: 'pointer' }}>
             <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
             Aktiv
@@ -164,6 +173,7 @@ export default function SourcesPage() {
   const [showNew, setShowNew] = useState(false)
   const [name, setName] = useState('')
   const [path, setPath] = useState('')
+  const [pathRegex, setPathRegex] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testResults, setTestResults] = useState<Record<string, SourceTestResponse>>({})
   const [tailSource, setTailSource] = useState<SourceResponse | null>(null)
@@ -173,11 +183,12 @@ export default function SourcesPage() {
   async function handleCreate() {
     setSaving(true)
     try {
-      await createSource({ name, type: 'file', config: { path }, enabled: true })
+      await createSource({ name, type: 'file', config: { path, path_regex: pathRegex }, enabled: true })
       qc.invalidateQueries({ queryKey: ['sources'] })
       setShowNew(false)
       setName('')
       setPath('')
+      setPathRegex(false)
     } finally {
       setSaving(false)
     }
@@ -235,11 +246,15 @@ export default function SourcesPage() {
             <div style={{ ...styles.field, flex: 2 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                 <label style={styles.label}>Dateipfad</label>
-                <HelpTip content="Absoluter Pfad zur Logdatei auf dem Host. Nur aus dieser Datei wird spaeter eingelesen oder live getailt." ariaLabel="Dateipfad erklaeren" />
+                <HelpTip content="Absoluter Pfad zur Logdatei auf dem Host. Mit aktivierter Regex-Option wird nur der Dateiname als Regex gematcht (z. B. bei rotierten Dateien)." ariaLabel="Dateipfad erklaeren" />
               </div>
-              <input value={path} onChange={e => setPath(e.target.value)} style={styles.input} placeholder="/var/log/syslog" />
+              <input value={path} onChange={e => setPath(e.target.value)} style={styles.input} placeholder="/var/log/syslog oder /home/user/logs/lotus-client-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log" />
             </div>
           </div>
+          <label style={styles.inlineCheckbox}>
+            <input type="checkbox" checked={pathRegex} onChange={e => setPathRegex(e.target.checked)} />
+            Dateipfad als Regex behandeln (Dateiname)
+          </label>
           <button onClick={handleCreate} disabled={saving || !name || !path} style={styles.saveBtn}>
             {saving ? 'Speichere...' : 'Erstellen'}
           </button>
@@ -266,6 +281,11 @@ export default function SourcesPage() {
                   <span style={{ ...styles.badge, background: '#1e3a5f', color: '#93c5fd' }}>
                     {src.type}
                   </span>
+                  {Boolean(src.config?.path_regex) && (
+                    <span style={{ ...styles.badge, background: '#5b21b6', color: '#ede9fe' }}>
+                      regex
+                    </span>
+                  )}
                 </div>
                 <div style={{ display: 'flex', gap: '0.4rem' }}>
                   <button
@@ -323,6 +343,7 @@ const styles: Record<string, React.CSSProperties> = {
   liveHint: { background: '#10223f', color: '#bfdbfe', border: '1px solid #1e3a8a', borderRadius: 8, padding: '0.65rem 0.9rem', marginBottom: '1rem', fontSize: '0.86rem' },
   form: { background: '#1e293b', borderRadius: 10, padding: '1.25rem', border: '1px solid #334155', marginBottom: '1.5rem' },
   field: { display: 'flex', flexDirection: 'column', gap: '0.3rem', flex: 1 },
+  inlineCheckbox: { display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#94a3b8', fontSize: '0.84rem', marginTop: '0.5rem', cursor: 'pointer' },
   label: { color: '#64748b', fontSize: '0.78rem' },
   input: { background: '#0f172a', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.65rem', fontSize: '0.9rem' },
   saveBtn: { marginTop: '0.75rem', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1.25rem', cursor: 'pointer', fontWeight: 600 },
