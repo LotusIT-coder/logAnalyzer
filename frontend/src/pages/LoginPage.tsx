@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { useAuth } from '../ctx/AuthContext'
+import { useAuth } from '../ctx/useAuth'
 
 export default function LoginPage() {
   const { login, isLoading } = useAuth()

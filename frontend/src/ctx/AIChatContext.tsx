@@ -2,52 +2,13 @@
  * Global AI chat state – persists across tab navigation.
  * Pending jobs are polled every 2 s until completed/failed.
  */
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { aiChatAsync, getAIJob, type AIContextPayload } from '../lib/requests'
-import { useSourceFilter } from './SourceFilterContext'
-
-export interface ChatMessage {
-  role: 'user' | 'assistant'
-  content: string
-  references?: string[]
-  pending?: boolean   // true while job is in-flight
-  jobId?: string
-  error?: boolean
-}
-
-interface AIChatCtx {
-  messages: ChatMessage[]
-  model: string
-  setModel: (m: string) => void
-  pendingCount: number
-  send: (text: string) => Promise<void>
-  clearMessages: () => void
-  attachedContext: AIContextPayload | null
-  attachContext: (context: AIContextPayload | null) => void
-  clearAttachedContext: () => void
-}
-
-const Ctx = createContext<AIChatCtx>({
-  messages: [],
-  model: '',
-  setModel: () => undefined,
-  pendingCount: 0,
-  send: async () => undefined,
-  clearMessages: () => undefined,
-  attachedContext: null,
-  attachContext: () => undefined,
-  clearAttachedContext: () => undefined,
-})
+import { getApiErrorMessage } from '../lib/errors'
+import { AIChatContext, type ChatMessage } from './AIChatContext.shared'
+import { useSourceFilter } from './useSourceFilter'
 
 const POLL_INTERVAL_MS = 2000
-
-function extractErrorMessage(err: any): string {
-  const detail = err?.response?.data?.detail
-  const message = err?.response?.data?.message
-  const own = err?.message
-  const candidate = [detail, message, own].find(v => typeof v === 'string' && v.trim().length > 0)
-  return candidate ?? 'Unbekannter Fehler'
-}
 
 export function AIChatProvider({ children }: { children: React.ReactNode }) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -107,8 +68,9 @@ export function AIChatProvider({ children }: { children: React.ReactNode }) {
     }
   }, [pendingCount, pollJobs])
 
-  const send = useCallback(async (text: string) => {
-    if (!text.trim() || !model) return
+  const send = useCallback(async (text: string, modelOverride?: string) => {
+    const activeModel = modelOverride ?? model
+    if (!text.trim() || !activeModel) return
 
     // Add user message
     setMessages(prev => [...prev, { role: 'user', content: text }])
@@ -118,7 +80,7 @@ export function AIChatProvider({ children }: { children: React.ReactNode }) {
 
     // Submit async job
     try {
-      const { job_id } = await aiChatAsync(model, text, {
+      const { job_id } = await aiChatAsync(activeModel, text, {
         ...sourceFilterRef.current,
         context: attachedContextRef.current,
       })
@@ -129,18 +91,18 @@ export function AIChatProvider({ children }: { children: React.ReactNode }) {
         pendingJobs.current.set(job_id, idx)
         return prev.map((m, i) => i === idx ? { ...m, jobId: job_id } : m)
       })
-    } catch (e: any) {
+    } catch (error: unknown) {
       setMessages(prev => {
         const idx = prev.findLastIndex(m => m.pending && !m.jobId)
         if (idx < 0) return prev
         return prev.map((m, i) =>
           i === idx
-            ? { role: 'assistant', content: `Fehler: ${extractErrorMessage(e)}`, pending: false, error: true }
+            ? { role: 'assistant', content: `Fehler: ${getApiErrorMessage(error)}`, pending: false, error: true }
             : m
         )
       })
     }
-  }, [model, messages.length])
+  }, [model])
 
   const clearMessages = useCallback(() => {
     pendingJobs.current.clear()
@@ -156,7 +118,7 @@ export function AIChatProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   return (
-    <Ctx.Provider value={{
+    <AIChatContext.Provider value={{
       messages,
       model,
       setModel,
@@ -168,10 +130,6 @@ export function AIChatProvider({ children }: { children: React.ReactNode }) {
       clearAttachedContext,
     }}>
       {children}
-    </Ctx.Provider>
+    </AIChatContext.Provider>
   )
-}
-
-export function useAIChat() {
-  return useContext(Ctx)
 }

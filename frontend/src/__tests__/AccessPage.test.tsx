@@ -19,6 +19,11 @@ import {
   getTokens,
   createToken,
   revokeToken,
+  type CreateTokenResponse,
+  type TokenListItem,
+  type TokenListResponse,
+  type UserListResponse,
+  type UserResponse,
 } from '../lib/requests'
 
 const mockGetUsers = vi.mocked(getUsers)
@@ -60,7 +65,7 @@ beforeEach(() => {
         enabled: true,
       },
     ],
-  } as any)
+  } satisfies UserListResponse)
   mockGetTokens.mockResolvedValue({
     items: [
       {
@@ -73,22 +78,27 @@ beforeEach(() => {
         revoked_at: null,
       },
     ],
-  } as any)
+  } satisfies TokenListResponse)
   mockCreateUser.mockResolvedValue({
     id: 'user-2',
     name: 'Bob Builder',
     email: 'bob@example.com',
     role: 'operator',
     enabled: true,
-  } as any)
+  } satisfies UserResponse)
   mockCreateToken.mockResolvedValue({
     token: 'secret-token-value',
     token_id: 'token-2',
-  } as any)
+  } satisfies CreateTokenResponse)
   mockRevokeToken.mockResolvedValue({
     id: 'token-1',
+    name: 'Ops token',
+    role: 'operator',
+    user_id: 'user-1',
+    scopes: ['events:read'],
+    created_at: '2026-05-06T10:00:00Z',
     revoked_at: '2026-05-06T10:30:00Z',
-  } as any)
+  } satisfies TokenListItem)
 })
 
 describe('AccessPage', () => {

@@ -3,7 +3,8 @@ import { getRules, createRule, patchRule } from '../lib/requests'
 import { useState } from 'react'
 import GlobalSourceFilterNotice from '../components/GlobalSourceFilterNotice'
 import HelpTip from '../components/HelpTip'
-import { hasScope, useAuth } from '../ctx/AuthContext'
+import { hasScope } from '../ctx/authScopes'
+import { useAuth } from '../ctx/useAuth'
 
 export default function RulesPage() {
   const qc = useQueryClient()

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 const TOUR_STORAGE_KEY = 'lotus-analyzer-onboarding-v1'
 
@@ -36,20 +36,16 @@ const STEPS = [
 ]
 
 export default function QuickTutorial() {
-  const [welcomeOpen, setWelcomeOpen] = useState(false)
+  const [welcomeOpen, setWelcomeOpen] = useState(() => {
+    if (typeof window === 'undefined') return false
+    try {
+      return !window.localStorage.getItem(TOUR_STORAGE_KEY)
+    } catch {
+      return false
+    }
+  })
   const [open, setOpen] = useState(false)
   const [stepIndex, setStepIndex] = useState(0)
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    try {
-      if (!window.localStorage.getItem(TOUR_STORAGE_KEY)) {
-        setWelcomeOpen(true)
-      }
-    } catch {
-      // Ignore storage access issues and fall back to manual opening.
-    }
-  }, [])
 
   function markSeen() {
     if (typeof window === 'undefined') return

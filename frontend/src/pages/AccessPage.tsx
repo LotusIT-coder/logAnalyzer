@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { useAuth } from '../ctx/AuthContext'
+import { useAuth } from '../ctx/useAuth'
+import { getApiErrorMessage } from '../lib/errors'
 import {
   createToken,
   createUser,
@@ -44,8 +45,8 @@ export default function AccessPage() {
     enabled: isAdmin(me?.role, me?.scopes),
   })
 
-  const users = usersQuery.data?.items ?? []
-  const tokens = tokensQuery.data?.items ?? []
+  const users = useMemo(() => usersQuery.data?.items ?? [], [usersQuery.data?.items])
+  const tokens = useMemo(() => tokensQuery.data?.items ?? [], [tokensQuery.data?.items])
   const userNames = useMemo(
     () => new Map(users.map(user => [user.id, user.name])),
     [users],
@@ -71,8 +72,8 @@ export default function AccessPage() {
       setUserPassword('')
       setUserRole('viewer')
       await queryClient.invalidateQueries({ queryKey: ['auth', 'users'] })
-    } catch (requestError: any) {
-      setError(requestError?.response?.data?.detail ?? 'Benutzer konnte nicht angelegt werden.')
+    } catch (requestError: unknown) {
+      setError(getApiErrorMessage(requestError, 'Benutzer konnte nicht angelegt werden.'))
     } finally {
       setUserBusy(false)
     }
@@ -93,8 +94,8 @@ export default function AccessPage() {
       setTokenRole('viewer')
       setSelectedUserId('')
       await queryClient.invalidateQueries({ queryKey: ['auth', 'tokens'] })
-    } catch (requestError: any) {
-      setError(requestError?.response?.data?.detail ?? 'Token konnte nicht erzeugt werden.')
+    } catch (requestError: unknown) {
+      setError(getApiErrorMessage(requestError, 'Token konnte nicht erzeugt werden.'))
     } finally {
       setTokenBusy(false)
     }
@@ -106,8 +107,8 @@ export default function AccessPage() {
     try {
       await revokeToken(tokenId)
       await queryClient.invalidateQueries({ queryKey: ['auth', 'tokens'] })
-    } catch (requestError: any) {
-      setError(requestError?.response?.data?.detail ?? 'Token konnte nicht widerrufen werden.')
+    } catch (requestError: unknown) {
+      setError(getApiErrorMessage(requestError, 'Token konnte nicht widerrufen werden.'))
     } finally {
       setRevokeBusyId(null)
     }

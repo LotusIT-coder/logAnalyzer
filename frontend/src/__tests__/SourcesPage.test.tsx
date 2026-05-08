@@ -13,7 +13,7 @@ vi.mock('../lib/requests', () => ({
   deleteSource: vi.fn(),
 }))
 
-import { getSources } from '../lib/requests'
+import { getSources, type SourceResponse } from '../lib/requests'
 
 const mockGetSources = vi.mocked(getSources)
 
@@ -42,7 +42,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockGetSources.mockResolvedValue([
     { id: 'source-1', name: 'Syslog', type: 'file', enabled: true, config: { path: '/var/log/syslog' } },
-  ] as any)
+  ] satisfies SourceResponse[])
 })
 
 describe('SourcesPage', () => {

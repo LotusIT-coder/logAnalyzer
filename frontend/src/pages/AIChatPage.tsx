@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
-import { getAIModels } from '../lib/requests'
+import { getAIModels, type AIModelResponse } from '../lib/requests'
 import { useState, useRef, useEffect } from 'react'
-import { useAIChat } from '../ctx/AIChatContext'
-import { useSourceFilter } from '../ctx/SourceFilterContext'
+import { useAIChat } from '../ctx/useAIChat'
+import { useSourceFilter } from '../ctx/useSourceFilter'
 import HelpTip from '../components/HelpTip'
 
 function ReferencedLogs({ lines }: { lines: string[] }) {
@@ -82,27 +82,21 @@ const badgeStyles: Record<string, React.CSSProperties> = {
 export default function AIChatPage() {
   const { data: models = [] } = useQuery({ queryKey: ['ai-models'], queryFn: getAIModels })
   const { messages, model, setModel, pendingCount, send, clearMessages, attachedContext, clearAttachedContext } = useAIChat()
-  const [input, setInput] = useState('')
+  const [draft, setDraft] = useState({ text: '', appliedPrompt: '' })
   const bottomRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (models.length && !model) setModel((models[0] as any).name)
-  }, [models])
+  const selectedModel = model || models[0]?.name || ''
+  const attachedPrompt = attachedContext?.prompt?.trim() ?? ''
+  const input = draft.text || (draft.appliedPrompt === attachedPrompt ? '' : attachedPrompt)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  useEffect(() => {
-    if (attachedContext?.prompt && !input.trim()) {
-      setInput(attachedContext.prompt)
-    }
-  }, [attachedContext?.prompt])
-
   function handleSend() {
     if (!input.trim() || pendingCount > 0) return
-    send(input.trim())
-    setInput('')
+    if (model !== selectedModel) setModel(selectedModel)
+    send(input.trim(), selectedModel)
+    setDraft({ text: '', appliedPrompt: attachedPrompt })
   }
 
   return (
@@ -117,8 +111,8 @@ export default function AIChatPage() {
             <button onClick={clearMessages} style={styles.clearBtn} title="Verlauf löschen">✕ Verlauf</button>
           )}
           <div style={styles.modelWrap}>
-            <select value={model} onChange={e => setModel(e.target.value)} style={styles.select}>
-              {(models as any[]).map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
+            <select value={selectedModel} onChange={e => setModel(e.target.value)} style={styles.select}>
+              {models.map((m: AIModelResponse) => <option key={m.name} value={m.name}>{m.name}</option>)}
             </select>
             <HelpTip content="Hier waehlst du das lokale Sprachmodell fuer die Analyse aus. Unterschiedliche Modelle reagieren unterschiedlich schnell und tiefgehend." ariaLabel="Modellauswahl erklaeren" />
           </div>
@@ -167,7 +161,7 @@ export default function AIChatPage() {
         </div>
         <textarea
           value={input}
-          onChange={e => setInput(e.target.value)}
+          onChange={e => setDraft({ text: e.target.value, appliedPrompt: attachedPrompt })}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }}
           placeholder="Nachricht eingeben… (Enter zum Senden, Shift+Enter für Zeilenumbruch)"
           rows={3}

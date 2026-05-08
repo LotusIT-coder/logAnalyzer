@@ -10,7 +10,7 @@ vi.mock('../lib/requests', () => ({
   getSources: vi.fn(),
 }))
 
-import { getEvents, getSources } from '../lib/requests'
+import { getEvents, getSources, type EventListResponse, type SourceResponse } from '../lib/requests'
 
 const mockGetEvents = vi.mocked(getEvents)
 const mockGetSources = vi.mocked(getSources)
@@ -33,8 +33,8 @@ function renderPage(initialPath = '/events') {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockGetSources.mockResolvedValue([{ id: 'source-123', name: 'Syslog', config: { path: '/var/log/syslog' } }] as any)
-  mockGetEvents.mockResolvedValue({ items: [], next_cursor: undefined } as any)
+  mockGetSources.mockResolvedValue([{ id: 'source-123', name: 'Syslog', type: 'file', enabled: true, config: { path: '/var/log/syslog' } }] satisfies SourceResponse[])
+  mockGetEvents.mockResolvedValue({ items: [], next_cursor: undefined } satisfies EventListResponse)
 })
 
 describe('EventsPage', () => {

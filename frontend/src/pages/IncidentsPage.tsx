@@ -3,7 +3,8 @@ import { getIncidents, patchIncident } from '../lib/requests'
 import dayjs from 'dayjs'
 import { useState } from 'react'
 import HelpTip from '../components/HelpTip'
-import { hasScope, useAuth } from '../ctx/AuthContext'
+import { hasScope } from '../ctx/authScopes'
+import { useAuth } from '../ctx/useAuth'
 
 const STATUS_COLOR: Record<string, string> = {
   open: '#ef4444',

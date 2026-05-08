@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { getEvents, getSources } from '../lib/requests'
+import { getEvents, getSources, type EventResponse, type SourceResponse } from '../lib/requests'
 import dayjs from 'dayjs'
 import { getApiBase, getStoredToken } from '../lib/api'
 import HelpTip from '../components/HelpTip'
@@ -15,6 +15,10 @@ const SEV_COLOR: Record<string, string> = {
 }
 
 const SEVERITIES = ['debug', 'info', 'warning', 'error', 'critical']
+
+function getInitialFilterValue(searchParams: URLSearchParams, key: string) {
+  return searchParams.get(key) ?? ''
+}
 
 function formatDateRange(fromTime: string, toTime: string) {
   if (!fromTime && !toTime) return null
@@ -33,10 +37,10 @@ function buildContextItems(params: {
   host: string
   service: string
   search: string
-  sources: any[]
+  sources: SourceResponse[]
 }) {
   const items: string[] = []
-  const source = params.sourceId ? params.sources.find((entry: any) => entry.id === params.sourceId) : null
+  const source = params.sourceId ? params.sources.find(entry => entry.id === params.sourceId) : null
   const sourceIds = params.sourceIdsCsv ? params.sourceIdsCsv.split(',').map(value => value.trim()).filter(Boolean) : []
   const sourcePaths = params.sourcePathsCsv ? params.sourcePathsCsv.split(',').map(value => value.trim()).filter(Boolean) : []
   const rangeLabel = formatDateRange(params.fromTime, params.toTime)
@@ -54,7 +58,7 @@ function buildContextItems(params: {
   return items
 }
 
-function LiveTailModal({ source, onClose }: { source: any; onClose: () => void }) {
+function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: () => void }) {
   const [lines, setLines] = useState<string[]>([])
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState('')
@@ -62,7 +66,10 @@ function LiveTailModal({ source, onClose }: { source: any; onClose: () => void }
   const [filter, setFilter] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
   const pausedRef = useRef(false)
-  pausedRef.current = paused
+
+  useEffect(() => {
+    pausedRef.current = paused
+  }, [paused])
 
   useEffect(() => {
     const token = getStoredToken()
@@ -149,38 +156,22 @@ function LiveTailModal({ source, onClose }: { source: any; onClose: () => void }
 export default function EventsPage() {
   const [searchParams] = useSearchParams()
   const [cursor, setCursor] = useState<string | undefined>()
-  const [sourceId, setSourceId] = useState('')
-  const [sourceIdsCsv, setSourceIdsCsv] = useState('')
-  const [sourcePathsCsv, setSourcePathsCsv] = useState('')
-  const [fromTime, setFromTime] = useState('')
-  const [toTime, setToTime] = useState('')
-  const [severity, setSeverity] = useState('')
-  const [host, setHost] = useState('')
-  const [service, setService] = useState('')
-  const [search, setSearch] = useState('')
-  const [searchInput, setSearchInput] = useState('')
+  const [sourceId, setSourceId] = useState(() => getInitialFilterValue(searchParams, 'source_id'))
+  const [sourceIdsCsv, setSourceIdsCsv] = useState(() => getInitialFilterValue(searchParams, 'source_ids'))
+  const [sourcePathsCsv, setSourcePathsCsv] = useState(() => getInitialFilterValue(searchParams, 'source_paths'))
+  const [fromTime, setFromTime] = useState(() => getInitialFilterValue(searchParams, 'from'))
+  const [toTime, setToTime] = useState(() => getInitialFilterValue(searchParams, 'to'))
+  const [severity, setSeverity] = useState(() => getInitialFilterValue(searchParams, 'severity'))
+  const [host, setHost] = useState(() => getInitialFilterValue(searchParams, 'host'))
+  const [service, setService] = useState(() => getInitialFilterValue(searchParams, 'service'))
+  const [search, setSearch] = useState(() => getInitialFilterValue(searchParams, 'q'))
+  const [searchInput, setSearchInput] = useState(() => getInitialFilterValue(searchParams, 'q'))
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [refreshTick, setRefreshTick] = useState(0)
-  const [tailSource, setTailSource] = useState<any | null>(null)
+  const [tailSource, setTailSource] = useState<SourceResponse | null>(null)
 
-  const { data: sourcesRaw = [] } = useQuery({ queryKey: ['sources'], queryFn: getSources })
-  const sources: any[] = Array.isArray(sourcesRaw) ? sourcesRaw : []
-  const selectedSource = sourceId ? sources.find((s: any) => s.id === sourceId) ?? null : null
-
-  useEffect(() => {
-    setCursor(undefined)
-    setSourceId(searchParams.get('source_id') ?? '')
-    setSourceIdsCsv(searchParams.get('source_ids') ?? '')
-    setSourcePathsCsv(searchParams.get('source_paths') ?? '')
-    setFromTime(searchParams.get('from') ?? '')
-    setToTime(searchParams.get('to') ?? '')
-    setSeverity(searchParams.get('severity') ?? '')
-    setHost(searchParams.get('host') ?? '')
-    setService(searchParams.get('service') ?? '')
-    const query = searchParams.get('q') ?? ''
-    setSearch(query)
-    setSearchInput(query)
-  }, [searchParams])
+  const { data: sources = [] } = useQuery({ queryKey: ['sources'], queryFn: getSources })
+  const selectedSource = sourceId ? sources.find(source => source.id === sourceId) ?? null : null
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ['events', cursor, sourceId, sourceIdsCsv, sourcePathsCsv, fromTime, toTime, severity, host, service, search, refreshTick],
@@ -259,8 +250,8 @@ export default function EventsPage() {
       <div style={styles.filters}>
         <select value={sourceId} onChange={e => { setSourceId(e.target.value); setSourceIdsCsv(''); setSourcePathsCsv(''); setCursor(undefined) }} style={{ ...styles.select, minWidth: 220 }}>
           <option value="">Alle Quellen</option>
-          {sources.map((s: any) => (
-            <option key={s.id} value={s.id}>{s.name}{s.config?.path ? ` (${s.config.path})` : ''}</option>
+          {sources.map((source: SourceResponse) => (
+            <option key={source.id} value={source.id}>{source.name}{source.config?.path ? ` (${source.config.path})` : ''}</option>
           ))}
         </select>
         <HelpTip content="Filtert die Eventliste auf genau eine konfigurierte Quelle. Die Live-Ansicht ist nur aktiv, wenn hier eine Datei-Quelle ausgewaehlt wurde." ariaLabel="Quellenfilter erklaeren" />
@@ -333,44 +324,44 @@ export default function EventsPage() {
               <span style={{ width: 120 }}>Service</span>
               <span style={{ flex: 1 }}>Nachricht</span>
             </div>
-            {data?.items.map((ev: any) => (
-              <div key={ev.id}>
+            {data?.items.map((event: EventResponse) => (
+              <div key={event.id}>
                 <div
-                  style={{ ...styles.row, cursor: 'pointer', background: expanded[ev.id] ? '#162032' : undefined }}
-                  onClick={() => toggleExpand(ev.id)}
+                  style={{ ...styles.row, cursor: 'pointer', background: expanded[event.id] ? '#162032' : undefined }}
+                  onClick={() => toggleExpand(event.id)}
                   title="Klicken zum Expandieren"
                 >
                   <span style={{ width: 150, color: '#64748b', flexShrink: 0, fontSize: '0.78rem' }}>
-                    {dayjs(ev.timestamp).format('DD.MM.YY HH:mm:ss')}
+                    {dayjs(event.timestamp).format('DD.MM.YY HH:mm:ss')}
                   </span>
                   <span style={{ width: 75, flexShrink: 0 }}>
-                    <span style={{ ...styles.badge, background: SEV_COLOR[ev.severity] ?? '#475569' }}>
-                      {ev.severity}
+                    <span style={{ ...styles.badge, background: SEV_COLOR[event.severity] ?? '#475569' }}>
+                      {event.severity}
                     </span>
                   </span>
                   <span style={{ width: 110, color: '#64748b', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {ev.host ?? '-'}
+                    {event.host ?? '-'}
                   </span>
                   <span style={{ width: 120, color: '#94a3b8', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {ev.service ?? '-'}
+                    {event.service ?? '-'}
                   </span>
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.85rem' }}>
-                    {ev.message}
+                    {event.message}
                   </span>
                 </div>
-                {expanded[ev.id] && (
+                {expanded[event.id] && (
                   <div style={styles.detail}>
                     <div style={styles.detailGrid}>
-                      <span style={styles.detailLabel}>ID</span><span style={styles.detailVal}>{ev.id}</span>
-                      <span style={styles.detailLabel}>Quelle</span><span style={styles.detailVal}>{ev.source_id ?? '-'}</span>
-                      <span style={styles.detailLabel}>Zeitstempel</span><span style={styles.detailVal}>{dayjs(ev.timestamp).format('DD.MM.YYYY HH:mm:ss.SSS')}</span>
-                      <span style={styles.detailLabel}>Host</span><span style={styles.detailVal}>{ev.host ?? '-'}</span>
-                      <span style={styles.detailLabel}>Service</span><span style={styles.detailVal}>{ev.service ?? '-'}</span>
-                      <span style={styles.detailLabel}>Severity</span><span style={styles.detailVal}>{ev.severity}</span>
+                      <span style={styles.detailLabel}>ID</span><span style={styles.detailVal}>{event.id}</span>
+                      <span style={styles.detailLabel}>Quelle</span><span style={styles.detailVal}>{event.source_id ?? '-'}</span>
+                      <span style={styles.detailLabel}>Zeitstempel</span><span style={styles.detailVal}>{dayjs(event.timestamp).format('DD.MM.YYYY HH:mm:ss.SSS')}</span>
+                      <span style={styles.detailLabel}>Host</span><span style={styles.detailVal}>{event.host ?? '-'}</span>
+                      <span style={styles.detailLabel}>Service</span><span style={styles.detailVal}>{event.service ?? '-'}</span>
+                      <span style={styles.detailLabel}>Severity</span><span style={styles.detailVal}>{event.severity}</span>
                     </div>
                     <div style={{ marginTop: '0.5rem' }}>
                       <span style={styles.detailLabel}>Nachricht:</span>
-                      <pre style={styles.detailPre}>{ev.message}</pre>
+                      <pre style={styles.detailPre}>{event.message}</pre>
                     </div>
                   </div>
                 )}
@@ -386,7 +377,7 @@ export default function EventsPage() {
               <button onClick={() => setCursor(undefined)} style={styles.btn}>Neueste</button>
             )}
             {data?.next_cursor && (
-              <button onClick={() => setCursor(data.next_cursor)} style={styles.btn}>Aeltere laden</button>
+              <button onClick={() => setCursor(data.next_cursor ?? undefined)} style={styles.btn}>Aeltere laden</button>
             )}
             {(cursor || data?.next_cursor) && (
               <HelpTip content="'Neueste' springt an den Anfang der Liste zurueck. 'Aeltere laden' laedt die naechste Seite, ohne den aktuellen Filterkontext zu verlieren." ariaLabel="Pagination erklaeren" />

@@ -3,7 +3,9 @@
  * Verifies state management: filter, selectedSources, customSources, clearFilter.
  */
 import { renderHook, act } from '@testing-library/react'
-import { SourceFilterProvider, useSourceFilter, type SourceOption } from '../ctx/SourceFilterContext'
+import { SourceFilterProvider } from '../ctx/SourceFilterContext'
+import { type SourceOption } from '../ctx/SourceFilterContext.shared'
+import { useSourceFilter } from '../ctx/useSourceFilter'
 
 function wrapper({ children }: { children: React.ReactNode }) {
   return <SourceFilterProvider>{children}</SourceFilterProvider>

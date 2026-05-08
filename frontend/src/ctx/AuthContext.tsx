@@ -1,30 +1,8 @@
-import React, { createContext, useContext, useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 
 import { clearToken, loadStoredToken, setToken } from '../lib/api'
 import { getMe, loginWithPassword, type MeResponse } from '../lib/requests'
-
-const ROLE_SCOPE_GRANTS: Record<NonNullable<MeResponse['role']>, string[]> = {
-  viewer: ['read'],
-  analyst: ['read', 'write'],
-  operator: ['read', 'write'],
-  admin: ['admin', 'read', 'write'],
-}
-
-export interface AuthCtx {
-  me: MeResponse | null
-  isLoading: boolean
-  login: (email: string, password: string) => Promise<void>
-  logout: () => void
-}
-
-const DEFAULT_AUTH: AuthCtx = {
-  me: null,
-  isLoading: false,
-  login: async () => {},
-  logout: () => {},
-}
-
-const Ctx = createContext<AuthCtx>(DEFAULT_AUTH)
+import { AuthContext, type AuthCtx } from './AuthContext.shared'
 
 function isSessionInvalidError(error: unknown) {
   if (!error || typeof error !== 'object') return false
@@ -32,16 +10,6 @@ function isSessionInvalidError(error: unknown) {
 
   const response = (error as { response?: { status?: number } }).response
   return response?.status === 401 || response?.status === 403
-}
-
-export function getEffectiveScopes(me: Pick<MeResponse, 'role' | 'scopes'> | null | undefined) {
-  if (!me) return new Set<string>()
-  return new Set([...(ROLE_SCOPE_GRANTS[me.role] ?? []), ...(me.scopes ?? [])])
-}
-
-export function hasScope(me: Pick<MeResponse, 'role' | 'scopes'> | null | undefined, scope: string) {
-  const scopes = getEffectiveScopes(me)
-  return scopes.has(scope) || scopes.has('admin')
 }
 
 export function AuthProvider({ children, value }: { children: React.ReactNode; value?: Partial<AuthCtx> }) {
@@ -132,12 +100,8 @@ export function AuthProvider({ children, value }: { children: React.ReactNode; v
       }
 
   return (
-    <Ctx.Provider value={resolvedValue}>
+    <AuthContext.Provider value={resolvedValue}>
       {children}
-    </Ctx.Provider>
+    </AuthContext.Provider>
   )
-}
-
-export function useAuth() {
-  return useContext(Ctx)
 }

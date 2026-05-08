@@ -1,8 +1,27 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getTimeseries, getTopErrors, getTopServices, getErrorRate, runIngestion, getSources, uploadImport, deleteSource, type TimeRange, type MetricsFilter } from '../lib/requests'
+import {
+  deleteSource,
+  getErrorRate,
+  getSources,
+  getTimeseries,
+  getTopErrors,
+  getTopServices,
+  runIngestion,
+  uploadImport,
+  type IngestionRunEntry,
+  type IngestionRunResponse,
+  type MetricsFilter,
+  type SourceResponse,
+  type TimeRange,
+  type TopErrorItem,
+  type TopServiceItem,
+  type UploadImportResponse,
+} from '../lib/requests'
 import { useEffect, useRef, useState } from 'react'
+import { getApiErrorMessage } from '../lib/errors'
 import HelpTip from '../components/HelpTip'
-import { useSourceFilter, type SourceOption } from '../ctx/SourceFilterContext'
+import { type SourceOption } from '../ctx/SourceFilterContext.shared'
+import { useSourceFilter } from '../ctx/useSourceFilter'
 
 // ─── Time range presets ───────────────────────────────────────────────────────
 const TIME_PRESETS: { label: string; hours: number }[] = [
@@ -31,13 +50,28 @@ const PRESET_PATHS = [
 
 const PRESET_PATH_SET = new Set(PRESET_PATHS.map(p => p.path))
 
+type UploadResultState = UploadImportResponse | { error: string }
+
+function isUploadError(result: UploadResultState): result is { error: string } {
+  return 'error' in result
+}
+
+function buildTimeRange(rangeHours: number): TimeRange | undefined {
+  if (rangeHours === 0) return undefined
+  const now = new Date()
+  return {
+    from: new Date(now.getTime() - rangeHours * 3600_000).toISOString(),
+    to: now.toISOString(),
+  }
+}
+
 // ─── Source picker dropdown ───────────────────────────────────────────────────
 function SourcePicker({
   selected, onChange, onUploadResult, customSources, onRemoveCustom,
 }: {
   selected: SourceOption[]
   onChange: (v: SourceOption[]) => void
-  onUploadResult: (r: any) => void
+  onUploadResult: (r: UploadResultState) => void | Promise<void>
   customSources: SourceOption[]   // externally tracked custom/uploaded entries
   onRemoveCustom: (id: string) => void
 }) {
@@ -46,9 +80,8 @@ function SourcePicker({
   const [uploading, setUploading] = useState(false)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-  const { data: configuredSourcesRaw } = useQuery({ queryKey: ['sources'], queryFn: getSources })
+  const { data: configuredSources = [] } = useQuery({ queryKey: ['sources'], queryFn: getSources })
   const qc = useQueryClient()
-  const configuredSources: any[] = Array.isArray(configuredSourcesRaw) ? configuredSourcesRaw : []
   const ref = useRef<HTMLDivElement>(null)
 
   // Close on outside click
@@ -61,7 +94,7 @@ function SourcePicker({
   }, [])
 
   const configuredOptions: SourceOption[] = configuredSources
-    .filter((s: any) => {
+    .filter((s: SourceResponse) => {
       const origin = s.config?.source_origin
       // Exclude sources that were auto-created from preset selection
       if (origin === 'preset') return false
@@ -69,7 +102,7 @@ function SourcePicker({
       if (!origin && PRESET_PATH_SET.has(s.config?.path ?? '')) return false
       return true
     })
-    .map((s: any) => ({
+    .map((s: SourceResponse) => ({
       id: `source:${s.id}`,
       label: s.name,
       path: s.config?.path ?? '',
@@ -238,10 +271,10 @@ function SourcePicker({
                   setUploading(true)
                   try {
                     const r = await uploadImport(file)
-                    onUploadResult(r)
+                    await onUploadResult(r)
                     setOpen(false)
-                  } catch (err: any) {
-                    onUploadResult({ error: err?.response?.data?.detail ?? err?.message ?? 'Upload fehlgeschlagen' })
+                  } catch (error: unknown) {
+                    await onUploadResult({ error: getApiErrorMessage(error, 'Upload fehlgeschlagen') })
                   } finally {
                     setUploading(false)
                     if (fileRef.current) fileRef.current.value = ''
@@ -287,13 +320,65 @@ export default function DashboardPage() {
   const { filter, setFilter: setGlobalSourceFilter, selectedSources, setSelectedSources, customSources, setCustomSources } = useSourceFilter()
   const [rangeHours, setRangeHours] = useState(filter.rangeHours) // restored from context on re-mount
   const [ingesting, setIngesting] = useState(false)
-  const [ingestResult, setIngestResult] = useState<any>(null)
+  const [ingestResult, setIngestResult] = useState<IngestionRunResponse | null>(null)
   const [ingestError, setIngestError] = useState<string | null>(null)
-  const [uploadResult, setUploadResult] = useState<any>(null)
+  const [uploadResult, setUploadResult] = useState<UploadResultState | null>(null)
+
+  function syncGlobalFilter(nextSelectedSources: SourceOption[], nextRangeHours = rangeHours) {
+    const nextSelectedSourceIds = nextSelectedSources
+      .filter(source => source.kind === 'configured')
+      .map(source => source.id.replace('source:', ''))
+    const nextSelectedSourcePaths = nextSelectedSources
+      .filter(source => source.kind === 'preset' || source.kind === 'custom')
+      .map(source => source.path)
+
+    setGlobalSourceFilter({
+      sourceIds: nextSelectedSourceIds,
+      sourcePaths: nextSelectedSourcePaths,
+      rangeHours: nextRangeHours,
+    })
+  }
+
+  async function handleIngest(activeSources: SourceOption[]) {
+    const activeSourceIds = activeSources
+      .filter(source => source.kind === 'configured')
+      .map(source => source.id.replace('source:', ''))
+
+    setIngesting(true)
+    setIngestError(null)
+    setIngestResult(null)
+    try {
+      const result = await runIngestion({
+        sourceIds: activeSourceIds,
+        extraEntries: activeSources
+          .filter(source => source.kind === 'preset' || source.kind === 'custom')
+          .map(source => ({ path: source.path, origin: source.kind === 'preset' ? 'preset' as const : 'custom' as const })),
+      })
+      setIngestResult(result)
+      refetchAll()
+    } catch (error: unknown) {
+      setIngestError(getApiErrorMessage(error, 'Ingestion fehlgeschlagen.'))
+    } finally {
+      setIngesting(false)
+    }
+  }
+
+  function handleSelectedSourcesChange(nextSelected: SourceOption[] | ((prev: SourceOption[]) => SourceOption[])) {
+    const resolvedSelectedSources = typeof nextSelected === 'function' ? nextSelected(selectedSources) : nextSelected
+    setSelectedSources(resolvedSelectedSources)
+    syncGlobalFilter(resolvedSelectedSources)
+    if (resolvedSelectedSources.length === 0) return
+    void handleIngest(resolvedSelectedSources)
+  }
+
+  function handleRangeHoursChange(nextRangeHours: number) {
+    setRangeHours(nextRangeHours)
+    syncGlobalFilter(selectedSources, nextRangeHours)
+  }
 
   function removeCustomSource(id: string) {
     setCustomSources(prev => prev.filter(s => s.id !== id))
-    setSelectedSources(prev => prev.filter(s => s.id !== id))
+    handleSelectedSourcesChange(prev => prev.filter(s => s.id !== id))
   }
 
   const selectedSourceIds = selectedSources
@@ -302,11 +387,6 @@ export default function DashboardPage() {
   const selectedSourcePaths = selectedSources
     .filter(s => s.kind === 'preset' || s.kind === 'custom')
     .map(s => s.path)
-
-  const timeRange: TimeRange | undefined = rangeHours === 0 ? undefined : {
-    from: new Date(Date.now() - rangeHours * 3600_000).toISOString(),
-    to: new Date().toISOString(),
-  }
   const metricsFilter: MetricsFilter | undefined = selectedSources.length > 0
     ? { sourceIds: selectedSourceIds, sourcePaths: selectedSourcePaths }
     : undefined
@@ -316,80 +396,46 @@ export default function DashboardPage() {
 
   const ts = useQuery({
     queryKey: ['timeseries', rangeHours, sourceKey],
-    queryFn: () => getTimeseries({
-      bucket,
-      ...(timeRange ? { from: timeRange.from, to: timeRange.to } : {}),
-      ...(metricsFilter?.sourceIds?.length ? { source_ids: metricsFilter.sourceIds.join(',') } : {}),
-      ...(metricsFilter?.sourcePaths?.length ? { source_paths: metricsFilter.sourcePaths.join(',') } : {}),
-    }),
+    queryFn: () => {
+      const timeRange = buildTimeRange(rangeHours)
+      return getTimeseries({
+        bucket,
+        ...(timeRange ? { from: timeRange.from, to: timeRange.to } : {}),
+        ...(metricsFilter?.sourceIds?.length ? { source_ids: metricsFilter.sourceIds.join(',') } : {}),
+        ...(metricsFilter?.sourcePaths?.length ? { source_paths: metricsFilter.sourcePaths.join(',') } : {}),
+      })
+    },
     enabled: selectedSources.length > 0,
   })
   const errs = useQuery({
     queryKey: ['top-errors', rangeHours, sourceKey],
-    queryFn: () => getTopErrors(timeRange, metricsFilter),
+    queryFn: () => getTopErrors(buildTimeRange(rangeHours), metricsFilter),
     enabled: selectedSources.length > 0,
   })
   const svcs = useQuery({
     queryKey: ['top-services', rangeHours, sourceKey],
-    queryFn: () => getTopServices(timeRange, metricsFilter),
+    queryFn: () => getTopServices(buildTimeRange(rangeHours), metricsFilter),
     enabled: selectedSources.length > 0,
   })
   const rate = useQuery({
     queryKey: ['error-rate', rangeHours, sourceKey],
-    queryFn: () => getErrorRate(timeRange, metricsFilter),
+    queryFn: () => getErrorRate(buildTimeRange(rangeHours), metricsFilter),
     enabled: selectedSources.length > 0,
   })
 
   function refetchAll() { ts.refetch(); errs.refetch(); svcs.refetch(); rate.refetch() }
 
-  function handleUploadResult(r: any) {
-    setUploadResult(r)
-    if (!r?.error && r?.stored_path) {
-      // Add uploaded file as removable custom source
+  function handleUploadResult(result: UploadResultState) {
+    setUploadResult(result)
+    if (!isUploadError(result) && result.stored_path) {
       const opt: SourceOption = {
-        id: `custom:${r.stored_path}`,
-        label: r.source_name ?? r.stored_path.split('/').pop(),
-        path: r.stored_path,
+        id: `custom:${result.stored_path}`,
+        label: result.source_name ?? result.stored_path.split('/').pop() ?? result.stored_path,
+        path: result.stored_path,
         kind: 'custom',
       }
       setCustomSources(prev => prev.find(s => s.id === opt.id) ? prev : [...prev, opt])
-      setSelectedSources(prev => prev.find(s => s.id === opt.id) ? prev : [...prev, opt])
-    }
-    if (!r?.error) refetchAll()
-  }
-
-  useEffect(() => {
-    setGlobalSourceFilter({ sourceIds: selectedSourceIds, sourcePaths: selectedSourcePaths, rangeHours })
-  }, [selectedSourceIds.join('|'), selectedSourcePaths.join('|'), rangeHours])
-
-  // Auto-ingest when source selection changes
-  const prevSourcesRef = useRef<SourceOption[]>([])
-  useEffect(() => {
-    const prev = prevSourcesRef.current
-    prevSourcesRef.current = selectedSources
-    if (selectedSources.length === 0 && prev.length === 0) return
-    if (selectedSources.length === 0) { refetchAll(); return }
-    handleIngest()
-  }, [selectedSources])
-
-  async function handleIngest() {
-    setIngesting(true)
-    setIngestError(null)
-    setIngestResult(null)
-    try {
-      const r = await runIngestion({
-        sourceIds: selectedSourceIds, // always pass (empty array = no configured sources)
-        extraEntries: selectedSources
-          .filter(s => s.kind === 'preset' || s.kind === 'custom')
-          .map(s => ({ path: s.path, origin: s.kind === 'preset' ? 'preset' as const : 'custom' as const })),
-      })
-      setIngestResult(r)
-      refetchAll()
-    } catch (e: any) {
-      const msg = e?.response?.data?.detail ?? e?.message ?? 'Unbekannter Fehler'
-      setIngestError(`Fehler: ${msg} (Status ${e?.response?.status ?? '?'})`)
-    } finally {
-      setIngesting(false)
+      handleSelectedSourcesChange(prev => prev.find(s => s.id === opt.id) ? prev : [...prev, opt])
     }
   }
 
@@ -409,7 +455,7 @@ export default function DashboardPage() {
             {TIME_PRESETS.map(p => (
               <button
                 key={p.hours}
-                onClick={() => setRangeHours(p.hours)}
+                onClick={() => handleRangeHoursChange(p.hours)}
                 style={{
                   padding: '0.25rem 0.6rem', fontSize: '0.8rem', borderRadius: '0.375rem',
                   border: '1px solid', cursor: 'pointer',
@@ -422,7 +468,7 @@ export default function DashboardPage() {
             <HelpTip content="Das Zeitfenster steuert, wie weit die Metriken in die Vergangenheit schauen. 'Alle' verwendet den kompletten verfuegbaren Datenbestand." ariaLabel="Zeitfenster erklaeren" />
           </div>
           <div style={styles.ingestRow}>
-            <SourcePicker selected={selectedSources} onChange={setSelectedSources} onUploadResult={handleUploadResult} customSources={customSources} onRemoveCustom={removeCustomSource} />
+            <SourcePicker selected={selectedSources} onChange={handleSelectedSourcesChange} onUploadResult={handleUploadResult} customSources={customSources} onRemoveCustom={removeCustomSource} />
             <HelpTip content="Hier waehlst du konfigurierte Quellen, Standard-Logpfade oder hochgeladene Dateien aus. Die Auswahl definiert gleichzeitig den globalen Datenkontext fuer die Metriken." ariaLabel="Quellenauswahl erklaeren" />
             {ingesting && <span style={{ fontSize: '0.82rem', color: '#fbbf24', whiteSpace: 'nowrap' }}>⏳ Analysiere…</span>}
           </div>
@@ -437,13 +483,14 @@ export default function DashboardPage() {
 
       {ingestResult && (
         <div style={styles.ingestInfo}>
-          {ingestResult.results?.map((r: any, i: number) => {
-            const label = (r.path || r.source_name) ? (r.path || r.source_name).split('/').pop() : r.source_id?.slice(0, 16)
+          {ingestResult.results?.map((result: IngestionRunEntry, i: number) => {
+            const sourceLabel = result.path || result.source_name
+            const label = sourceLabel ? sourceLabel.split('/').pop() : result.source_id?.slice(0, 16)
             return (
               <div key={i}>
-                {r.skipped
-                  ? `⚠ ${label}: ${r.reason}`
-                  : `✓ ${label}: ${r.lines_ingested} Zeilen, ${r.events_created ?? 0} Events`}
+                {result.skipped
+                  ? `⚠ ${label}: ${result.reason}`
+                  : `✓ ${label}: ${result.lines_ingested ?? 0} Zeilen, ${result.events_created ?? 0} Events`}
               </div>
             )
           })}
@@ -451,9 +498,9 @@ export default function DashboardPage() {
       )}
 
       {uploadResult && (
-        <div style={{ ...styles.ingestInfo, background: uploadResult.error ? '#450a0a' : '#0f2d1a', color: uploadResult.error ? '#f87171' : '#86efac', position: 'relative' }}>
+        <div style={{ ...styles.ingestInfo, background: isUploadError(uploadResult) ? '#450a0a' : '#0f2d1a', color: isUploadError(uploadResult) ? '#f87171' : '#86efac', position: 'relative' }}>
           <button onClick={() => setUploadResult(null)} style={{ position: 'absolute', top: '0.4rem', right: '0.5rem', background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
-          {uploadResult.error ? (
+          {isUploadError(uploadResult) ? (
             <div>Upload-Fehler: {uploadResult.error}</div>
           ) : (
             <>
@@ -496,10 +543,10 @@ export default function DashboardPage() {
             <Panel title="Top Fehler-Meldungen" help="Hier siehst du die haeufigsten Fehlermeldungen im aktuellen Datenfenster. Das hilft beim Clustern wiederkehrender Stoerungen.">
               {errs.data ? (
                 <ol style={styles.ol}>
-                  {errs.data.items.slice(0, 8).map((e: any, i: number) => (
+                  {errs.data.items.slice(0, 8).map((errorItem: TopErrorItem, i: number) => (
                     <li key={i} style={styles.li}>
-                      <span style={styles.count}>{e.count}</span>
-                      <span style={styles.msg}>{(e.key ?? e.message ?? '').slice(0, 80)}</span>
+                      <span style={styles.count}>{errorItem.count}</span>
+                      <span style={styles.msg}>{(errorItem.key ?? errorItem.message ?? '').slice(0, 80)}</span>
                     </li>
                   ))}
                   {!errs.data.items.length && <div style={{ color: '#64748b', fontSize: '0.85rem' }}>Keine Fehler-Events</div>}
@@ -510,10 +557,10 @@ export default function DashboardPage() {
             <Panel title="Top Services" help="Zeigt, welche Services besonders haeufig Events erzeugen. So erkennst du schnell dominante Systeme oder Hotspots.">
               {svcs.data ? (
                 <ol style={styles.ol}>
-                  {svcs.data.items.slice(0, 8).map((s: any, i: number) => (
+                  {svcs.data.items.slice(0, 8).map((serviceItem: TopServiceItem, i: number) => (
                     <li key={i} style={styles.li}>
-                      <span style={styles.count}>{s.count}</span>
-                      <span style={styles.msg}>{s.service ?? '(unbekannt)'}</span>
+                      <span style={styles.count}>{serviceItem.count}</span>
+                      <span style={styles.msg}>{serviceItem.service ?? '(unbekannt)'}</span>
                     </li>
                   ))}
                   {!svcs.data.items.length && <div style={{ color: '#64748b', fontSize: '0.85rem' }}>Keine Service-Daten</div>}

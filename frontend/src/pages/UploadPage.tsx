@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
-import { analyzeUpload, getAIModels, uploadImport } from '../lib/requests'
+import { analyzeUpload, getAIModels, uploadImport, type AIModelResponse } from '../lib/requests'
 import { useRef, useState } from 'react'
-import { hasScope, useAuth } from '../ctx/AuthContext'
+import { hasScope } from '../ctx/authScopes'
+import { useAuth } from '../ctx/useAuth'
+import { getApiErrorMessage } from '../lib/errors'
 
 interface AnalysisResult {
   lines_parsed: number
@@ -43,8 +45,8 @@ export default function UploadPage() {
     try {
       const data = await analyzeUpload(file, effectiveModel, customPrompt.trim() || undefined)
       setResult(data)
-    } catch (e: any) {
-      setError(e?.response?.data?.detail ?? e?.message ?? 'Unbekannter Fehler')
+    } catch (error: unknown) {
+      setError(getApiErrorMessage(error))
     } finally {
       setLoading(false)
     }
@@ -59,8 +61,8 @@ export default function UploadPage() {
     try {
       const data = await uploadImport(file, undefined)
       setImportResult(data)
-    } catch (e: any) {
-      setError(e?.response?.data?.detail ?? e?.message ?? 'Unbekannter Fehler')
+    } catch (error: unknown) {
+      setError(getApiErrorMessage(error))
     } finally {
       setLoading(false)
     }
@@ -89,7 +91,7 @@ export default function UploadPage() {
               onChange={e => setModel(e.target.value)}
               style={styles.select}
             >
-              {models.map((m: any) => (
+              {models.map((m: AIModelResponse) => (
                 <option key={m.name} value={m.name}>{m.name}</option>
               ))}
             </select>

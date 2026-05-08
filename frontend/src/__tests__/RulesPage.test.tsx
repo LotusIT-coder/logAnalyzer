@@ -12,7 +12,7 @@ vi.mock('../lib/requests', () => ({
   patchRule: vi.fn(),
 }))
 
-import { getRules } from '../lib/requests'
+import { getRules, type RuleListResponse } from '../lib/requests'
 
 const mockGetRules = vi.mocked(getRules)
 
@@ -45,7 +45,7 @@ beforeEach(() => {
     items: [
       { id: 'rule-1', name: 'Error burst', severity: 'error', threshold: 5, window_seconds: 300, enabled: true },
     ],
-  } as any)
+  } satisfies RuleListResponse)
 })
 
 describe('RulesPage', () => {

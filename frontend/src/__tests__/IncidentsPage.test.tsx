@@ -10,7 +10,7 @@ vi.mock('../lib/requests', () => ({
   patchIncident: vi.fn(),
 }))
 
-import { getIncidents } from '../lib/requests'
+import { getIncidents, type IncidentListResponse } from '../lib/requests'
 
 const mockGetIncidents = vi.mocked(getIncidents)
 
@@ -49,7 +49,7 @@ beforeEach(() => {
         last_seen: '2026-05-07T17:35:00.000Z',
       },
     ],
-  } as any)
+  } satisfies IncidentListResponse)
 })
 
 describe('IncidentsPage', () => {

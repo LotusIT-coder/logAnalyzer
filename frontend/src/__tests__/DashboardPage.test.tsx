@@ -17,6 +17,11 @@ vi.mock('../lib/requests', () => ({
 }))
 
 import {
+  type ErrorRateResponse,
+  type SourceResponse,
+  type TimeseriesResponse,
+  type TopErrorsResponse,
+  type TopServicesResponse,
   getTimeseries,
   getTopErrors,
   getTopServices,
@@ -50,22 +55,22 @@ function renderDashboard() {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockGetSources.mockResolvedValue([] as any)
+  mockGetSources.mockResolvedValue([] as SourceResponse[])
   mockGetTimeseries.mockResolvedValue({
     bucket: '1h',
     points: [{ ts: '2026-05-06T10:00:00Z', count: 5 }],
-  } as any)
+  } satisfies TimeseriesResponse)
   mockGetTopErrors.mockResolvedValue({
     items: [{ key: 'connection refused', count: 3 }],
-  } as any)
+  } satisfies TopErrorsResponse)
   mockGetTopServices.mockResolvedValue({
     items: [{ service: 'nginx', count: 4 }],
-  } as any)
+  } satisfies TopServicesResponse)
   mockGetErrorRate.mockResolvedValue({
     total_events: 10,
     error_events: 3,
     error_rate: 0.3,
-  } as any)
+  } satisfies ErrorRateResponse)
 })
 
 describe('DashboardPage', () => {

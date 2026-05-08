@@ -17,7 +17,8 @@ vi.mock('../lib/requests', async () => {
 
 import { loadStoredToken, clearToken } from '../lib/api'
 import { getMe } from '../lib/requests'
-import { AuthProvider, useAuth } from '../ctx/AuthContext'
+import { AuthProvider } from '../ctx/AuthContext'
+import { useAuth } from '../ctx/useAuth'
 
 const mockLoadStoredToken = vi.mocked(loadStoredToken)
 const mockClearToken = vi.mocked(clearToken)

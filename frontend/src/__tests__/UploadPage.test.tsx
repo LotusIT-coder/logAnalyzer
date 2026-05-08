@@ -11,7 +11,7 @@ vi.mock('../lib/requests', () => ({
   uploadImport: vi.fn(),
 }))
 
-import { analyzeUpload, getAIModels, uploadImport } from '../lib/requests'
+import { analyzeUpload, getAIModels, uploadImport, type AIModelResponse, type UploadImportResponse } from '../lib/requests'
 
 const mockGetAIModels = vi.mocked(getAIModels)
 const mockAnalyzeUpload = vi.mocked(analyzeUpload)
@@ -40,20 +40,20 @@ function renderPage(role: 'viewer' | 'analyst' | 'operator' | 'admin' = 'viewer'
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockGetAIModels.mockResolvedValue([{ name: 'qwen3.5:9b' }] as any)
+  mockGetAIModels.mockResolvedValue([{ name: 'qwen3.5:9b' }] satisfies AIModelResponse[])
   mockAnalyzeUpload.mockResolvedValue({
     lines_parsed: 10,
     events_found: 3,
     model: 'qwen3.5:9b',
     analysis: 'Analyse ok',
-  } as any)
+  })
   mockUploadImport.mockResolvedValue({
     source_id: 'source-1',
     source_name: 'Upload: sample.log',
     stored_path: '/tmp/sample.log',
     lines_ingested: 10,
     events_created: 3,
-  } as any)
+  } satisfies UploadImportResponse)
 })
 
 describe('UploadPage', () => {

@@ -29,7 +29,7 @@ vi.mock('../components/GlobalSourceFilterNotice', () => ({
   default: () => <div>global-filter</div>,
 }))
 
-import { getRules, getSources, getIncidents } from '../lib/requests'
+import { getRules, getSources, getIncidents, type IncidentListResponse, type RuleListResponse, type SourceResponse } from '../lib/requests'
 
 const mockGetRules = vi.mocked(getRules)
 const mockGetSources = vi.mocked(getSources)
@@ -62,10 +62,10 @@ beforeEach(() => {
     items: [
       { id: 'rule-1', name: 'Error burst', severity: 'error', threshold: 5, window_seconds: 300, enabled: true },
     ],
-  } as any)
+  } satisfies RuleListResponse)
   mockGetSources.mockResolvedValue([
     { id: 'source-1', name: 'syslog', type: 'file', enabled: true, config: { path: '/var/log/syslog' } },
-  ] as any)
+  ] satisfies SourceResponse[])
   mockGetIncidents.mockResolvedValue({
     items: [
       {
@@ -78,7 +78,7 @@ beforeEach(() => {
         last_seen: '2026-05-06T10:05:00Z',
       },
     ],
-  } as any)
+  } satisfies IncidentListResponse)
 })
 
 describe('scope-based UI hardening', () => {

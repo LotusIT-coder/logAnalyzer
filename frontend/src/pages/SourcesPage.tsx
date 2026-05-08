@@ -1,12 +1,14 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getSources, createSource, testSource, patchSource, deleteSource } from '../lib/requests'
+import { getSources, createSource, testSource, patchSource, deleteSource, type SourceResponse, type SourceTestResponse } from '../lib/requests'
 import { useEffect, useRef, useState } from 'react'
 import { getApiBase, getStoredToken } from '../lib/api'
-import { hasScope, useAuth } from '../ctx/AuthContext'
+import { hasScope } from '../ctx/authScopes'
+import { useAuth } from '../ctx/useAuth'
 import HelpTip from '../components/HelpTip'
+import { getApiErrorMessage } from '../lib/errors'
 
 // ─── Edit Modal ───────────────────────────────────────────────────────────────
-function EditSourceModal({ source, onClose, onSaved }: { source: any; onClose: () => void; onSaved: () => void }) {
+function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(source.name ?? '')
   const [path, setPath] = useState(source.config?.path ?? '')
   const [enabled, setEnabled] = useState(source.enabled ?? true)
@@ -20,8 +22,8 @@ function EditSourceModal({ source, onClose, onSaved }: { source: any; onClose: (
       await patchSource(source.id, { name, config: { path }, enabled })
       onSaved()
       onClose()
-    } catch (e: any) {
-      setError(e?.response?.data?.detail ?? 'Fehler beim Speichern.')
+    } catch (error: unknown) {
+      setError(getApiErrorMessage(error, 'Fehler beim Speichern.'))
     } finally {
       setSaving(false)
     }
@@ -58,7 +60,7 @@ function EditSourceModal({ source, onClose, onSaved }: { source: any; onClose: (
 }
 
 // ─── Live-Tail Modal ──────────────────────────────────────────────────────────
-function LiveTailModal({ source, onClose }: { source: any; onClose: () => void }) {
+function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: () => void }) {
   const [lines, setLines] = useState<string[]>([])
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState('')
@@ -66,7 +68,10 @@ function LiveTailModal({ source, onClose }: { source: any; onClose: () => void }
   const [filter, setFilter] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
   const pausedRef = useRef(false)
-  pausedRef.current = paused
+
+  useEffect(() => {
+    pausedRef.current = paused
+  }, [paused])
 
   useEffect(() => {
     const token = getStoredToken()
@@ -165,9 +170,9 @@ export default function SourcesPage() {
   const [name, setName] = useState('')
   const [path, setPath] = useState('')
   const [saving, setSaving] = useState(false)
-  const [testResults, setTestResults] = useState<Record<string, any>>({})
-  const [tailSource, setTailSource] = useState<any | null>(null)
-  const [editSource, setEditSource] = useState<any | null>(null)
+  const [testResults, setTestResults] = useState<Record<string, SourceTestResponse>>({})
+  const [tailSource, setTailSource] = useState<SourceResponse | null>(null)
+  const [editSource, setEditSource] = useState<SourceResponse | null>(null)
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
 
   async function handleCreate() {
@@ -194,7 +199,7 @@ export default function SourcesPage() {
     qc.invalidateQueries({ queryKey: ['sources'] })
   }
 
-  const sources: any[] = Array.isArray(data) ? data : []
+  const sources: SourceResponse[] = Array.isArray(data) ? data : []
 
   return (
     <div>

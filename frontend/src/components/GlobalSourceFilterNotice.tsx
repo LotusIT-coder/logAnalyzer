@@ -1,4 +1,4 @@
-import { useSourceFilter } from '../ctx/SourceFilterContext'
+import { useSourceFilter } from '../ctx/useSourceFilter'
 
 export default function GlobalSourceFilterNotice({
   marginBottom = '0.75rem',
