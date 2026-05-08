@@ -164,15 +164,18 @@ async def _run_window_analysis(
                 job_store.set_completed(job_id, {"summary": "No events in the given time window."})
                 return
 
+            event_count = len(events)
             log_text = "\n".join(
                 f"[{e.timestamp.isoformat()}] [{e.severity.upper()}] {e.message}"
                 for e in events
             )
+            del events  # release ORM objects after extracting the text we need
             prompt = (
-                f"Analyze these {len(events)} log events from "
+                f"Analyze these {event_count} log events from "
                 f"{from_dt.isoformat()} to {to_dt.isoformat()}:\n\n{log_text}\n\n"
                 "Summarize key issues, root causes, and recommended actions."
             )
+            del log_text  # release after prompt is assembled
 
             answer = await ollama_client.generate(model, prompt, system, temperature, max_tokens)
 

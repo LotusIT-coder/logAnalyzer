@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.source_filters import resolve_source_ids
+from app.db.session import get_session_factory
 from app.dependencies import get_db
 from app.domain.models import Event
 from app.schemas.event import EventListResponse, EventResponse
@@ -45,20 +46,26 @@ def _stream_events_stmt(event_type: Optional[str] = None):
 async def stream_events(
     request: Request,
     event_type: Optional[str] = Query(None),
-    session: AsyncSession = Depends(get_db),
 ):
-    """Server-Sent Events stream. Polls the DB every second for new events."""
+    """Server-Sent Events stream. Polls the DB every second for new events.
+
+    A fresh DB session is opened and closed on every poll tick so that no
+    connection is held open for the full lifetime of the SSE connection.
+    """
+    factory = get_session_factory()
 
     async def _generator() -> AsyncGenerator[str, None]:
-        # Start at the current DB time so new subscribers receive future events
-        # instead of replaying the oldest backlog first.
-        seen_event_ids = await _stream_start_seen_ids(session, event_type)
+        # Bootstrap: record which event IDs already exist so we only emit future ones.
+        async with factory() as session:
+            seen_event_ids = await _stream_start_seen_ids(session, event_type)
+
         while True:
             if await request.is_disconnected():
                 break
 
-            result = await session.execute(_stream_events_stmt(event_type))
-            rows = list(reversed(result.scalars().all()))
+            async with factory() as session:
+                result = await session.execute(_stream_events_stmt(event_type))
+                rows = list(reversed(result.scalars().all()))
 
             for row in rows:
                 if row.id in seen_event_ids:
@@ -68,8 +75,10 @@ async def stream_events(
                 yield f"data: {json.dumps(data, default=str)}\n\n"
                 seen_event_ids.add(row.id)
 
+            # Trim the seen-IDs set so it doesn't grow without bound.
             if len(seen_event_ids) > _STREAM_POLL_LIMIT * 4:
-                seen_event_ids = await _stream_start_seen_ids(session, event_type)
+                async with factory() as session:
+                    seen_event_ids = await _stream_start_seen_ids(session, event_type)
 
             await asyncio.sleep(1)
 

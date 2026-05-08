@@ -22,6 +22,11 @@ from app.services.source_service import list_sources
 
 logger = structlog.get_logger(__name__)
 
+# Hard cap on the total number of lines ingested across ALL sources in a single
+# tick. Prevents a burst of log data from many sources simultaneously from
+# exhausting memory before the batch can be flushed and released.
+_MAX_LINES_TOTAL_PER_TICK = 50_000
+
 
 class WatcherService:
     """Async background service that polls log sources on a fixed interval."""
@@ -30,6 +35,7 @@ class WatcherService:
         self.interval_seconds = interval_seconds
         self._task: asyncio.Task | None = None
         self.tick_count: int = 0
+        self._tick_running: bool = False  # backpressure guard
 
     @property
     def running(self) -> bool:
@@ -63,6 +69,17 @@ class WatcherService:
 
     async def _tick(self) -> None:
         """One ingestion cycle: open a session, list sources, ingest each."""
+        if self._tick_running:
+            logger.warning("watcher_tick_skipped", reason="previous_tick_still_running")
+            return
+        self._tick_running = True
+        try:
+            await self._do_tick()
+        finally:
+            self._tick_running = False
+
+    async def _do_tick(self) -> None:
+        """Inner tick logic (called only when no tick is already in progress)."""
         factory = get_session_factory()
         async with factory() as session:
             try:
@@ -71,12 +88,22 @@ class WatcherService:
                 logger.exception("watcher_list_sources_failed")
                 return
 
+            total_lines = 0
             for source in sources:
                 if not source.enabled:
                     continue
+                if total_lines >= _MAX_LINES_TOTAL_PER_TICK:
+                    logger.warning(
+                        "watcher_tick_global_limit_reached",
+                        limit=_MAX_LINES_TOTAL_PER_TICK,
+                        remaining_sources=sum(1 for s in sources if s.enabled),
+                    )
+                    break
                 try:
                     stats = await ingest_source(session, source)
-                    if stats.get("lines_ingested", 0) or stats.get("events_created", 0):
+                    ingested = stats.get("lines_ingested", 0)
+                    total_lines += ingested
+                    if ingested or stats.get("events_created", 0):
                         logger.info(
                             "watcher_tick_ingested",
                             source_id=source.id,

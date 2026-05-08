@@ -9,10 +9,11 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models import Event, ParserProfile, RawLog, Source
@@ -20,6 +21,7 @@ from app.parser.pipeline import parse_line
 
 
 _MAX_LINES_PER_RUN = 10_000  # safety cap per source per ingestion cycle
+_BATCH_SIZE = 200         # rows bulk-inserted and released per partial flush
 _PATH_BASED_SOURCE_TYPES = {"file", "docker", "journald"}
 _JOURNALD_PRIORITY_MAP = {
     "0": "critical",
@@ -174,6 +176,11 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
     new_cursor = start_offset
     now = datetime.now(timezone.utc)
 
+    # Use plain dicts + bulk insert to avoid accumulating thousands of ORM
+    # objects in the session identity map (the primary memory-growth path).
+    _raw_batch: list[dict] = []
+    _evt_batch: list[dict] = []
+
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         fh.seek(start_offset)
         while lines_ingested < _MAX_LINES_PER_RUN:
@@ -185,14 +192,14 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
                 new_cursor = fh.tell()
                 continue
 
-            row = RawLog(
-                source_id=source.id,
-                raw_line=stripped,
-                raw_hash=_line_hash(stripped),
-                cursor=str(fh.tell()),
-            )
-            session.add(row)
             new_cursor = fh.tell()
+            _raw_batch.append({
+                "id": str(uuid.uuid4()),
+                "source_id": source.id,
+                "raw_line": stripped,
+                "raw_hash": _line_hash(stripped),
+                "cursor": str(new_cursor),
+            })
             lines_ingested += 1
 
             parsed = _parse_specialized_source_line(source, stripped)
@@ -249,23 +256,36 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
             else:
                 ts = now
 
-            event = Event(
-                source_id=source.id,
-                timestamp=ts,
-                severity=parsed.get("severity", "info"),
-                service=parsed.get("service"),
-                host=parsed.get("host"),
-                environment=parsed.get("environment"),
-                event_type=parsed.get("event_type"),
-                message=parsed.get("message", stripped),
-                fields_json={
+            _evt_batch.append({
+                "id": str(uuid.uuid4()),
+                "source_id": source.id,
+                "timestamp": ts,
+                "severity": parsed.get("severity", "info"),
+                "service": parsed.get("service"),
+                "host": parsed.get("host"),
+                "environment": parsed.get("environment"),
+                "event_type": parsed.get("event_type"),
+                "message": parsed.get("message", stripped),
+                "fields_json": {
                     k: v for k, v in parsed.items()
                     if k not in {"timestamp", "severity", "service", "host",
                                  "environment", "event_type", "message"}
                 },
-            )
-            session.add(event)
+            })
             events_created += 1
+
+            # Periodically bulk-insert and drop references so the session
+            # identity map never holds more than _BATCH_SIZE ORM objects.
+            if lines_ingested % _BATCH_SIZE == 0:
+                await session.execute(insert(RawLog), _raw_batch)
+                await session.execute(insert(Event), _evt_batch)
+                _raw_batch.clear()
+                _evt_batch.clear()
+
+    # Flush the final partial batch (< _BATCH_SIZE rows).
+    if _raw_batch:
+        await session.execute(insert(RawLog), _raw_batch)
+        await session.execute(insert(Event), _evt_batch)
 
     return {
         "source_id": str(source.id),

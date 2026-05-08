@@ -6,9 +6,16 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean, pstdev
 from typing import Sequence
 
+import structlog
 from sqlalchemy import select
 
 from app.domain.models import Event, Incident
+
+logger = structlog.get_logger(__name__)
+
+# Safety cap: anomaly detection only needs counts per bucket.
+# Loading more than this many ORM objects just to count them risks OOM.
+_MAX_ANOMALY_EVENTS = 100_000
 from app.services.ai_auto_triage import mark_incident_for_auto_triage
 from app.services.notifications import mark_incident_for_notification
 
@@ -122,9 +129,18 @@ async def run_event_volume_anomaly_detection(
     earliest_bucket_start = bucket_starts[0]
 
     result = await session.execute(
-        select(Event).where(Event.timestamp >= earliest_bucket_start, Event.timestamp <= now)
+        select(Event)
+        .where(Event.timestamp >= earliest_bucket_start, Event.timestamp <= now)
+        .limit(_MAX_ANOMALY_EVENTS)
     )
     events = list(result.scalars().all())
+    if len(events) == _MAX_ANOMALY_EVENTS:
+        logger.warning(
+            "anomaly_event_limit_reached",
+            limit=_MAX_ANOMALY_EVENTS,
+            bucket_count=bucket_count,
+            bucket_minutes=bucket_minutes,
+        )
 
     counts_by_bucket = {bucket_start: 0 for bucket_start in bucket_starts}
     for event in events:

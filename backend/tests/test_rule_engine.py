@@ -243,7 +243,12 @@ class TestFireIncidentIfNeeded:
         rule = _make_rule(id="rule-1", name="SSH burst", severity="warning")
 
         with patch("app.services.rule_engine.mark_incident_for_auto_triage") as mark_triage:
-            incident = await fire_incident_if_needed(session, rule, matched_events, now)
+            incident = await fire_incident_if_needed(
+                session, rule,
+                event_count=len(matched_events),
+                first_seen=matched_events[0].timestamp,
+                last_seen=matched_events[-1].timestamp,
+            )
 
         assert incident is not None
         mark_triage.assert_called_once_with(session, ANY)
@@ -267,7 +272,12 @@ class TestFireIncidentIfNeeded:
         rule = _make_rule(id="rule-1", name="SSH burst", severity="warning")
 
         with patch("app.services.rule_engine.mark_incident_for_notification") as mark_notification:
-            incident = await fire_incident_if_needed(session, rule, matched_events, now)
+            incident = await fire_incident_if_needed(
+                session, rule,
+                event_count=len(matched_events),
+                first_seen=matched_events[0].timestamp,
+                last_seen=matched_events[-1].timestamp,
+            )
 
         assert incident is not None
         mark_notification.assert_called_once_with(session, ANY)

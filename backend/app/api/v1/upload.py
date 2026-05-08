@@ -72,8 +72,10 @@ async def upload_and_analyze(
         content = raw_bytes.decode("utf-8", errors="replace")
     except Exception:
         raise HTTPException(status_code=400, detail="Could not decode file as UTF-8.")
+    del raw_bytes  # release the raw bytes buffer; only the decoded string is needed
 
     lines = [l.rstrip("\r\n") for l in io.StringIO(content) if l.strip()]
+    del content  # release full decoded string; only the split lines are needed
     sampled = lines[:_MAX_LINES]
 
     # Try to parse structured events
@@ -132,6 +134,7 @@ async def upload_and_import(
     stored_name = f"{uuid.uuid4().hex}_{safe_name}"
     stored_path = _UPLOAD_DIR / stored_name
     stored_path.write_bytes(raw_bytes)
+    del raw_bytes  # file is on disk; release the in-memory buffer
 
     source = Source(
         name=(source_name.strip() if source_name and source_name.strip() else f"Upload: {safe_name}"),

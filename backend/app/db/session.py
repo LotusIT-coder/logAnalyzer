@@ -17,7 +17,9 @@ def build_engine():
         pool_pre_ping=True,
         pool_size=5,
         max_overflow=10,
-        echo=not settings.is_production,
+        # echo=True generates a formatted SQL string per query — keep it off
+        # to avoid unnecessary allocations during high-volume ingestion.
+        echo=False,
     )
 
 
