@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   deleteSource,
   getErrorRate,
@@ -407,21 +407,29 @@ export default function DashboardPage() {
       })
     },
     enabled: selectedSources.length > 0,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   })
   const errs = useQuery({
     queryKey: ['top-errors', rangeHours, sourceKey],
     queryFn: () => getTopErrors(buildTimeRange(rangeHours), metricsFilter),
     enabled: selectedSources.length > 0,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   })
   const svcs = useQuery({
     queryKey: ['top-services', rangeHours, sourceKey],
     queryFn: () => getTopServices(buildTimeRange(rangeHours), metricsFilter),
     enabled: selectedSources.length > 0,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   })
   const rate = useQuery({
     queryKey: ['error-rate', rangeHours, sourceKey],
     queryFn: () => getErrorRate(buildTimeRange(rangeHours), metricsFilter),
     enabled: selectedSources.length > 0,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   })
 
   function refetchAll() { ts.refetch(); errs.refetch(); svcs.refetch(); rate.refetch() }
@@ -600,7 +608,7 @@ function Panel({ title, help, children }: { title: string; help?: string; childr
 }
 
 function Spinner() {
-  return <div style={{ color: '#64748b', padding: '1rem' }}>Lade\u2026</div>
+  return <div style={{ color: '#64748b', padding: '1rem' }}>Lade…</div>
 }
 
 function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
