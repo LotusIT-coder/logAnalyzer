@@ -18,6 +18,7 @@ import {
   type UploadImportResponse,
 } from '../lib/requests'
 import { useEffect, useRef, useState } from 'react'
+import dayjs from 'dayjs'
 import { getApiErrorMessage } from '../lib/errors'
 import HelpTip from '../components/HelpTip'
 import { type SourceOption } from '../ctx/SourceFilterContext.shared'
@@ -604,15 +605,106 @@ function Spinner() {
 
 function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
   if (!points.length) return <div style={{ color: '#64748b' }}>Keine Daten</div>
+
+  const W = 400
+  const H = 80
+  const pad = { top: 6, right: 4, bottom: 18, left: 28 }
+  const innerW = W - pad.left - pad.right
+  const innerH = H - pad.top - pad.bottom
+
   const max = Math.max(...points.map(p => p.count), 1)
+
+  const x = (i: number) => pad.left + (i / (points.length - 1 || 1)) * innerW
+  const y = (v: number) => pad.top + innerH - (v / max) * innerH
+
+  const polyline = points.map((p, i) => `${x(i)},${y(p.count)}`).join(' ')
+
+  // Y-axis: 0 and max labels
+  const yLabels = [
+    { val: max, yPos: pad.top },
+    { val: 0,   yPos: pad.top + innerH },
+  ]
+
+  // X-axis: first and last label
+  const xLabels = points.length > 1
+    ? [
+        { label: dayjs(points[0].ts).format('HH:mm'), xPos: pad.left },
+        { label: dayjs(points[points.length - 1].ts).format('HH:mm'), xPos: pad.left + innerW },
+      ]
+    : []
+
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 80 }}>
-      {points.map((p, i) => (
-        <div key={i} title={`${p.ts}: ${p.count}`}
-          style={{ flex: 1, minWidth: 4, height: `${(p.count / max) * 100}%`, background: '#3b82f6', borderRadius: 2 }}
-        />
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      style={{ width: '100%', height: 80, overflow: 'visible' }}
+      aria-label="Zeitreihen-Liniendiagramm"
+    >
+      {/* grid line at max */}
+      <line
+        x1={pad.left} y1={pad.top}
+        x2={pad.left + innerW} y2={pad.top}
+        stroke="#334155" strokeDasharray="3 3" strokeWidth={1}
+      />
+      {/* grid line at 0 / baseline */}
+      <line
+        x1={pad.left} y1={pad.top + innerH}
+        x2={pad.left + innerW} y2={pad.top + innerH}
+        stroke="#334155" strokeWidth={1}
+      />
+
+      {/* filled area under the line */}
+      <polygon
+        points={`${x(0)},${pad.top + innerH} ${polyline} ${x(points.length - 1)},${pad.top + innerH}`}
+        fill="#3b82f6"
+        fillOpacity={0.15}
+      />
+
+      {/* the line itself */}
+      <polyline
+        points={polyline}
+        fill="none"
+        stroke="#3b82f6"
+        strokeWidth={2}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+
+      {/* data-point dots (only when few points) */}
+      {points.length <= 30 && points.map((p, i) => (
+        <circle key={i} cx={x(i)} cy={y(p.count)} r={2.5} fill="#3b82f6">
+          <title>{`${dayjs(p.ts).format('DD.MM HH:mm')}: ${p.count}`}</title>
+        </circle>
       ))}
-    </div>
+
+      {/* Y-axis labels */}
+      {yLabels.map(({ val, yPos }) => (
+        <text
+          key={yPos}
+          x={pad.left - 4}
+          y={yPos}
+          textAnchor="end"
+          dominantBaseline="middle"
+          fontSize={9}
+          fill="#64748b"
+        >
+          {val}
+        </text>
+      ))}
+
+      {/* X-axis labels */}
+      {xLabels.map(({ label, xPos }, i) => (
+        <text
+          key={i}
+          x={xPos}
+          y={H - 2}
+          textAnchor={i === 0 ? 'start' : 'end'}
+          fontSize={9}
+          fill="#64748b"
+        >
+          {label}
+        </text>
+      ))}
+    </svg>
   )
 }
 

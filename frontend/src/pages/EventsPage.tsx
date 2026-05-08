@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { getEvents, getSources, type EventResponse, type SourceResponse } from '../lib/requests'
@@ -187,6 +187,8 @@ export default function EventsPage() {
       service: service || undefined,
       q: search || undefined,
     }),
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
   })
 
   function applySearch() {
