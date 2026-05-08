@@ -1,8 +1,85 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getRules, createRule, patchRule } from '../lib/requests'
+import { getRules, createRule, patchRule, deleteRule, type RuleResponse } from '../lib/requests'
 import { useState } from 'react'
 import GlobalSourceFilterNotice from '../components/GlobalSourceFilterNotice'
 import HelpTip from '../components/HelpTip'
+
+function EditRuleModal({
+  rule,
+  onClose,
+  onSaved,
+}: {
+  rule: RuleResponse
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const condition = (rule.condition ?? {}) as Record<string, unknown>
+  const conditionEntry = Object.entries(condition).find(([k]) => ['severity', 'service', 'host'].includes(k))
+  const [form, setForm] = useState({
+    name: rule.name,
+    severity: rule.severity,
+    threshold: rule.threshold,
+    window_seconds: rule.window_seconds,
+    condition_field: conditionEntry?.[0] ?? 'severity',
+    condition_value: String(conditionEntry?.[1] ?? ''),
+  })
+  const [saving, setSaving] = useState(false)
+
+  async function saveRule() {
+    setSaving(true)
+    try {
+      await patchRule(rule.id, {
+        name: form.name,
+        severity: form.severity,
+        threshold: form.threshold,
+        window_seconds: form.window_seconds,
+        condition: { [form.condition_field]: form.condition_value },
+      })
+      onSaved()
+      onClose()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={modal.overlay} onClick={onClose}>
+      <div style={modal.box} onClick={e => e.stopPropagation()}>
+        <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem', color: '#f1f5f9' }}>Regel bearbeiten</h3>
+        <div style={styles.formGrid}>
+          <Field label="Name">
+            <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={styles.input} />
+          </Field>
+          <Field label="Severity">
+            <select value={form.severity} onChange={e => setForm(f => ({ ...f, severity: e.target.value }))} style={styles.input}>
+              {['info', 'warning', 'error', 'critical'].map(s => <option key={s}>{s}</option>)}
+            </select>
+          </Field>
+          <Field label="Schwellenwert">
+            <input type="number" min={1} value={form.threshold} onChange={e => setForm(f => ({ ...f, threshold: +e.target.value }))} style={styles.input} />
+          </Field>
+          <Field label="Zeitfenster (s)">
+            <input type="number" min={1} value={form.window_seconds} onChange={e => setForm(f => ({ ...f, window_seconds: +e.target.value }))} style={styles.input} />
+          </Field>
+          <Field label="Condition Feld">
+            <select value={form.condition_field} onChange={e => setForm(f => ({ ...f, condition_field: e.target.value }))} style={styles.input}>
+              {['severity', 'service', 'host'].map(s => <option key={s}>{s}</option>)}
+            </select>
+          </Field>
+          <Field label="Condition Wert">
+            <input value={form.condition_value} onChange={e => setForm(f => ({ ...f, condition_value: e.target.value }))} style={styles.input} />
+          </Field>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+          <button onClick={saveRule} disabled={saving || !form.name} style={styles.saveBtn}>
+            {saving ? 'Speichere…' : 'Speichern'}
+          </button>
+          <button onClick={onClose} style={styles.toggleBtn}>Abbrechen</button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export default function RulesPage() {
   const qc = useQueryClient()
@@ -10,6 +87,8 @@ export default function RulesPage() {
   const [showNew, setShowNew] = useState(false)
   const [form, setForm] = useState({ name: '', severity: 'error', threshold: 5, window_seconds: 300, condition_field: 'severity', condition_value: 'error' })
   const [saving, setSaving] = useState(false)
+  const [editRule, setEditRule] = useState<RuleResponse | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
 
   async function saveRule() {
     setSaving(true)
@@ -35,8 +114,21 @@ export default function RulesPage() {
     qc.invalidateQueries({ queryKey: ['rules'] })
   }
 
+  async function handleDelete(ruleId: string) {
+    await deleteRule(ruleId)
+    setPendingDelete(null)
+    qc.invalidateQueries({ queryKey: ['rules'] })
+  }
+
   return (
     <div>
+      {editRule && (
+        <EditRuleModal
+          rule={editRule}
+          onClose={() => setEditRule(null)}
+          onSaved={() => qc.invalidateQueries({ queryKey: ['rules'] })}
+        />
+      )}
       <div style={styles.header}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <h2 style={styles.h2}>Regeln</h2>
@@ -100,7 +192,7 @@ export default function RulesPage() {
               <span style={{ width: 80 }}>Schwelle</span>
               <span style={{ width: 100 }}>Zeitfenster</span>
               <span style={{ width: 80 }}>Status</span>
-              <span style={{ width: 80 }}>Aktion</span>
+              <span style={{ width: 220 }}>Aktion</span>
             </div>
             {data?.items.map(r => (
               <div key={r.id} style={styles.row}>
@@ -113,10 +205,19 @@ export default function RulesPage() {
                     {r.enabled ? 'aktiv' : 'inaktiv'}
                   </span>
                 </span>
-                <span style={{ width: 80 }}>
+                <span style={{ width: 220, display: 'flex', gap: '0.4rem' }}>
                   <button onClick={() => toggleRule(r.id, r.enabled)} style={styles.toggleBtn}>
                     {r.enabled ? 'Deakt.' : 'Akt.'}
                   </button>
+                  <button onClick={() => setEditRule(r)} style={styles.toggleBtn}>Bearbeiten</button>
+                  {pendingDelete === r.id ? (
+                    <>
+                      <button onClick={() => handleDelete(r.id)} style={styles.deleteBtn}>Ja, löschen</button>
+                      <button onClick={() => setPendingDelete(null)} style={styles.toggleBtn}>Abbrechen</button>
+                    </>
+                  ) : (
+                    <button onClick={() => setPendingDelete(r.id)} style={styles.deleteBtn}>Löschen</button>
+                  )}
                 </span>
               </div>
             ))}
@@ -158,4 +259,16 @@ const styles: Record<string, React.CSSProperties> = {
   row: { display: 'flex', gap: '1rem', padding: '0.6rem 1rem', borderTop: '1px solid #1e293b', alignItems: 'center', fontSize: '0.87rem' },
   pill: { borderRadius: 4, padding: '0.1rem 0.5rem', fontSize: '0.72rem', color: '#fff', fontWeight: 700 },
   toggleBtn: { background: 'none', border: '1px solid #334155', color: '#94a3b8', borderRadius: 5, padding: '0.2rem 0.55rem', cursor: 'pointer', fontSize: '0.78rem' },
+  deleteBtn: { background: 'none', border: '1px solid #7f1d1d', color: '#f87171', borderRadius: 5, padding: '0.2rem 0.55rem', cursor: 'pointer', fontSize: '0.78rem' },
+}
+
+const modal: Record<string, React.CSSProperties> = {
+  overlay: {
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  },
+  box: {
+    background: '#0f172a', border: '1px solid #334155', borderRadius: 12,
+    width: '92vw', maxWidth: 900, padding: '1.25rem',
+  },
 }

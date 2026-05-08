@@ -65,6 +65,22 @@ class TestRulesCRUD:
         )
         assert resp.status_code == 404
 
+    async def test_delete_rule(self, client: AsyncClient):
+        create = await client.post("/api/v1/rules", json=_VALID_RULE)
+        rule_id = create.json()["id"]
+
+        resp = await client.delete(f"/api/v1/rules/{rule_id}")
+        assert resp.status_code == 204
+
+        list_resp = await client.get("/api/v1/rules")
+        assert list_resp.status_code == 200
+        items = list_resp.json()["items"]
+        assert not any(rule["id"] == rule_id for rule in items)
+
+    async def test_delete_nonexistent_returns_404(self, client: AsyncClient):
+        resp = await client.delete("/api/v1/rules/00000000-0000-0000-0000-000000000000")
+        assert resp.status_code == 404
+
     async def test_create_rule_missing_required_fields(self, client: AsyncClient):
         resp = await client.post("/api/v1/rules", json={"name": "incomplete"})
         assert resp.status_code == 422

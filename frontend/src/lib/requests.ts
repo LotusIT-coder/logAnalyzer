@@ -68,6 +68,8 @@ export interface IncidentListResponse {
 export interface RuleResponse extends JsonObject {
   id: string
   name: string
+  description?: string
+  condition?: Record<string, unknown>
   severity: string
   threshold: number
   window_seconds: number
@@ -198,6 +200,10 @@ export async function createRule(body: JsonObject) {
 export async function patchRule(id: string, body: JsonObject) {
   const r = await api.patch(`/rules/${id}`, body)
   return r.data as RuleResponse
+}
+
+export async function deleteRule(id: string) {
+  await api.delete(`/rules/${id}`)
 }
 
 export async function getTimeseries(params?: QueryParams) {

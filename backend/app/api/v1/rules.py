@@ -81,6 +81,20 @@ async def patch_rule(
     return RuleResponse.model_validate(rule)
 
 
+@router.delete("/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_rule(
+    rule_id: str,
+    session: AsyncSession = Depends(get_db),
+):
+    result = await session.execute(select(Rule).where(Rule.id == rule_id))
+    rule = result.scalar_one_or_none()
+    if rule is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rule not found.")
+
+    await session.delete(rule)
+    await session.flush()
+
+
 @router.post("/{rule_id}/dry-run", response_model=RuleDryRunResponse)
 async def dry_run_rule(
     rule_id: str,
