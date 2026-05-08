@@ -409,6 +409,7 @@ export default function DashboardPage() {
     enabled: selectedSources.length > 0,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
+    retry: 1,
   })
   const errs = useQuery({
     queryKey: ['top-errors', rangeHours, sourceKey],
@@ -545,8 +546,8 @@ export default function DashboardPage() {
             <HelpTip content="Diese Bereiche erklaeren, wie sich das Volumen ueber die Zeit verteilt und welche Fehlermeldungen oder Services besonders haeufig auftreten." ariaLabel="Dashboard-Aufschluesselungen erklaeren" />
           </div>
           <div style={styles.grid}>
-            <Panel title={`Events / ${bucket} (${rangeHours === 0 ? 'alle' : TIME_PRESETS.find(p => p.hours === rangeHours)?.label ?? ''})`} help="Die Balken zeigen, wie viele Events pro Zeitintervall eingegangen sind. Hoehere Balken markieren Lastspitzen oder Stoerungsphasen.">
-              {ts.data ? <MiniBar points={ts.data.points} /> : <Spinner />}
+            <Panel title={`Events / ${bucket} (${rangeHours === 0 ? 'alle' : TIME_PRESETS.find(p => p.hours === rangeHours)?.label ?? ''})`} help="Die Linie zeigt, wie viele Events pro Zeitintervall eingegangen sind. Hoehere Ausschlaege markieren Lastspitzen oder Stoerungsphasen.">
+              {ts.data ? <MiniBar points={ts.data.points} /> : ts.isError ? <PanelError error={ts.error} /> : <Spinner />}
             </Panel>
 
             <Panel title="Top Fehler-Meldungen" help="Hier siehst du die haeufigsten Fehlermeldungen im aktuellen Datenfenster. Das hilft beim Clustern wiederkehrender Stoerungen.">
@@ -609,6 +610,14 @@ function Panel({ title, help, children }: { title: string; help?: string; childr
 
 function Spinner() {
   return <div style={{ color: '#64748b', padding: '1rem' }}>Lade…</div>
+}
+
+function PanelError({ error }: { error: unknown }) {
+  return (
+    <div style={{ color: '#f87171', padding: '1rem', fontSize: '0.85rem' }}>
+      Fehler beim Laden: {getApiErrorMessage(error)}
+    </div>
+  )
 }
 
 function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
