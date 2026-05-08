@@ -13,7 +13,6 @@ Design goals:
 from __future__ import annotations
 
 import asyncio
-import logging
 
 import structlog
 
@@ -91,14 +90,3 @@ class WatcherService:
             except Exception:
                 logger.exception("watcher_commit_failed")
                 await session.rollback()
-
-
-# Module-level singleton — imported by main.py lifespan
-_watcher: WatcherService | None = None
-
-
-def get_watcher() -> WatcherService:
-    global _watcher
-    if _watcher is None:
-        _watcher = WatcherService()
-    return _watcher

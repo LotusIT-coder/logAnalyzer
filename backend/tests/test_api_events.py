@@ -156,7 +156,7 @@ class TestEventsAPI:
         rows = [row for row in reversed(result.scalars().all()) if row.id not in seen_ids]
         assert rows == []
 
-        fresh = await _seed_event(db_session, src.id, message="fresh live event", event_type="network_flow", fields_json={"src_ip": "app01", "dst_ip": "8.8.8.8", "bytes": 42})
+        fresh = await _seed_event(db_session, src.id, message="fresh live event", event_type="syslog")
         await db_session.commit()
 
         result = await db_session.execute(_stream_events_stmt())

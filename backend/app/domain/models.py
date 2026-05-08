@@ -33,7 +33,9 @@ class Source(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     type: Mapped[str] = mapped_column(
         Text,
-        CheckConstraint("type IN ('file','syslog','journald','docker')"),
+        CheckConstraint(
+            "type IN ('file','syslog','journald','docker')"
+        ),
         nullable=False,
     )
     config_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)

@@ -1,8 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { AuthProvider, useAuth } from './ctx/AuthContext'
+import { AuthProvider } from './ctx/AuthContext'
 import { AIChatProvider } from './ctx/AIChatContext'
 import { SourceFilterProvider } from './ctx/SourceFilterContext'
+import { useAuth } from './ctx/useAuth'
 import Layout from './components/Layout'
 import DashboardPage from './pages/DashboardPage'
 import EventsPage from './pages/EventsPage'
@@ -13,7 +14,6 @@ import AIChatPage from './pages/AIChatPage'
 import UploadPage from './pages/UploadPage'
 import AccessPage from './pages/AccessPage'
 import LoginPage from './pages/LoginPage'
-import NetworkPage from './pages/NetworkPage'
 
 const qc = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
@@ -54,7 +54,6 @@ export function AppRoutes() {
           <Route path="incidents" element={<IncidentsPage />} />
           <Route path="rules" element={<RulesPage />} />
           <Route path="sources" element={<SourcesPage />} />
-          <Route path="network" element={<NetworkPage />} />
           <Route path="upload" element={<UploadPage />} />
           <Route path="ai" element={<AIChatPage />} />
           <Route path="access" element={<AccessPage />} />

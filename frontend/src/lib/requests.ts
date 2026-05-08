@@ -1,5 +1,8 @@
 import { api } from './api'
 
+type QueryParams = Record<string, string | number | boolean | undefined>
+type JsonObject = Record<string, unknown>
+
 export type TokenRole = 'viewer' | 'analyst' | 'operator' | 'admin'
 
 export interface MeResponse {
@@ -55,6 +58,136 @@ export interface CreateTokenResponse {
   token_id: string
 }
 
+export interface SourceConfig extends JsonObject {
+  path?: string
+}
+
+export interface SourceResponse {
+  id: string
+  name: string
+  type: string
+  enabled: boolean
+  config: SourceConfig
+}
+
+export interface SourceTestResponse extends JsonObject {
+  ok?: boolean
+  error?: string | null
+  details?: string | null
+}
+
+export interface IngestionRunEntry extends JsonObject {
+  path?: string
+  source_name?: string
+  source_id?: string
+  lines_ingested?: number
+  events_created?: number
+  skipped?: boolean
+  reason?: string
+  source_origin?: 'preset' | 'custom' | string
+}
+
+export interface IngestionRunResponse extends JsonObject {
+  results?: IngestionRunEntry[]
+}
+
+export interface EventResponse extends JsonObject {
+  id: string
+  source_id?: string | null
+  timestamp: string
+  severity: string
+  host?: string | null
+  service?: string | null
+  message: string
+}
+
+export interface EventListResponse {
+  items: EventResponse[]
+  next_cursor?: string | null
+}
+
+export interface IncidentResponse extends JsonObject {
+  id: string
+  title: string
+  status: string
+  severity: string
+  event_count: number
+  first_seen: string
+  last_seen: string
+}
+
+export interface IncidentListResponse {
+  items: IncidentResponse[]
+}
+
+export interface RuleResponse extends JsonObject {
+  id: string
+  name: string
+  severity: string
+  threshold: number
+  window_seconds: number
+  enabled: boolean
+}
+
+export interface RuleListResponse {
+  items: RuleResponse[]
+}
+
+export interface AIModelResponse extends JsonObject {
+  name: string
+}
+
+export interface ParserProfileResponse extends JsonObject {
+  name: string
+}
+
+export interface ModelProfileResponse extends JsonObject {
+  name: string
+}
+
+export interface TimeseriesPoint {
+  ts: string
+  count: number
+}
+
+export interface TimeseriesResponse {
+  bucket: string
+  points: TimeseriesPoint[]
+}
+
+export interface TopErrorItem {
+  message?: string
+  count: number
+  key?: string
+}
+
+export interface TopErrorsResponse {
+  items: TopErrorItem[]
+}
+
+export interface TopServiceItem {
+  service: string
+  count: number
+}
+
+export interface TopServicesResponse {
+  items: TopServiceItem[]
+}
+
+export interface ErrorRateResponse {
+  total_events: number
+  error_events: number
+  error_rate: number
+}
+
+export interface UploadImportResponse {
+  source_id: string
+  source_name: string
+  stored_path: string
+  lines_ingested: number
+  events_created: number
+}
+
 export interface PasswordLoginRequest {
   email: string
   password: string
@@ -97,17 +230,17 @@ export async function revokeToken(id: string) {
 
 export async function getSources() {
   const r = await api.get('/sources')
-  return (r.data?.items ?? r.data) as any[]
+  return (r.data?.items ?? r.data) as SourceResponse[]
 }
 
-export async function createSource(body: object) {
+export async function createSource(body: JsonObject) {
   const r = await api.post('/sources', body)
-  return r.data
+  return r.data as SourceResponse
 }
 
-export async function patchSource(id: string, body: object) {
+export async function patchSource(id: string, body: JsonObject) {
   const r = await api.patch(`/sources/${id}`, body)
-  return r.data
+  return r.data as SourceResponse
 }
 
 export async function deleteSource(id: string) {
@@ -116,7 +249,7 @@ export async function deleteSource(id: string) {
 
 export async function testSource(id: string) {
   const r = await api.post(`/sources/${id}/test`)
-  return r.data
+  return r.data as SourceTestResponse
 }
 
 export async function runIngestion(opts?: {
@@ -129,42 +262,42 @@ export async function runIngestion(opts?: {
   if (opts?.extraPaths?.length) body.extra_paths = opts.extraPaths
   if (opts?.extraEntries?.length) body.extra_entries = opts.extraEntries
   const r = await api.post('/ingestion/run', body)
-  return r.data
+  return r.data as IngestionRunResponse
 }
 
 export async function getEvents(params?: object) {
   const r = await api.get('/events', { params })
-  return r.data as { items: any[]; next_cursor?: string }
+  return r.data as EventListResponse
 }
 
-export async function getIncidents(params?: object) {
+export async function getIncidents(params?: QueryParams) {
   const r = await api.get('/incidents', { params })
-  return r.data as { items: any[] }
+  return r.data as IncidentListResponse
 }
 
-export async function patchIncident(id: string, body: object) {
+export async function patchIncident(id: string, body: JsonObject) {
   const r = await api.patch(`/incidents/${id}`, body)
-  return r.data
+  return r.data as IncidentResponse
 }
 
 export async function getRules() {
   const r = await api.get('/rules')
-  return r.data as { items: any[] }
+  return r.data as RuleListResponse
 }
 
-export async function createRule(body: object) {
+export async function createRule(body: JsonObject) {
   const r = await api.post('/rules', body)
-  return r.data
+  return r.data as RuleResponse
 }
 
-export async function patchRule(id: string, body: object) {
+export async function patchRule(id: string, body: JsonObject) {
   const r = await api.patch(`/rules/${id}`, body)
-  return r.data
+  return r.data as RuleResponse
 }
 
-export async function getTimeseries(params?: object) {
+export async function getTimeseries(params?: QueryParams) {
   const r = await api.get('/metrics/timeseries', { params })
-  return r.data as { bucket: string; points: { ts: string; count: number }[] }
+  return r.data as TimeseriesResponse
 }
 
 export interface TimeRange { from: string; to: string }
@@ -174,47 +307,8 @@ export interface MetricsFilter {
   sourcePaths?: string[]
 }
 
-export interface NetworkGeoPoint {
-  resolved_ip?: string | null
-  latitude: number
-  longitude: number
-  city?: string | null
-  region?: string | null
-  country?: string | null
-  country_code?: string | null
-  source: string
-}
-
-export interface NetworkMapNode {
-  id: string
-  label: string
-  kind: string
-  total_bytes: number
-  total_connections: number
-  risk_score: number
-  geo?: NetworkGeoPoint | null
-}
-
-export interface NetworkMapEdge {
-  source: string
-  target: string
-  app?: string | null
-  protocol?: string | null
-  dst_port?: number | null
-  bytes: number
-  connections: number
-  allowed_count: number
-  blocked_count: number
-  anomaly_score: number
-}
-
-export interface NetworkMapResponse {
-  nodes: NetworkMapNode[]
-  edges: NetworkMapEdge[]
-}
-
-function withMetricsFilter(base: Record<string, any>, range?: TimeRange, filter?: MetricsFilter) {
-  const params: Record<string, any> = { ...base }
+function withMetricsFilter(base: QueryParams, range?: TimeRange, filter?: MetricsFilter) {
+  const params: QueryParams = { ...base }
   if (range?.from) params.from = range.from
   if (range?.to) params.to = range.to
   if (filter?.sourceIds?.length) params.source_ids = filter.sourceIds.join(',')
@@ -224,22 +318,17 @@ function withMetricsFilter(base: Record<string, any>, range?: TimeRange, filter?
 
 export async function getTopErrors(range?: TimeRange, filter?: MetricsFilter) {
   const r = await api.get('/metrics/top-errors', { params: withMetricsFilter({}, range, filter) })
-  return r.data as { items: { message: string; count: number; key?: string }[] }
+  return r.data as TopErrorsResponse
 }
 
 export async function getTopServices(range?: TimeRange, filter?: MetricsFilter) {
   const r = await api.get('/metrics/top-services', { params: withMetricsFilter({}, range, filter) })
-  return r.data as { items: { service: string; count: number }[] }
+  return r.data as TopServicesResponse
 }
 
 export async function getErrorRate(range?: TimeRange, filter?: MetricsFilter) {
   const r = await api.get('/metrics/error-rate', { params: withMetricsFilter({}, range, filter) })
-  return r.data as { total_events: number; error_events: number; error_rate: number }
-}
-
-export async function getNetworkMap(range?: TimeRange, filter?: MetricsFilter) {
-  const r = await api.get('/metrics/network/map', { params: withMetricsFilter({}, range, filter) })
-  return r.data as NetworkMapResponse
+  return r.data as ErrorRateResponse
 }
 
 export async function aiChat(model: string, message: string) {
@@ -282,10 +371,10 @@ export async function getAIJob(jobId: string) {
   return r.data as { id: string; status: string; result: { answer: string; references: string[] } | null; error: string | null }
 }
 
-export async function getAIModels(): Promise<any[]> {
+export async function getAIModels(): Promise<AIModelResponse[]> {
   const r = await api.get('/ai/models')
   // backend returns { items: [...] }
-  return r.data?.items ?? r.data?.models ?? (Array.isArray(r.data) ? r.data : [])
+  return (r.data?.items ?? r.data?.models ?? (Array.isArray(r.data) ? r.data : [])) as AIModelResponse[]
 }
 
 export async function analyzeUpload(file: File, model?: string, prompt?: string) {
@@ -302,21 +391,15 @@ export async function uploadImport(file: File, sourceName?: string) {
   fd.append('file', file)
   if (sourceName) fd.append('source_name', sourceName)
   const r = await api.post('/upload/import', fd)
-  return r.data as {
-    source_id: string
-    source_name: string
-    stored_path: string
-    lines_ingested: number
-    events_created: number
-  }
+  return r.data as UploadImportResponse
 }
 
 export async function getParserProfiles() {
   const r = await api.get('/parser-profiles')
-  return r.data as any[]
+  return r.data as ParserProfileResponse[]
 }
 
 export async function getModelProfiles() {
   const r = await api.get('/model-profiles')
-  return r.data as any[]
+  return r.data as ModelProfileResponse[]
 }

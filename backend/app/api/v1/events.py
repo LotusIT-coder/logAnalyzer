@@ -50,7 +50,7 @@ async def stream_events(
     _token=_read,
     session: AsyncSession = Depends(get_db),
 ):
-    """Server-Sent Events stream. Emits new events every second."""
+    """Server-Sent Events stream. Polls the DB every second for new events."""
 
     async def _generator() -> AsyncGenerator[str, None]:
         # Start at the current DB time so new subscribers receive future events

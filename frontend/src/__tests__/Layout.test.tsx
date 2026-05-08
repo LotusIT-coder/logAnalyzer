@@ -40,7 +40,6 @@ describe('Layout', () => {
     expect(screen.getByRole('link', { name: 'Incidents' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Regeln' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Quellen' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Netzwerk' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'AI Chat' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Zugriff' })).toBeInTheDocument()
   })
@@ -69,17 +68,6 @@ describe('Layout', () => {
     renderLayout()
     const link = screen.getByRole('link', { name: 'AI Chat' })
     expect(link).toHaveAttribute('href', '/ai')
-  })
-
-  test('Network link points to /network', () => {
-    renderLayout('/', {
-      me: { subject: 'viewer@example.com', role: 'viewer', scopes: ['read'] },
-      isLoading: false,
-      login: vi.fn(),
-      logout: vi.fn(),
-    })
-    const link = screen.getByRole('link', { name: 'Netzwerk' })
-    expect(link).toHaveAttribute('href', '/network')
   })
 
   test('active link has highlighted style on matching route', () => {

@@ -11,6 +11,9 @@ backend/data/
 frontend/node_modules/
 frontend/dist/
 
+# Local Postgres data (binary, not for VCS)
+backend/.local-postgres/
+
 # Misc
 .DS_Store
 *.swp

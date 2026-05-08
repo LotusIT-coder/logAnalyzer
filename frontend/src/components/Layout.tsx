@@ -1,7 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import HelpTip from './HelpTip'
 import QuickTutorial from './QuickTutorial'
-import { useAuth } from '../ctx/AuthContext'
+import { useAuth } from '../ctx/useAuth'
 
 const NAV: { to: string; label: string; help: string }[] = [
   { to: '/', label: 'Dashboard', help: 'Zentrale Metriken, Quellenauswahl und Zeitraeume fuer den aktuellen Arbeitskontext.' },
@@ -9,8 +9,7 @@ const NAV: { to: string; label: string; help: string }[] = [
   { to: '/incidents', label: 'Incidents', help: 'Gruppierte Auffaelligkeiten und bereits erkannte Stoerungen mit Status und Bearbeitungshinweisen.' },
   { to: '/rules', label: 'Regeln', help: 'Erkennungslogik fuer wiederkehrende Muster, Schwellwerte und automatische Incident-Erzeugung.' },
   { to: '/sources', label: 'Quellen', help: 'Verwaltung der angebundenen Logdateien und Datenquellen.' },
-  { to: '/network', label: 'Netzwerk', help: 'Topologie und Kommunikationspfade zwischen Hosts, Diensten und externen Zielen.' },
-  { to: '/ai', label: 'AI Chat', help: 'Analyseassistent fuer Logs, Incidents und jetzt auch Netzwerk-Kontext aus dem Netzwerktab.' },
+  { to: '/ai', label: 'AI Chat', help: 'Analyseassistent fuer Logs und Incidents.' },
 ]
 
 function hasAdminAccess(me: ReturnType<typeof useAuth>['me']) {
