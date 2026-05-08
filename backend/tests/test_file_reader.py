@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from app.domain.models import Event, Source
+import app.ingestion.file_reader as file_reader
 from app.ingestion.file_reader import _parse_syslog_header, ingest_source
 
 
@@ -158,3 +159,30 @@ class TestSpecializedSourceIngestion:
         assert len(events) == 3
         messages = sorted(e.message for e in events)
         assert messages == ["line-1", "line-2", "line-a"]
+
+    async def test_file_source_fast_forwards_on_large_backlog(self, db_session, tmp_path, monkeypatch):
+        log_path = tmp_path / "huge.log"
+        content = "".join([f"old-{i}\n" for i in range(200)]) + "".join([f"recent-{i}\n" for i in range(12)])
+        log_path.write_text(content, encoding="utf-8")
+
+        # Lower thresholds for test so a small file still triggers fast-forward.
+        monkeypatch.setattr(file_reader, "_MAX_BACKLOG_BYTES_BEFORE_FAST_FORWARD", 100)
+        monkeypatch.setattr(file_reader, "_FAST_FORWARD_TAIL_BYTES", 120)
+
+        source = Source(
+            name="huge-file",
+            type="file",
+            config_json={"path": str(log_path)},
+            enabled=True,
+        )
+        db_session.add(source)
+        await db_session.flush()
+
+        stats = await ingest_source(db_session, source)
+        assert stats["fast_forwarded"] is True
+        assert stats["start_offset"] > 0
+
+        result = await db_session.execute(select(Event).where(Event.source_id == source.id))
+        events = list(result.scalars().all())
+        assert events
+        assert any("recent-" in (e.message or "") for e in events)

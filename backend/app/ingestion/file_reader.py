@@ -24,6 +24,9 @@ from app.services.source_service import resolve_source_path, source_path_is_rege
 _MAX_LINES_PER_RUN = 10_000  # safety cap per source per ingestion cycle
 _BATCH_SIZE = 200         # rows bulk-inserted and released per partial flush
 _PATH_BASED_SOURCE_TYPES = {"file", "docker", "journald"}
+# If backlog is huge, skip ahead close to EOF to prioritize near-real-time data.
+_MAX_BACKLOG_BYTES_BEFORE_FAST_FORWARD = 20_000_000
+_FAST_FORWARD_TAIL_BYTES = 2_000_000
 _JOURNALD_PRIORITY_MAP = {
     "0": "critical",
     "1": "critical",
@@ -165,6 +168,7 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
 
     file_size = os.path.getsize(path)
     last_path, last_cursor = await _get_last_cursor(session, source.id)
+    fast_forwarded = False
 
     # Handle rotation and regex filename changes safely.
     if last_cursor is None:
@@ -179,6 +183,13 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
         start_offset = 0
     else:
         start_offset = last_cursor
+
+    backlog_bytes = max(0, file_size - start_offset)
+    if backlog_bytes > _MAX_BACKLOG_BYTES_BEFORE_FAST_FORWARD:
+        # Keep ingestion responsive by jumping close to EOF instead of replaying
+        # tens of MB of old lines before fresh events appear in the UI.
+        start_offset = max(0, file_size - _FAST_FORWARD_TAIL_BYTES)
+        fast_forwarded = True
 
     # Load enabled parser profiles ordered by priority
     profiles_result = await session.execute(
@@ -311,6 +322,7 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
         "events_created": events_created,
         "start_offset": start_offset,
         "end_offset": new_cursor,
+        "fast_forwarded": fast_forwarded,
     }
 
 
