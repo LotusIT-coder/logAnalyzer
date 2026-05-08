@@ -16,7 +16,6 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.ollama_client import generate
-from app.auth import require_scope
 from app.dependencies import get_db
 from app.domain.models import Source
 from app.ingestion.file_reader import ingest_source
@@ -60,7 +59,6 @@ async def upload_and_analyze(
     file: UploadFile = File(...),
     model: str = Form(default=_DEFAULT_MODEL),
     custom_prompt: Optional[str] = Form(default=None),
-    _token: dict = Depends(require_scope("read")),
 ) -> UploadAnalyzeResponse:
     """Upload a log file and get an AI analysis from Ollama."""
     if file.content_type and "text" not in file.content_type and file.content_type != "application/octet-stream":
@@ -119,7 +117,6 @@ async def upload_and_analyze(
 async def upload_and_import(
     file: UploadFile = File(...),
     source_name: Optional[str] = Form(default=None),
-    _token: dict = Depends(require_scope("write")),
     session: AsyncSession = Depends(get_db),
 ) -> UploadImportResponse:
     """Upload a file and ingest it into raw_log/event for normal investigation workflows."""

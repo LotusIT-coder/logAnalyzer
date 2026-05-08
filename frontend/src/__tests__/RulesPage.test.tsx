@@ -3,7 +3,6 @@ import { render, screen } from '@testing-library/react'
 import { vi } from 'vitest'
 
 import RulesPage from '../pages/RulesPage'
-import { AuthProvider } from '../ctx/AuthContext'
 import { SourceFilterProvider } from '../ctx/SourceFilterContext'
 
 vi.mock('../lib/requests', () => ({
@@ -23,18 +22,9 @@ function renderPage() {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <AuthProvider
-        value={{
-          me: { subject: 'analyst@example.com', role: 'analyst', scopes: ['read', 'write'] },
-          isLoading: false,
-          login: vi.fn(),
-          logout: vi.fn(),
-        }}
-      >
-        <SourceFilterProvider>
-          <RulesPage />
-        </SourceFilterProvider>
-      </AuthProvider>
+      <SourceFilterProvider>
+        <RulesPage />
+      </SourceFilterProvider>
     </QueryClientProvider>
   )
 }

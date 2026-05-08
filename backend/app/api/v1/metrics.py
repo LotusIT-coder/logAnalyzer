@@ -9,7 +9,6 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.source_filters import resolve_source_ids
-from app.auth import require_scope
 from app.dependencies import get_db
 from app.domain.models import Event
 from app.schemas.domain import (
@@ -23,8 +22,6 @@ from app.schemas.domain import (
 )
 
 router = APIRouter(prefix="/metrics", tags=["Metrics"])
-
-_read = Depends(require_scope("read"))
 
 _BUCKET_INTERVALS = {
     "1m": "1 minute",
@@ -42,7 +39,6 @@ def _default_range() -> tuple[datetime, datetime]:
 
 @router.get("/timeseries", response_model=TimeseriesResponse)
 async def timeseries(
-    _token=_read,
     session: AsyncSession = Depends(get_db),
     from_: Optional[datetime] = Query(None, alias="from"),
     to: Optional[datetime] = Query(None),
@@ -83,7 +79,6 @@ async def timeseries(
 
 @router.get("/top-errors", response_model=TopErrorsResponse)
 async def top_errors(
-    _token=_read,
     session: AsyncSession = Depends(get_db),
     from_: Optional[datetime] = Query(None, alias="from"),
     to: Optional[datetime] = Query(None),
@@ -116,7 +111,6 @@ async def top_errors(
 
 @router.get("/top-services", response_model=TopServicesResponse)
 async def top_services(
-    _token=_read,
     session: AsyncSession = Depends(get_db),
     from_: Optional[datetime] = Query(None, alias="from"),
     to: Optional[datetime] = Query(None),
@@ -149,7 +143,6 @@ async def top_services(
 
 @router.get("/error-rate", response_model=ErrorRateResponse)
 async def error_rate(
-    _token=_read,
     session: AsyncSession = Depends(get_db),
     from_: Optional[datetime] = Query(None, alias="from"),
     to: Optional[datetime] = Query(None),

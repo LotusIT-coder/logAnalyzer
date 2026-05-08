@@ -1,7 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import HelpTip from './HelpTip'
 import QuickTutorial from './QuickTutorial'
-import { useAuth } from '../ctx/useAuth'
 
 const NAV: { to: string; label: string; help: string }[] = [
   { to: '/', label: 'Dashboard', help: 'Zentrale Metriken, Quellenauswahl und Zeitraeume fuer den aktuellen Arbeitskontext.' },
@@ -12,15 +11,8 @@ const NAV: { to: string; label: string; help: string }[] = [
   { to: '/ai', label: 'AI Chat', help: 'Analyseassistent fuer Logs und Incidents.' },
 ]
 
-function hasAdminAccess(me: ReturnType<typeof useAuth>['me']) {
-  return me?.role === 'admin' || me?.scopes.includes('admin')
-}
-
 export default function Layout() {
-  const { me, logout } = useAuth()
-  const navItems: typeof NAV = hasAdminAccess(me)
-    ? [...NAV, { to: '/access', label: 'Zugriff', help: 'Benutzer, Rollen und persoenliche API-Tokens fuer den Zugriff auf den LotusAnalyzer.' }]
-    : NAV
+  const navItems: typeof NAV = NAV
 
   return (
     <div style={styles.root}>
@@ -44,12 +36,6 @@ export default function Layout() {
             </div>
           ))}
         </nav>
-        {me?.subject && (
-          <div style={styles.footer}>
-            <span style={{ color: '#64748b', fontSize: '0.75rem' }}>{me.subject}</span>
-            <button onClick={logout} style={styles.logoutBtn}>Abmelden</button>
-          </div>
-        )}
       </aside>
       <main style={styles.main}>
         <div style={styles.mainToolbar}>
@@ -82,14 +68,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'block', flex: 1, padding: '0.55rem 0.75rem', borderRadius: 6,
     textDecoration: 'none', fontWeight: 500, fontSize: '0.9rem',
     transition: 'background 0.15s',
-  },
-  footer: {
-    display: 'flex', flexDirection: 'column', gap: '0.4rem',
-    borderTop: '1px solid #334155', paddingTop: '1rem', marginTop: 'auto',
-  },
-  logoutBtn: {
-    background: 'none', border: '1px solid #334155', color: '#94a3b8',
-    borderRadius: 6, padding: '0.35rem 0.75rem', cursor: 'pointer', fontSize: '0.8rem',
   },
   main: { flex: 1, padding: '1.2rem 2rem 2rem 2rem', overflow: 'auto' },
   mainToolbar: {

@@ -4,20 +4,13 @@
  */
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { vi } from 'vitest'
 import Layout from '../components/Layout'
-import { AuthProvider } from '../ctx/AuthContext'
 
-function renderLayout(
-  initialPath = '/',
-  authValue?: Parameters<typeof AuthProvider>[0]['value'],
-) {
+function renderLayout(initialPath = '/') {
   return render(
-    <AuthProvider value={authValue}>
-      <MemoryRouter initialEntries={[initialPath]}>
-        <Layout />
-      </MemoryRouter>
-    </AuthProvider>
+    <MemoryRouter initialEntries={[initialPath]}>
+      <Layout />
+    </MemoryRouter>
   )
 }
 
@@ -29,27 +22,13 @@ describe('Layout', () => {
   })
 
   test('renders all navigation links', () => {
-    renderLayout('/', {
-      me: { subject: 'admin@example.com', role: 'admin', scopes: ['admin'] },
-      isLoading: false,
-      login: vi.fn(),
-      logout: vi.fn(),
-    })
+    renderLayout('/')
     expect(screen.getByRole('link', { name: 'Dashboard' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Events' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Incidents' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Regeln' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Quellen' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'AI Chat' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Zugriff' })).toBeInTheDocument()
-  })
-
-  test('hides admin navigation for non-admin users', () => {
-    renderLayout('/', {
-      me: { subject: 'viewer@example.com', role: 'viewer', scopes: ['events:read'] },
-    })
-
-    expect(screen.queryByRole('link', { name: 'Zugriff' })).not.toBeInTheDocument()
   })
 
   test('Dashboard link points to /', () => {

@@ -13,10 +13,8 @@ from typing import AsyncGenerator
 
 # Force test settings BEFORE any app import resolves get_settings()
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
-os.environ.setdefault("DISABLE_AUTH", "true")
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("OLLAMA_BASE_URL", "http://localhost:11434")
-os.environ.setdefault("API_TOKEN_SIGNING_KEY", "test-signing-key-not-secret")
 os.environ.setdefault("CORS_ALLOWED_ORIGINS", "http://localhost:5173")
 
 from sqlalchemy.dialects.postgresql import JSONB

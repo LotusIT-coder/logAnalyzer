@@ -3,13 +3,9 @@ import { getRules, createRule, patchRule } from '../lib/requests'
 import { useState } from 'react'
 import GlobalSourceFilterNotice from '../components/GlobalSourceFilterNotice'
 import HelpTip from '../components/HelpTip'
-import { hasScope } from '../ctx/authScopes'
-import { useAuth } from '../ctx/useAuth'
 
 export default function RulesPage() {
   const qc = useQueryClient()
-  const { me } = useAuth()
-  const canWrite = hasScope(me, 'write')
   const { data, isLoading } = useQuery({ queryKey: ['rules'], queryFn: getRules })
   const [showNew, setShowNew] = useState(false)
   const [form, setForm] = useState({ name: '', severity: 'error', threshold: 5, window_seconds: 300, condition_field: 'severity', condition_value: 'error' })
@@ -46,18 +42,14 @@ export default function RulesPage() {
           <h2 style={styles.h2}>Regeln</h2>
           <HelpTip content="Regeln erkennen wiederkehrende Muster in Events. Wenn die Bedingung im definierten Zeitfenster oft genug zutrifft, kann daraus ein Incident entstehen." ariaLabel="Regeln erklaeren" />
         </div>
-        {canWrite && (
-          <button onClick={() => setShowNew(v => !v)} style={styles.addBtn}>
-            {showNew ? '✕ Abbrechen' : '+ Neue Regel'}
-          </button>
-        )}
+        <button onClick={() => setShowNew(v => !v)} style={styles.addBtn}>
+          {showNew ? '✕ Abbrechen' : '+ Neue Regel'}
+        </button>
       </div>
 
       <GlobalSourceFilterNotice />
 
-      {!canWrite && <div style={styles.readOnlyNotice}>Regeln koennen mit diesem Token nur gelesen werden.</div>}
-
-      {canWrite && showNew && (
+      {showNew && (
         <div style={styles.form}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
             <h3 style={{ margin: 0, fontSize: '0.95rem', color: '#94a3b8' }}>Neue Regel</h3>
@@ -108,7 +100,7 @@ export default function RulesPage() {
               <span style={{ width: 80 }}>Schwelle</span>
               <span style={{ width: 100 }}>Zeitfenster</span>
               <span style={{ width: 80 }}>Status</span>
-              {canWrite && <span style={{ width: 80 }}>Aktion</span>}
+              <span style={{ width: 80 }}>Aktion</span>
             </div>
             {data?.items.map(r => (
               <div key={r.id} style={styles.row}>
@@ -121,13 +113,11 @@ export default function RulesPage() {
                     {r.enabled ? 'aktiv' : 'inaktiv'}
                   </span>
                 </span>
-                {canWrite && (
-                  <span style={{ width: 80 }}>
-                    <button onClick={() => toggleRule(r.id, r.enabled)} style={styles.toggleBtn}>
-                      {r.enabled ? 'Deakt.' : 'Akt.'}
-                    </button>
-                  </span>
-                )}
+                <span style={{ width: 80 }}>
+                  <button onClick={() => toggleRule(r.id, r.enabled)} style={styles.toggleBtn}>
+                    {r.enabled ? 'Deakt.' : 'Akt.'}
+                  </button>
+                </span>
               </div>
             ))}
             {!data?.items.length && (

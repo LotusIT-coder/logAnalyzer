@@ -20,10 +20,7 @@ class Settings(BaseSettings):
     database_url: str
     ollama_base_url: str = "http://127.0.0.1:11434"
 
-    api_token_signing_key: str = "dev-only-no-auth"
     cors_allowed_origins: str = "http://localhost:5173"
-    public_base_url: str = "http://localhost:8080"
-    disable_auth: bool = True  # set DISABLE_AUTH=false to require token
     watcher_interval_seconds: float = 5.0
     rule_scheduler_interval_seconds: float = 30.0
     notification_webhook_url: str | None = None

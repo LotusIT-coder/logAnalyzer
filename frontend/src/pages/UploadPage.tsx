@@ -1,8 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { analyzeUpload, getAIModels, uploadImport, type AIModelResponse } from '../lib/requests'
 import { useRef, useState } from 'react'
-import { hasScope } from '../ctx/authScopes'
-import { useAuth } from '../ctx/useAuth'
 import { getApiErrorMessage } from '../lib/errors'
 
 interface AnalysisResult {
@@ -21,8 +19,6 @@ interface ImportResult {
 }
 
 export default function UploadPage() {
-  const { me } = useAuth()
-  const canWrite = hasScope(me, 'write')
   const { data: models = [] } = useQuery({ queryKey: ['ai-models'], queryFn: getAIModels })
 
   const [model, setModel] = useState('')
@@ -53,7 +49,7 @@ export default function UploadPage() {
   }
 
   async function handleImport() {
-    if (!file || !canWrite) return
+    if (!file) return
     setLoading(true)
     setResult(null)
     setImportResult(null)
@@ -75,12 +71,6 @@ export default function UploadPage() {
         Lade eine beliebige Log-Datei hoch – sie wird geparst und von Ollama analysiert.
         Bis zu 500 Zeilen werden ausgewertet (max. 10 MB).
       </p>
-
-      {!canWrite && (
-        <div style={styles.readOnlyNotice}>
-          Analyse-only: Dieses Token darf Uploads pruefen, aber nicht importieren.
-        </div>
-      )}
 
       <div style={styles.card}>
         <div style={styles.row}>
@@ -137,15 +127,13 @@ export default function UploadPage() {
           >
             {loading ? '⏳ Analysiere…' : '🔍 Analysieren'}
           </button>
-          {canWrite && (
-            <button
-              onClick={handleImport}
-              disabled={!file || loading}
-              style={styles.importBtn}
-            >
-              {loading ? '⏳ Importiere…' : 'In Quelle importieren'}
-            </button>
-          )}
+          <button
+            onClick={handleImport}
+            disabled={!file || loading}
+            style={styles.importBtn}
+          >
+            {loading ? '⏳ Importiere…' : 'In Quelle importieren'}
+          </button>
         </div>
       </div>
 

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { getEvents, getSources, type EventResponse, type SourceResponse } from '../lib/requests'
 import dayjs from 'dayjs'
-import { getApiBase, getStoredToken } from '../lib/api'
+import { getApiBase } from '../lib/api'
 import HelpTip from '../components/HelpTip'
 
 const SEV_COLOR: Record<string, string> = {
@@ -72,8 +72,7 @@ function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: (
   }, [paused])
 
   useEffect(() => {
-    const token = getStoredToken()
-    const url = `${getApiBase()}/sources/${source.id}/tail?lines=100&token=${encodeURIComponent(token ?? '')}`
+    const url = `${getApiBase()}/sources/${source.id}/tail?lines=100`
     const es = new EventSource(url)
 
     es.onopen = () => setConnected(true)

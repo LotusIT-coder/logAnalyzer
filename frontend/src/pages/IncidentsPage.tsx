@@ -3,8 +3,6 @@ import { getIncidents, patchIncident } from '../lib/requests'
 import dayjs from 'dayjs'
 import { useState } from 'react'
 import HelpTip from '../components/HelpTip'
-import { hasScope } from '../ctx/authScopes'
-import { useAuth } from '../ctx/useAuth'
 
 const STATUS_COLOR: Record<string, string> = {
   open: '#ef4444',
@@ -17,8 +15,6 @@ const STATUSES = ['open', 'investigating', 'resolved', 'false_positive']
 
 export default function IncidentsPage() {
   const qc = useQueryClient()
-  const { me } = useAuth()
-  const canWrite = hasScope(me, 'write')
   const [statusFilter, setStatusFilter] = useState('')
   const [search, setSearch] = useState('')
   const { data, isLoading } = useQuery({
@@ -59,8 +55,6 @@ export default function IncidentsPage() {
         </div>
       </div>
 
-      {!canWrite && <div style={styles.readOnlyNotice}>Incidents koennen mit diesem Token nur gelesen werden.</div>}
-
       {isLoading ? (
         <div style={{ color: '#64748b', padding: '2rem' }}>Lade…</div>
       ) : (
@@ -84,15 +78,13 @@ export default function IncidentsPage() {
                   <span>Erstmalig: {dayjs(inc.first_seen).format('DD.MM.YYYY HH:mm')}</span>
                   <span>Zuletzt: {dayjs(inc.last_seen).format('DD.MM.YYYY HH:mm')}</span>
                 </div>
-                {canWrite && (
-                  <div style={styles.actions}>
-                    {STATUSES.filter(s => s !== inc.status).map(s => (
-                      <button key={s} onClick={() => changeStatus(inc.id, s)} style={styles.statusBtn}>
-                        → {s}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <div style={styles.actions}>
+                  {STATUSES.filter(s => s !== inc.status).map(s => (
+                    <button key={s} onClick={() => changeStatus(inc.id, s)} style={styles.statusBtn}>
+                      → {s}
+                    </button>
+                  ))}
+                </div>
               </div>
             ))}
             {!items.length && (

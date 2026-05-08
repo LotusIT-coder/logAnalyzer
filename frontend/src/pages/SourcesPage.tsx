@@ -1,9 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getSources, createSource, testSource, patchSource, deleteSource, type SourceResponse, type SourceTestResponse } from '../lib/requests'
 import { useEffect, useRef, useState } from 'react'
-import { getApiBase, getStoredToken } from '../lib/api'
-import { hasScope } from '../ctx/authScopes'
-import { useAuth } from '../ctx/useAuth'
+import { getApiBase } from '../lib/api'
 import HelpTip from '../components/HelpTip'
 import { getApiErrorMessage } from '../lib/errors'
 
@@ -74,8 +72,7 @@ function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: (
   }, [paused])
 
   useEffect(() => {
-    const token = getStoredToken()
-    const url = `${getApiBase()}/sources/${source.id}/tail?lines=100&token=${encodeURIComponent(token ?? '')}`
+    const url = `${getApiBase()}/sources/${source.id}/tail?lines=100`
     const es = new EventSource(url)
 
     es.onopen = () => setConnected(true)
@@ -163,8 +160,6 @@ function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: (
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function SourcesPage() {
   const qc = useQueryClient()
-  const { me } = useAuth()
-  const canWrite = hasScope(me, 'write')
   const { data, isLoading } = useQuery({ queryKey: ['sources'], queryFn: getSources })
   const [showNew, setShowNew] = useState(false)
   const [name, setName] = useState('')
@@ -211,11 +206,9 @@ export default function SourcesPage() {
           <h2 style={styles.h2}>Log-Quellen</h2>
           <HelpTip content="Hier verwaltest du die angebundenen Logdateien. Quellen koennen getestet, live beobachtet, bearbeitet und bei Bedarf entfernt werden." ariaLabel="Log-Quellen erklaeren" />
         </div>
-        {canWrite && (
-          <button onClick={() => setShowNew(v => !v)} style={styles.addBtn}>
-            {showNew ? 'x Abbrechen' : '+ Neue Quelle'}
-          </button>
-        )}
+        <button onClick={() => setShowNew(v => !v)} style={styles.addBtn}>
+          {showNew ? 'x Abbrechen' : '+ Neue Quelle'}
+        </button>
       </div>
 
       <div style={{ ...styles.liveHint, display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -225,13 +218,7 @@ export default function SourcesPage() {
         <HelpTip content="Die Live-Ansicht zeigt neu eintreffende Logzeilen der gewaehlten Datei in Echtzeit. Das ist besonders hilfreich nach Parser-, Ingestion- oder Quellenaenderungen." ariaLabel="Live-Ansicht der Quellen erklaeren" />
       </div>
 
-      {!canWrite && (
-        <div style={styles.readOnlyNotice}>
-          Quellen koennen mit diesem Token nur gelesen und getestet werden.
-        </div>
-      )}
-
-      {canWrite && showNew && (
+      {showNew && (
         <div style={styles.form}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
             <h3 style={{ margin: 0, fontSize: '0.95rem', color: '#94a3b8' }}>Neue Quelle (Typ: file)</h3>
@@ -289,23 +276,21 @@ export default function SourcesPage() {
                   >
                     Live-Ansicht
                   </button>
-                  {canWrite && (
-                    <button onClick={() => setEditSource(src)} style={styles.testBtn}>
-                      Bearbeiten
-                    </button>
-                  )}
+                  <button onClick={() => setEditSource(src)} style={styles.testBtn}>
+                    Bearbeiten
+                  </button>
                   <button onClick={() => handleTest(src.id)} style={styles.testBtn}>
                     Testen
                   </button>
-                  {canWrite && pendingDelete === src.id ? (
+                  {pendingDelete === src.id ? (
                     <>
                       <span style={{ fontSize: '0.82rem', color: '#fca5a5', alignSelf: 'center' }}>Wirklich löschen?</span>
                       <button onClick={() => handleDelete(src.id)} style={{ ...styles.deleteBtn, background: '#7f1d1d' }}>Ja</button>
                       <button onClick={() => setPendingDelete(null)} style={styles.testBtn}>Abbrechen</button>
                     </>
-                  ) : canWrite ? (
+                  ) : (
                     <button onClick={() => setPendingDelete(src.id)} style={styles.deleteBtn}>Löschen</button>
-                  ) : null}
+                  )}
                 </div>
               </div>
               <div style={styles.path}>{src.config?.path ?? '-'}</div>
@@ -336,7 +321,6 @@ const styles: Record<string, React.CSSProperties> = {
   h2: { margin: 0, fontSize: '1.5rem' },
   addBtn: { background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1rem', cursor: 'pointer', fontWeight: 600 },
   liveHint: { background: '#10223f', color: '#bfdbfe', border: '1px solid #1e3a8a', borderRadius: 8, padding: '0.65rem 0.9rem', marginBottom: '1rem', fontSize: '0.86rem' },
-  readOnlyNotice: { background: '#1f2937', color: '#cbd5e1', border: '1px solid #334155', borderRadius: 8, padding: '0.65rem 0.9rem', marginBottom: '1rem', fontSize: '0.86rem' },
   form: { background: '#1e293b', borderRadius: 10, padding: '1.25rem', border: '1px solid #334155', marginBottom: '1.5rem' },
   field: { display: 'flex', flexDirection: 'column', gap: '0.3rem', flex: 1 },
   label: { color: '#64748b', fontSize: '0.78rem' },

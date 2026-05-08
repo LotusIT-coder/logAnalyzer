@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import require_scope
 from app.dependencies import get_db
 from app.domain.models import ModelProfile
 
@@ -79,7 +78,6 @@ _VALID_PURPOSES = {"triage", "deep", "security"}
 @router.get("", summary="List model profiles")
 async def list_model_profiles(
     session: AsyncSession = Depends(get_db),
-    _token: dict = Depends(require_scope("read")),
 ) -> list[dict]:
     result = await session.execute(
         select(ModelProfile).order_by(ModelProfile.name.asc())
@@ -92,7 +90,6 @@ async def list_model_profiles(
 async def create_model_profile(
     body: ModelProfileCreateRequest,
     session: AsyncSession = Depends(get_db),
-    _token: dict = Depends(require_scope("write")),
 ) -> dict:
     if body.purpose not in _VALID_PURPOSES:
         raise HTTPException(status_code=422, detail=f"purpose must be one of {sorted(_VALID_PURPOSES)}")
@@ -117,7 +114,6 @@ async def patch_model_profile(
     profile_id: str,
     body: ModelProfilePatchRequest,
     session: AsyncSession = Depends(get_db),
-    _token: dict = Depends(require_scope("write")),
 ) -> dict:
     result = await session.execute(select(ModelProfile).where(ModelProfile.id == profile_id))
     profile = result.scalar_one_or_none()
@@ -150,7 +146,6 @@ async def patch_model_profile(
 async def delete_model_profile(
     profile_id: str,
     session: AsyncSession = Depends(get_db),
-    _token: dict = Depends(require_scope("write")),
 ) -> None:
     result = await session.execute(select(ModelProfile).where(ModelProfile.id == profile_id))
     profile = result.scalar_one_or_none()

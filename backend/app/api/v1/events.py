@@ -15,14 +15,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.source_filters import resolve_source_ids
-from app.auth import require_scope
 from app.dependencies import get_db
 from app.domain.models import Event
 from app.schemas.event import EventListResponse, EventResponse
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
-_read = Depends(require_scope("read"))
 _STREAM_POLL_LIMIT = 500
 
 
@@ -47,7 +45,6 @@ def _stream_events_stmt(event_type: Optional[str] = None):
 async def stream_events(
     request: Request,
     event_type: Optional[str] = Query(None),
-    _token=_read,
     session: AsyncSession = Depends(get_db),
 ):
     """Server-Sent Events stream. Polls the DB every second for new events."""
@@ -81,7 +78,6 @@ async def stream_events(
 
 @router.get("", response_model=EventListResponse)
 async def list_events(
-    _token=_read,
     session: AsyncSession = Depends(get_db),
     from_: Optional[datetime] = Query(None, alias="from"),
     to: Optional[datetime] = Query(None),
@@ -140,7 +136,6 @@ async def list_events(
 @router.get("/{event_id}", response_model=EventResponse)
 async def get_event(
     event_id: str,
-    _token=_read,
     session: AsyncSession = Depends(get_db),
 ):
     result = await session.execute(select(Event).where(Event.id == event_id))

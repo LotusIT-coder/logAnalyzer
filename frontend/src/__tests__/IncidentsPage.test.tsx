@@ -3,7 +3,6 @@ import { render, screen } from '@testing-library/react'
 import { vi } from 'vitest'
 
 import IncidentsPage from '../pages/IncidentsPage'
-import { AuthProvider } from '../ctx/AuthContext'
 
 vi.mock('../lib/requests', () => ({
   getIncidents: vi.fn(),
@@ -21,16 +20,7 @@ function renderPage() {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <AuthProvider
-        value={{
-          me: { subject: 'analyst@example.com', role: 'analyst', scopes: ['read', 'write'] },
-          isLoading: false,
-          login: vi.fn(),
-          logout: vi.fn(),
-        }}
-      >
-        <IncidentsPage />
-      </AuthProvider>
+      <IncidentsPage />
     </QueryClientProvider>
   )
 }

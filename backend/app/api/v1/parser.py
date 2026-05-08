@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import require_scope
 from app.dependencies import get_db
 from app.domain.models import ParserProfile
 from app.parser.pipeline import parse_line
@@ -19,7 +18,6 @@ router = APIRouter(prefix="/parser", tags=["Parser"])
 @router.post("/test", response_model=ParserTestResponse)
 async def test_parser(
     body: ParserTestRequest,
-    _token=Depends(require_scope("read")),
     session: AsyncSession = Depends(get_db),
 ):
     profile: Optional[ParserProfile] = None

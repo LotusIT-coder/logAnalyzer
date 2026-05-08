@@ -8,7 +8,6 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import require_scope
 from app.dependencies import get_db
 from app.domain.models import Rule
 from app.schemas.domain import (
@@ -23,12 +22,9 @@ from app.services.rule_engine import evaluate_rule
 
 router = APIRouter(prefix="/rules", tags=["Rules"])
 
-_read = Depends(require_scope("read"))
-_write = Depends(require_scope("write"))
-
 
 @router.get("", response_model=RuleListResponse)
-async def list_rules(_token=_read, session: AsyncSession = Depends(get_db)):
+async def list_rules(session: AsyncSession = Depends(get_db)):
     result = await session.execute(select(Rule).order_by(Rule.created_at))
     return RuleListResponse(items=[RuleResponse.model_validate(r) for r in result.scalars()])
 
@@ -36,7 +32,6 @@ async def list_rules(_token=_read, session: AsyncSession = Depends(get_db)):
 @router.post("", response_model=RuleResponse, status_code=status.HTTP_201_CREATED)
 async def create_rule(
     body: RuleCreateRequest,
-    _token=_write,
     session: AsyncSession = Depends(get_db),
 ):
     rule = Rule(
@@ -58,7 +53,6 @@ async def create_rule(
 async def patch_rule(
     rule_id: str,
     body: RulePatchRequest,
-    _token=_write,
     session: AsyncSession = Depends(get_db),
 ):
     result = await session.execute(select(Rule).where(Rule.id == rule_id))
@@ -91,7 +85,6 @@ async def patch_rule(
 async def dry_run_rule(
     rule_id: str,
     body: Optional[RuleDryRunRequest] = None,
-    _token=_read,
     session: AsyncSession = Depends(get_db),
 ):
     result = await session.execute(select(Rule).where(Rule.id == rule_id))

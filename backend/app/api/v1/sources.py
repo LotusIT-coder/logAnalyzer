@@ -8,7 +8,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import require_scope
 from app.dependencies import get_db
 from app.schemas.source import (
     SourceCreateRequest,
@@ -18,16 +17,13 @@ from app.schemas.source import (
     SourceTestResponse,
 )
 from app.services import source_service
+from app.services.source_service import DuplicateSourceNameError
 
 router = APIRouter(prefix="/sources", tags=["Sources"])
-
-_read = Depends(require_scope("read"))
-_write = Depends(require_scope("write"))
 
 
 @router.get("", response_model=SourceListResponse)
 async def list_sources(
-    _token=_read,
     session: AsyncSession = Depends(get_db),
 ):
     sources = await source_service.list_sources(session)
@@ -39,10 +35,12 @@ async def list_sources(
 @router.post("", response_model=SourceResponse, status_code=status.HTTP_201_CREATED)
 async def create_source(
     body: SourceCreateRequest,
-    _token=_write,
     session: AsyncSession = Depends(get_db),
 ):
-    source = await source_service.create_source(session, body)
+    try:
+        source = await source_service.create_source(session, body)
+    except DuplicateSourceNameError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Eine Quelle mit dem Namen '{body.name}' existiert bereits.")
     return SourceResponse.model_validate(source)
 
 
@@ -50,7 +48,6 @@ async def create_source(
 async def patch_source(
     source_id: str,
     body: SourcePatchRequest,
-    _token=_write,
     session: AsyncSession = Depends(get_db),
 ):
     source = await source_service.get_source(session, source_id)
@@ -63,7 +60,6 @@ async def patch_source(
 @router.delete("/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_source(
     source_id: str,
-    _token=_write,
     session: AsyncSession = Depends(get_db),
 ):
     source = await source_service.get_source(session, source_id)
@@ -75,7 +71,6 @@ async def delete_source(
 @router.post("/{source_id}/test", response_model=SourceTestResponse)
 async def test_source(
     source_id: str,
-    _token=_read,
     session: AsyncSession = Depends(get_db),
 ):
     source = await source_service.get_source(session, source_id)
@@ -90,7 +85,6 @@ async def tail_source(
     source_id: str,
     request: Request,
     lines: int = 50,
-    _token=_read,
     session: AsyncSession = Depends(get_db),
 ):
     """Server-Sent Events stream that tails the source file in real-time.

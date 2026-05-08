@@ -11,7 +11,6 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import job_store, ollama_client
-from app.auth import require_scope
 from app.config import get_settings
 from app.dependencies import get_db
 from app.domain.models import AIAnalysis, Event, Incident, ModelProfile
@@ -28,9 +27,6 @@ from app.schemas.domain import (
 )
 
 router = APIRouter(prefix="/ai", tags=["AI"])
-
-_read = Depends(require_scope("read"))
-_write = Depends(require_scope("write"))
 
 _DEFAULT_MODEL = "llama3"
 _DEFAULT_SYSTEM = (
@@ -112,7 +108,7 @@ async def _get_model_settings(
 # ---------------------------------------------------------------------------
 
 @router.get("/models", response_model=AIModelListResponse)
-async def list_models(_token=_read):
+async def list_models():
     """Proxy Ollama /api/tags to list available local models."""
     try:
         raw = await ollama_client.list_models()
@@ -199,7 +195,6 @@ async def _run_window_analysis(
 async def analyze_window(
     body: AIAnalyzeWindowRequest,
     background_tasks: BackgroundTasks,
-    _token=_write,
     session: AsyncSession = Depends(get_db),
     settings=Depends(get_settings),
 ):
@@ -281,7 +276,6 @@ async def analyze_incident(
     incident_id: str,
     background_tasks: BackgroundTasks,
     body: Optional[AIAnalyzeIncidentRequest] = None,
-    _token=_write,
     session: AsyncSession = Depends(get_db),
 ):
     result = await session.execute(select(Incident).where(Incident.id == incident_id))
@@ -311,7 +305,6 @@ async def analyze_incident(
 @router.post("/chat", response_model=AIChatResponse)
 async def ai_chat(
     body: AIChatRequest,
-    _token=_read,
     session: AsyncSession = Depends(get_db),
 ):
     # --- Model resolution ---
@@ -434,7 +427,6 @@ async def _run_chat_async(
 async def ai_chat_async(
     body: AIChatAsyncRequest,
     background_tasks: BackgroundTasks,
-    _token=_read,
     session: AsyncSession = Depends(get_db),
     settings=Depends(get_settings),
 ):
@@ -473,7 +465,7 @@ async def ai_chat_async(
 # ---------------------------------------------------------------------------
 
 @router.get("/jobs/{job_id}", response_model=AIJob)
-async def get_job(job_id: str, _token=_read):
+async def get_job(job_id: str):
     job = job_store.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")

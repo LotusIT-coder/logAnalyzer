@@ -8,7 +8,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.source_filters import resolve_source_ids
-from app.auth import require_scope
 from app.dependencies import get_db
 from app.domain.models import Event, Incident, IncidentEvent
 from app.schemas.domain import (
@@ -19,15 +18,11 @@ from app.schemas.domain import (
 
 router = APIRouter(prefix="/incidents", tags=["Incidents"])
 
-_read = Depends(require_scope("read"))
-_write = Depends(require_scope("write"))
-
 _VALID_STATUSES = {"open", "investigating", "resolved", "false_positive"}
 
 
 @router.get("", response_model=IncidentListResponse)
 async def list_incidents(
-    _token=_read,
     session: AsyncSession = Depends(get_db),
     status_filter: Optional[str] = Query(None, alias="status"),
     severity: Optional[str] = Query(None),
@@ -67,7 +62,6 @@ async def list_incidents(
 @router.get("/{incident_id}", response_model=IncidentResponse)
 async def get_incident(
     incident_id: str,
-    _token=_read,
     session: AsyncSession = Depends(get_db),
 ):
     result = await session.execute(select(Incident).where(Incident.id == incident_id))
@@ -81,7 +75,6 @@ async def get_incident(
 async def patch_incident(
     incident_id: str,
     body: IncidentPatchRequest,
-    _token=_write,
     session: AsyncSession = Depends(get_db),
 ):
     result = await session.execute(select(Incident).where(Incident.id == incident_id))

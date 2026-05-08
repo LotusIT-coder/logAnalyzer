@@ -3,7 +3,6 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { vi } from 'vitest'
 
 import UploadPage from '../pages/UploadPage'
-import { AuthProvider } from '../ctx/AuthContext'
 
 vi.mock('../lib/requests', () => ({
   getAIModels: vi.fn(),
@@ -17,23 +16,14 @@ const mockGetAIModels = vi.mocked(getAIModels)
 const mockAnalyzeUpload = vi.mocked(analyzeUpload)
 const mockUploadImport = vi.mocked(uploadImport)
 
-function renderPage(role: 'viewer' | 'analyst' | 'operator' | 'admin' = 'viewer') {
+function renderPage() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
 
   render(
     <QueryClientProvider client={queryClient}>
-      <AuthProvider
-        value={{
-          me: { subject: `${role}@example.com`, role, scopes: role === 'viewer' ? ['read'] : ['write'] },
-          isLoading: false,
-          login: vi.fn(),
-          logout: vi.fn(),
-        }}
-      >
-        <UploadPage />
-      </AuthProvider>
+      <UploadPage />
     </QueryClientProvider>
   )
 }
@@ -57,15 +47,8 @@ beforeEach(() => {
 })
 
 describe('UploadPage', () => {
-  test('shows analyze-only mode for viewers', async () => {
-    renderPage('viewer')
-
-    expect(await screen.findByText('Analyse-only: Dieses Token darf Uploads pruefen, aber nicht importieren.')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'In Quelle importieren' })).not.toBeInTheDocument()
-  })
-
-  test('allows writers to import uploaded files as sources', async () => {
-    renderPage('analyst')
+  test('allows importing uploaded files as sources', async () => {
+    renderPage()
 
     const file = new File(['level=error msg="boom"'], 'sample.log', { type: 'text/plain' })
     const input = document.querySelector('input[type="file"]') as HTMLInputElement

@@ -3,61 +3,6 @@ import { api } from './api'
 type QueryParams = Record<string, string | number | boolean | undefined>
 type JsonObject = Record<string, unknown>
 
-export type TokenRole = 'viewer' | 'analyst' | 'operator' | 'admin'
-
-export interface MeResponse {
-  subject: string
-  role: TokenRole
-  scopes: string[]
-  user_id?: string | null
-}
-
-export interface UserResponse {
-  id: string
-  name: string
-  email: string
-  role: TokenRole
-  enabled: boolean
-}
-
-export interface UserListResponse {
-  items: UserResponse[]
-}
-
-export interface TokenListItem {
-  id: string
-  name: string
-  role: TokenRole
-  user_id?: string | null
-  scopes: string[]
-  created_at: string
-  revoked_at?: string | null
-}
-
-export interface TokenListResponse {
-  items: TokenListItem[]
-}
-
-export interface CreateUserRequest {
-  name: string
-  email: string
-  password: string
-  role: TokenRole
-  enabled?: boolean
-}
-
-export interface CreateTokenRequest {
-  name: string
-  role: TokenRole
-  user_id?: string
-  scopes?: string[]
-}
-
-export interface CreateTokenResponse {
-  token: string
-  token_id: string
-}
-
 export interface SourceConfig extends JsonObject {
   path?: string
 }
@@ -186,46 +131,6 @@ export interface UploadImportResponse {
   stored_path: string
   lines_ingested: number
   events_created: number
-}
-
-export interface PasswordLoginRequest {
-  email: string
-  password: string
-}
-
-export async function getMe() {
-  const r = await api.get('/auth/me')
-  return r.data as MeResponse
-}
-
-export async function loginWithPassword(body: PasswordLoginRequest) {
-  const r = await api.post('/auth/login', body)
-  return r.data as CreateTokenResponse
-}
-
-export async function getUsers() {
-  const r = await api.get('/auth/users')
-  return r.data as UserListResponse
-}
-
-export async function createUser(body: CreateUserRequest) {
-  const r = await api.post('/auth/users', body)
-  return r.data as UserResponse
-}
-
-export async function getTokens() {
-  const r = await api.get('/auth/tokens')
-  return r.data as TokenListResponse
-}
-
-export async function createToken(body: CreateTokenRequest) {
-  const r = await api.post('/auth/token', body)
-  return r.data as CreateTokenResponse
-}
-
-export async function revokeToken(id: string) {
-  const r = await api.post(`/auth/tokens/${id}/revoke`)
-  return r.data as TokenListItem
 }
 
 export async function getSources() {

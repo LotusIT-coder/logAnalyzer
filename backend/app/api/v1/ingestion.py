@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import require_scope
 from app.dependencies import get_db
 from app.ingestion.file_reader import ingest_source, run_ingestion
 from app.domain.models import Source
@@ -34,7 +33,6 @@ class IngestionRunResponse(BaseModel):
 @router.post("/run", response_model=IngestionRunResponse, status_code=202)
 async def trigger_ingestion(
     body: IngestionRunRequest = IngestionRunRequest(),
-    _token=Depends(require_scope("write")),
     session: AsyncSession = Depends(get_db),
 ):
     """Manually trigger an ingestion run.

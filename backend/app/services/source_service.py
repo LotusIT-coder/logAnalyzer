@@ -5,6 +5,7 @@ import os
 from typing import List, Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models import Source
@@ -21,6 +22,10 @@ async def get_source(session: AsyncSession, source_id: str) -> Optional[Source]:
     return result.scalar_one_or_none()
 
 
+class DuplicateSourceNameError(ValueError):
+    pass
+
+
 async def create_source(session: AsyncSession, body: SourceCreateRequest) -> Source:
     source = Source(
         name=body.name,
@@ -29,7 +34,11 @@ async def create_source(session: AsyncSession, body: SourceCreateRequest) -> Sou
         enabled=body.enabled,
     )
     session.add(source)
-    await session.flush()  # populate id / server defaults without committing yet
+    try:
+        await session.flush()  # populate id / server defaults without committing yet
+    except IntegrityError:
+        await session.rollback()
+        raise DuplicateSourceNameError(body.name)
     await session.refresh(source)
     return source
 

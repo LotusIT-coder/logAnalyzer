@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import require_scope, get_current_token
 from app.dependencies import get_db
 from app.domain.models import ParserProfile
 
@@ -72,7 +71,6 @@ class ParserProfilePatchRequest(BaseModel):
 @router.get("", summary="List parser profiles")
 async def list_parser_profiles(
     session: AsyncSession = Depends(get_db),
-    _token: dict = Depends(require_scope("read")),
 ) -> list[dict]:
     result = await session.execute(
         select(ParserProfile).order_by(ParserProfile.priority.asc(), ParserProfile.name.asc())
@@ -85,7 +83,6 @@ async def list_parser_profiles(
 async def create_parser_profile(
     body: ParserProfileCreateRequest,
     session: AsyncSession = Depends(get_db),
-    _token: dict = Depends(require_scope("write")),
 ) -> dict:
     valid_formats = {"json", "regex", "grok", "kv"}
     if body.format not in valid_formats:
@@ -110,7 +107,6 @@ async def patch_parser_profile(
     profile_id: str,
     body: ParserProfilePatchRequest,
     session: AsyncSession = Depends(get_db),
-    _token: dict = Depends(require_scope("write")),
 ) -> dict:
     result = await session.execute(select(ParserProfile).where(ParserProfile.id == profile_id))
     profile = result.scalar_one_or_none()
@@ -142,7 +138,6 @@ async def patch_parser_profile(
 async def delete_parser_profile(
     profile_id: str,
     session: AsyncSession = Depends(get_db),
-    _token: dict = Depends(require_scope("write")),
 ) -> None:
     result = await session.execute(select(ParserProfile).where(ParserProfile.id == profile_id))
     profile = result.scalar_one_or_none()
