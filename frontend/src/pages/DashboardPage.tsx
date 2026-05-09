@@ -37,6 +37,7 @@ const TIME_PRESETS: { label: string; hours: number }[] = [
 ]
 
 const CHART_BUCKETS: { value: string; label: string }[] = [
+  { value: 'auto', label: 'Auto' },
   { value: '5s', label: '5 s' },
   { value: '15s', label: '15 s' },
   { value: '30s', label: '30 s' },
@@ -48,6 +49,7 @@ const CHART_BUCKETS: { value: string; label: string }[] = [
 
 function chartBucketToMs(bucket: string) {
   const seconds: Record<string, number> = {
+    auto: 0,
     '5s': 5,
     '15s': 15,
     '30s': 30,
@@ -57,6 +59,14 @@ function chartBucketToMs(bucket: string) {
     '1h': 60 * 60,
   }
   return (seconds[bucket] ?? 15) * 1000
+}
+
+function resolveChartBucket(rangeHours: number) {
+  if (rangeHours === 0 || rangeHours > 168) return '1h'
+  if (rangeHours > 24) return '15m'
+  if (rangeHours > 6) return '1m'
+  if (rangeHours > 1) return '15s'
+  return '5s'
 }
 
 // ─── Preset log paths ────────────────────────────────────────────────────────
@@ -345,7 +355,7 @@ function OptionRow({ opt, checked, onToggle }: { opt: SourceOption; checked: boo
 export default function DashboardPage() {
   const { filter, setFilter: setGlobalSourceFilter, selectedSources, setSelectedSources, customSources, setCustomSources } = useSourceFilter()
   const [rangeHours, setRangeHours] = useState(filter.rangeHours) // restored from context on re-mount
-  const [chartBucket, setChartBucket] = useState('15s')
+  const [chartBucketMode, setChartBucketMode] = useState('auto')
   const [ingesting, setIngesting] = useState(false)
   const [ingestResult, setIngestResult] = useState<IngestionRunResponse | null>(null)
   const [ingestError, setIngestError] = useState<string | null>(null)
@@ -420,8 +430,10 @@ export default function DashboardPage() {
 
   const sourceKey = `${selectedSourceIds.join('|')}::${selectedSourcePaths.join('|')}`
 
+  const chartBucket = chartBucketMode === 'auto' ? resolveChartBucket(rangeHours) : chartBucketMode
+
   const ts = useQuery({
-    queryKey: ['timeseries', rangeHours, sourceKey, chartBucket],
+    queryKey: ['timeseries', rangeHours, sourceKey, chartBucketMode, chartBucket],
     queryFn: () => {
       const timeRange = buildTimeRange(rangeHours)
       return getTimeseries({
@@ -523,13 +535,13 @@ export default function DashboardPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
             <span style={{ color: '#64748b', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Raster</span>
             <select
-              value={chartBucket}
-              onChange={e => setChartBucket(e.target.value)}
+              value={chartBucketMode}
+              onChange={e => setChartBucketMode(e.target.value)}
               style={styles.bucketSelect}
             >
               {CHART_BUCKETS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
             </select>
-            <HelpTip content="Steuert, wie fein die Events-Linie zusammengefasst wird: von wenigen Sekunden bis zu Stunden pro Punkt." ariaLabel="Raster fuer Events-Graph erklaeren" />
+            <HelpTip content="Steuert, wie fein die Events-Linie zusammengefasst wird: Auto passt das Raster an das Zeitfenster an, manuell geht von wenigen Sekunden bis zu Stunden pro Punkt." ariaLabel="Raster fuer Events-Graph erklaeren" />
           </div>
           <div style={styles.ingestRow}>
             <SourcePicker selected={selectedSources} onChange={handleSelectedSourcesChange} onUploadResult={handleUploadResult} customSources={customSources} onRemoveCustom={removeCustomSource} />
@@ -631,7 +643,7 @@ export default function DashboardPage() {
             <HelpTip content="Diese Bereiche erklaeren, wie sich das Volumen ueber die Zeit verteilt und welche Fehlermeldungen oder Services besonders haeufig auftreten." ariaLabel="Dashboard-Aufschluesselungen erklaeren" />
           </div>
           <div style={styles.grid}>
-            <Panel title={`Events / ${chartBucket} (${rangeHours === 0 ? 'alle' : TIME_PRESETS.find(p => p.hours === rangeHours)?.label ?? ''})`} help="Die Linie zeigt, wie viele Events pro Zeitintervall eingegangen sind. Hoehere Ausschlaege markieren Lastspitzen oder Stoerungsphasen.">
+            <Panel title={`Events / ${chartBucketMode === 'auto' ? `Auto (${chartBucket})` : chartBucket} (${rangeHours === 0 ? 'alle' : TIME_PRESETS.find(p => p.hours === rangeHours)?.label ?? ''})`} help="Die Linie zeigt, wie viele Events pro Zeitintervall eingegangen sind. Hoehere Ausschlaege markieren Lastspitzen oder Stoerungsphasen.">
               {ts.data ? <MiniBar points={ts.data.points} /> : ts.isError ? <PanelError error={ts.error} /> : <Spinner />}
             </Panel>
 
