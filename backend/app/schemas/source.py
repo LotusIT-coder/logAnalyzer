@@ -43,3 +43,14 @@ class SourcePatchRequest(BaseModel):
 class SourceTestResponse(BaseModel):
     ok: bool
     details: Optional[str] = None
+
+
+class SourceIngestionStatusResponse(BaseModel):
+    source_id: str
+    last_ingested_at: Optional[datetime] = None
+    last_event_timestamp: Optional[datetime] = None
+    last_event_created_at: Optional[datetime] = None
+
+
+class SourceIngestionStatusListResponse(BaseModel):
+    items: List[SourceIngestionStatusResponse]

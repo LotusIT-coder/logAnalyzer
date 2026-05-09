@@ -21,6 +21,13 @@ export interface SourceTestResponse extends JsonObject {
   details?: string | null
 }
 
+export interface SourceIngestionStatus {
+  source_id: string
+  last_ingested_at?: string | null
+  last_event_timestamp?: string | null
+  last_event_created_at?: string | null
+}
+
 export interface IngestionRunEntry extends JsonObject {
   path?: string
   source_name?: string
@@ -157,6 +164,13 @@ export async function deleteSource(id: string) {
 export async function testSource(id: string) {
   const r = await api.post(`/sources/${id}/test`)
   return r.data as SourceTestResponse
+}
+
+export async function getSourceIngestionStatus(sourceIds?: string[]) {
+  const params: QueryParams = {}
+  if (sourceIds?.length) params.source_ids = sourceIds.join(',')
+  const r = await api.get('/sources/status', { params })
+  return (r.data?.items ?? r.data) as SourceIngestionStatus[]
 }
 
 export async function runIngestion(opts?: {

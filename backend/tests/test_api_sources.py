@@ -6,9 +6,13 @@ for SQLite the ORM falls back to JSON/TEXT columns automatically.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
+
+from app.domain.models import Event, RawLog, Source
 
 
 pytestmark = pytest.mark.asyncio
@@ -120,3 +124,42 @@ class TestSourcesCRUD:
         body = tested.json()
         assert body["ok"] is True
         assert "File accessible:" in (body.get("details") or "")
+
+    async def test_source_status_contains_ingestion_and_event_timestamps(self, client: AsyncClient, db_session):
+        src = Source(
+            name="status-src",
+            type="file",
+            config_json={"path": "/tmp/status.log"},
+            enabled=True,
+        )
+        db_session.add(src)
+        await db_session.flush()
+
+        db_session.add(
+            RawLog(
+                source_id=src.id,
+                raw_line="line",
+                raw_hash="hash",
+                cursor="12",
+            )
+        )
+        db_session.add(
+            Event(
+                source_id=src.id,
+                timestamp=datetime.now(timezone.utc),
+                severity="info",
+                message="status event",
+                service="svc",
+                host="host",
+                fields_json={},
+            )
+        )
+        await db_session.commit()
+
+        resp = await client.get(f"/api/v1/sources/status?source_ids={src.id}")
+        assert resp.status_code == 200
+        items = resp.json().get("items", [])
+        assert len(items) == 1
+        assert items[0]["source_id"] == str(src.id)
+        assert items[0]["last_ingested_at"] is not None
+        assert items[0]["last_event_timestamp"] is not None

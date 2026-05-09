@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import {
   deleteSource,
   getErrorRate,
+  getSourceIngestionStatus,
   getSources,
   getTimeseries,
   getTopErrors,
@@ -12,6 +13,7 @@ import {
   type IngestionRunResponse,
   type MetricsFilter,
   type SourceResponse,
+  type SourceIngestionStatus,
   type TimeRange,
   type TopErrorItem,
   type TopServiceItem,
@@ -433,7 +435,15 @@ export default function DashboardPage() {
     placeholderData: keepPreviousData,
   })
 
-  function refetchAll() { ts.refetch(); errs.refetch(); svcs.refetch(); rate.refetch() }
+  const sourceStatus = useQuery({
+    queryKey: ['source-status', selectedSourceIds.join('|')],
+    queryFn: () => getSourceIngestionStatus(selectedSourceIds),
+    enabled: selectedSourceIds.length > 0,
+    staleTime: 15_000,
+    placeholderData: keepPreviousData,
+  })
+
+  function refetchAll() { ts.refetch(); errs.refetch(); svcs.refetch(); rate.refetch(); sourceStatus.refetch() }
 
   function handleUploadResult(result: UploadResultState) {
     setUploadResult(result)
@@ -452,6 +462,15 @@ export default function DashboardPage() {
   const rr = rate.data
   const errorRate = rr ? (rr.total_events > 0 ? (rr.error_rate * 100).toFixed(1) : '0.0') : '–'
   const totalEvents = rr?.total_events ?? '–'
+  const sourceStatusById = new Map<string, SourceIngestionStatus>((sourceStatus.data ?? []).map(entry => [entry.source_id, entry]))
+
+  function sourceStatusTone(status?: SourceIngestionStatus) {
+    if (!status?.last_event_timestamp) return { bg: '#3f1d1d', fg: '#fca5a5', text: 'keine Events' }
+    const ageMs = Date.now() - dayjs(status.last_event_timestamp).valueOf()
+    if (ageMs > 24 * 3600_000) return { bg: '#3f1d1d', fg: '#fca5a5', text: '>24h alt' }
+    if (ageMs > 2 * 3600_000) return { bg: '#3f341d', fg: '#fde68a', text: 'verzögert' }
+    return { bg: '#173d2a', fg: '#86efac', text: 'aktuell' }
+  }
 
   return (
     <div>
@@ -521,6 +540,37 @@ export default function DashboardPage() {
                 Quelle: {uploadResult.source_name} ({uploadResult.source_id})
               </div>
             </>
+          )}
+        </div>
+      )}
+
+      {selectedSourceIds.length > 0 && (
+        <div style={styles.statusWrap}>
+          <div style={styles.statusTitle}>Ingest-Status (ausgewählte Quellen)</div>
+          {(sourceStatus.isLoading && !sourceStatus.data) ? (
+            <div style={{ color: '#64748b', fontSize: '0.83rem' }}>Lade Status…</div>
+          ) : (
+            <div style={styles.statusGrid}>
+              {selectedSources
+                .filter(source => source.kind === 'configured')
+                .map(source => {
+                  const sourceId = source.id.replace('source:', '')
+                  const status = sourceStatusById.get(sourceId)
+                  const tone = sourceStatusTone(status)
+                  return (
+                    <div key={source.id} style={styles.statusCard}>
+                      <div style={styles.statusName}>{source.label}</div>
+                      <div style={{ ...styles.statusBadge, background: tone.bg, color: tone.fg }}>{tone.text}</div>
+                      <div style={styles.statusLine}>
+                        Letzter Event-Zeitpunkt: {status?.last_event_timestamp ? dayjs(status.last_event_timestamp).format('DD.MM.YYYY HH:mm:ss') : '–'}
+                      </div>
+                      <div style={styles.statusLine}>
+                        Letzte Ingestion: {status?.last_ingested_at ? dayjs(status.last_ingested_at).format('DD.MM.YYYY HH:mm:ss') : '–'}
+                      </div>
+                    </div>
+                  )
+                })}
+            </div>
           )}
         </div>
       )}
@@ -771,6 +821,15 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: '1.5rem', fontSize: '0.85rem', color: '#93c5fd',
     display: 'flex', flexDirection: 'column', gap: '0.25rem',
   },
+  statusWrap: {
+    background: '#1e293b', borderRadius: 10, padding: '0.8rem 1rem', border: '1px solid #334155', marginBottom: '1rem',
+  },
+  statusTitle: { color: '#94a3b8', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.6rem' },
+  statusGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '0.6rem' },
+  statusCard: { background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: '0.65rem 0.75rem' },
+  statusName: { color: '#e2e8f0', fontSize: '0.86rem', fontWeight: 600, marginBottom: '0.35rem' },
+  statusBadge: { display: 'inline-block', borderRadius: 999, padding: '0.12rem 0.5rem', fontSize: '0.72rem', fontWeight: 700, marginBottom: '0.35rem' },
+  statusLine: { color: '#94a3b8', fontSize: '0.78rem', lineHeight: 1.45 },
   sectionHeader: {
     display: 'flex',
     alignItems: 'center',
