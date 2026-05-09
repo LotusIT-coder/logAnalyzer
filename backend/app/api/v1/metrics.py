@@ -25,11 +25,14 @@ from app.schemas.domain import (
 
 router = APIRouter(prefix="/metrics", tags=["Metrics"])
 
-_BUCKET_INTERVALS = {
-    "1m": "1 minute",
-    "5m": "5 minutes",
-    "15m": "15 minutes",
-    "1h": "1 hour",
+_BUCKET_SECONDS = {
+    "5s": 5,
+    "15s": 15,
+    "30s": 30,
+    "1m": 60,
+    "5m": 5 * 60,
+    "15m": 15 * 60,
+    "1h": 60 * 60,
 }
 # Safety cap for the Python-fallback timeseries path (SQLite / tests).
 _TIMESERIES_PYTHON_LIMIT = 200_000
@@ -46,7 +49,7 @@ async def timeseries(
     session: AsyncSession = Depends(get_db),
     from_: Optional[datetime] = Query(None, alias="from"),
     to: Optional[datetime] = Query(None),
-    bucket: str = Query("5m", pattern="^(1m|5m|15m|1h)$"),
+    bucket: str = Query("15s", pattern="^(5s|15s|30s|1m|5m|15m|1h)$"),
     source_ids: Optional[str] = Query(None),
     source_paths: Optional[str] = Query(None),
 ):
@@ -55,21 +58,16 @@ async def timeseries(
     if resolved_source_ids == []:
         return TimeseriesResponse(points=[])
 
-    bucket_minutes = {"1m": 1, "5m": 5, "15m": 15, "1h": 60}.get(bucket, 5)
+    bucket_seconds = _BUCKET_SECONDS.get(bucket, 15)
     is_postgres = get_settings().database_url.startswith("postgresql")
 
     if is_postgres:
         # Push bucketing entirely into PostgreSQL — returns one row per bucket,
         # not one row per event. Scales to millions of events with no extra memory.
         bucket_expr = (
-            func.date_trunc("hour", Event.timestamp)
-            + cast(
-                func.floor(
-                    func.extract("minute", Event.timestamp) / bucket_minutes
-                ) * bucket_minutes,
-                Integer,
+            func.to_timestamp(
+                cast(func.floor(func.extract("epoch", Event.timestamp) / bucket_seconds) * bucket_seconds, Integer)
             )
-            * text("interval '1 minute'")
         ).label("bucket")
         stmt = (
             select(bucket_expr, func.count().label("count"))
@@ -101,8 +99,8 @@ async def timeseries(
     for ts in timestamps:
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
-        minutes = floor(ts.minute / bucket_minutes) * bucket_minutes
-        bucket_ts = ts.replace(minute=minutes, second=0, microsecond=0)
+        rounded_epoch = floor(ts.timestamp() / bucket_seconds) * bucket_seconds
+        bucket_ts = datetime.fromtimestamp(rounded_epoch, tz=timezone.utc)
         merged[bucket_ts] = merged.get(bucket_ts, 0) + 1
 
     points = [TimeseriesPoint(ts=ts, count=cnt) for ts, cnt in sorted(merged.items())]

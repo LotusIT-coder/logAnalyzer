@@ -36,6 +36,29 @@ const TIME_PRESETS: { label: string; hours: number }[] = [
   { label: 'Alle', hours: 0 },
 ]
 
+const CHART_BUCKETS: { value: string; label: string }[] = [
+  { value: '5s', label: '5 s' },
+  { value: '15s', label: '15 s' },
+  { value: '30s', label: '30 s' },
+  { value: '1m', label: '1 m' },
+  { value: '5m', label: '5 m' },
+  { value: '15m', label: '15 m' },
+  { value: '1h', label: '1 h' },
+]
+
+function chartBucketToMs(bucket: string) {
+  const seconds: Record<string, number> = {
+    '5s': 5,
+    '15s': 15,
+    '30s': 30,
+    '1m': 60,
+    '5m': 5 * 60,
+    '15m': 15 * 60,
+    '1h': 60 * 60,
+  }
+  return (seconds[bucket] ?? 15) * 1000
+}
+
 // ─── Preset log paths ────────────────────────────────────────────────────────
 const PRESET_PATHS = [
   { label: 'syslog',          path: '/var/log/syslog' },
@@ -322,6 +345,7 @@ function OptionRow({ opt, checked, onToggle }: { opt: SourceOption; checked: boo
 export default function DashboardPage() {
   const { filter, setFilter: setGlobalSourceFilter, selectedSources, setSelectedSources, customSources, setCustomSources } = useSourceFilter()
   const [rangeHours, setRangeHours] = useState(filter.rangeHours) // restored from context on re-mount
+  const [chartBucket, setChartBucket] = useState('15s')
   const [ingesting, setIngesting] = useState(false)
   const [ingestResult, setIngestResult] = useState<IngestionRunResponse | null>(null)
   const [ingestError, setIngestError] = useState<string | null>(null)
@@ -395,23 +419,23 @@ export default function DashboardPage() {
     : undefined
 
   const sourceKey = `${selectedSourceIds.join('|')}::${selectedSourcePaths.join('|')}`
-  const bucket = rangeHours === 0 || rangeHours > 24 ? '1h' : rangeHours <= 6 ? '5m' : '15m'
 
   const ts = useQuery({
-    queryKey: ['timeseries', rangeHours, sourceKey],
+    queryKey: ['timeseries', rangeHours, sourceKey, chartBucket],
     queryFn: () => {
       const timeRange = buildTimeRange(rangeHours)
       return getTimeseries({
-        bucket,
+        bucket: chartBucket,
         ...(timeRange ? { from: timeRange.from, to: timeRange.to } : {}),
         ...(metricsFilter?.sourceIds?.length ? { source_ids: metricsFilter.sourceIds.join(',') } : {}),
         ...(metricsFilter?.sourcePaths?.length ? { source_paths: metricsFilter.sourcePaths.join(',') } : {}),
       })
     },
     enabled: selectedSources.length > 0,
-    staleTime: 60_000,
+    staleTime: 15_000,
     placeholderData: keepPreviousData,
     retry: 1,
+    refetchInterval: chartBucketToMs(chartBucket),
   })
   const errs = useQuery({
     queryKey: ['top-errors', rangeHours, sourceKey],
@@ -495,6 +519,17 @@ export default function DashboardPage() {
               >{p.label}</button>
             ))}
             <HelpTip content="Das Zeitfenster steuert, wie weit die Metriken in die Vergangenheit schauen. 'Alle' verwendet den kompletten verfuegbaren Datenbestand." ariaLabel="Zeitfenster erklaeren" />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <span style={{ color: '#64748b', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Raster</span>
+            <select
+              value={chartBucket}
+              onChange={e => setChartBucket(e.target.value)}
+              style={styles.bucketSelect}
+            >
+              {CHART_BUCKETS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+            </select>
+            <HelpTip content="Steuert, wie fein die Events-Linie zusammengefasst wird: von wenigen Sekunden bis zu Stunden pro Punkt." ariaLabel="Raster fuer Events-Graph erklaeren" />
           </div>
           <div style={styles.ingestRow}>
             <SourcePicker selected={selectedSources} onChange={handleSelectedSourcesChange} onUploadResult={handleUploadResult} customSources={customSources} onRemoveCustom={removeCustomSource} />
@@ -596,7 +631,7 @@ export default function DashboardPage() {
             <HelpTip content="Diese Bereiche erklaeren, wie sich das Volumen ueber die Zeit verteilt und welche Fehlermeldungen oder Services besonders haeufig auftreten." ariaLabel="Dashboard-Aufschluesselungen erklaeren" />
           </div>
           <div style={styles.grid}>
-            <Panel title={`Events / ${bucket} (${rangeHours === 0 ? 'alle' : TIME_PRESETS.find(p => p.hours === rangeHours)?.label ?? ''})`} help="Die Linie zeigt, wie viele Events pro Zeitintervall eingegangen sind. Hoehere Ausschlaege markieren Lastspitzen oder Stoerungsphasen.">
+            <Panel title={`Events / ${chartBucket} (${rangeHours === 0 ? 'alle' : TIME_PRESETS.find(p => p.hours === rangeHours)?.label ?? ''})`} help="Die Linie zeigt, wie viele Events pro Zeitintervall eingegangen sind. Hoehere Ausschlaege markieren Lastspitzen oder Stoerungsphasen.">
               {ts.data ? <MiniBar points={ts.data.points} /> : ts.isError ? <PanelError error={ts.error} /> : <Spinner />}
             </Panel>
 
@@ -688,6 +723,7 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
   }
 
   const [chartHeight, setChartHeight] = useState(getChartHeight)
+  const [hoverState, setHoverState] = useState<{ index: number; x: number; y: number } | null>(null)
 
   useEffect(() => {
     function onResize() {
@@ -709,6 +745,7 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
   const y = (v: number) => pad.top + innerH - (v / max) * innerH
 
   const polyline = points.map((p, i) => `${x(i)},${y(p.count)}`).join(' ')
+  const hoveredPoint = hoverState ? points[hoverState.index] : null
 
   // Y-axis: 0 and max labels
   const yLabels = [
@@ -731,79 +768,146 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
     xPos: x(idx),
   }))
 
+  function updateHover(clientX: number, rect: DOMRect) {
+    const svgX = ((clientX - rect.left) / rect.width) * W
+    const clampedX = Math.max(pad.left, Math.min(svgX, pad.left + innerW))
+    const nearestIndex = Math.round(((clampedX - pad.left) / innerW) * (points.length - 1 || 1))
+    const safeIndex = Math.max(0, Math.min(points.length - 1, nearestIndex))
+    setHoverState({
+      index: safeIndex,
+      x: x(safeIndex),
+      y: Math.max(pad.top, Math.min(y(points[safeIndex].count), pad.top + innerH)),
+    })
+  }
+
   return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      preserveAspectRatio="none"
-      style={{ width: '100%', height: chartHeight, overflow: 'visible', display: 'block' }}
-      aria-label="Zeitreihen-Liniendiagramm"
-    >
-      {/* grid line at max */}
-      <line
-        x1={pad.left} y1={pad.top}
-        x2={pad.left + innerW} y2={pad.top}
-        stroke="#334155" strokeDasharray="3 3" strokeWidth={1}
-      />
-      {/* grid line at 0 / baseline */}
-      <line
-        x1={pad.left} y1={pad.top + innerH}
-        x2={pad.left + innerW} y2={pad.top + innerH}
-        stroke="#334155" strokeWidth={1}
-      />
-
-      {/* filled area under the line */}
-      <polygon
-        points={`${x(0)},${pad.top + innerH} ${polyline} ${x(points.length - 1)},${pad.top + innerH}`}
-        fill="#3b82f6"
-        fillOpacity={0.15}
-      />
-
-      {/* the line itself */}
-      <polyline
-        points={polyline}
-        fill="none"
-        stroke="#3b82f6"
-        strokeWidth={3}
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-
-      {/* data-point dots (only when few points) */}
-      {points.length <= 30 && points.map((p, i) => (
-        <circle key={i} cx={x(i)} cy={y(p.count)} r={3} fill="#3b82f6">
-          <title>{`${dayjs(p.ts).format('DD.MM HH:mm')}: ${p.count}`}</title>
-        </circle>
-      ))}
-
-      {/* Y-axis labels */}
-      {yLabels.map(({ val, yPos }) => (
-        <text
-          key={yPos}
-          x={pad.left - 4}
-          y={yPos}
-          textAnchor="end"
-          dominantBaseline="middle"
-          fontSize={12}
-          fill="#64748b"
+    <div style={{ position: 'relative', width: '100%', height: chartHeight }}>
+      {hoveredPoint && hoverState && (
+        <div
+          style={{
+            ...styles.chartTooltip,
+            left: Math.min(Math.max(12, hoverState.x + 12), W - 186),
+            top: Math.max(12, hoverState.y - 44),
+          }}
         >
-          {formatCount(val)}
-        </text>
-      ))}
+          <div style={styles.chartTooltipTime}>{dayjs(hoveredPoint.ts).format('DD.MM.YYYY HH:mm:ss')}</div>
+          <div style={styles.chartTooltipValue}>{formatCount(hoveredPoint.count)} Events</div>
+        </div>
+      )}
 
-      {/* X-axis labels */}
-      {xLabels.map(({ key, label, xPos }, i) => (
-        <text
-          key={key}
-          x={xPos}
-          y={H - 6}
-          textAnchor={i === 0 ? 'start' : i === xLabels.length - 1 ? 'end' : 'middle'}
-          fontSize={13}
-          fill="#64748b"
-        >
-          {label}
-        </text>
-      ))}
-    </svg>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        style={{ width: '100%', height: chartHeight, overflow: 'visible', display: 'block' }}
+        aria-label="Zeitreihen-Liniendiagramm"
+        onMouseLeave={() => setHoverState(null)}
+        onMouseMove={e => updateHover(e.clientX, e.currentTarget.getBoundingClientRect())}
+      >
+        {/* grid line at max */}
+        <line
+          x1={pad.left} y1={pad.top}
+          x2={pad.left + innerW} y2={pad.top}
+          stroke="#334155" strokeDasharray="3 3" strokeWidth={1}
+        />
+        {/* grid line at 0 / baseline */}
+        <line
+          x1={pad.left} y1={pad.top + innerH}
+          x2={pad.left + innerW} y2={pad.top + innerH}
+          stroke="#334155" strokeWidth={1}
+        />
+
+        {/* filled area under the line */}
+        <polygon
+          points={`${x(0)},${pad.top + innerH} ${polyline} ${x(points.length - 1)},${pad.top + innerH}`}
+          fill="#3b82f6"
+          fillOpacity={0.15}
+        />
+
+        {/* hover guide line */}
+        {hoveredPoint && hoverState && (
+          <line
+            x1={hoverState.x}
+            y1={pad.top}
+            x2={hoverState.x}
+            y2={pad.top + innerH}
+            stroke="#60a5fa"
+            strokeDasharray="4 4"
+            strokeWidth={1}
+          />
+        )}
+
+        {/* the line itself */}
+        <polyline
+          points={polyline}
+          fill="none"
+          stroke="#3b82f6"
+          strokeWidth={3}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+
+        {/* data-point dots (only when few points) */}
+        {points.length <= 30 && points.map((p, i) => (
+          <circle key={i} cx={x(i)} cy={y(p.count)} r={3} fill="#3b82f6">
+            <title>{`${dayjs(p.ts).format('DD.MM HH:mm')}: ${p.count}`}</title>
+          </circle>
+        ))}
+
+        {/* highlighted hover dot */}
+        {hoveredPoint && hoverState && (
+          <circle
+            cx={hoverState.x}
+            cy={hoverState.y}
+            r={5}
+            fill="#dbeafe"
+            stroke="#3b82f6"
+            strokeWidth={2}
+          />
+        )}
+
+        {/* transparent hover capture layer */}
+        <rect
+          x={pad.left}
+          y={pad.top}
+          width={innerW}
+          height={innerH}
+          fill="transparent"
+          style={{ cursor: 'crosshair' }}
+          onMouseEnter={e => updateHover(e.clientX, e.currentTarget.ownerSVGElement!.getBoundingClientRect())}
+          onMouseMove={e => updateHover(e.clientX, e.currentTarget.ownerSVGElement!.getBoundingClientRect())}
+          onMouseLeave={() => setHoverState(null)}
+        />
+
+        {/* Y-axis labels */}
+        {yLabels.map(({ val, yPos }) => (
+          <text
+            key={yPos}
+            x={pad.left - 4}
+            y={yPos}
+            textAnchor="end"
+            dominantBaseline="middle"
+            fontSize={12}
+            fill="#64748b"
+          >
+            {formatCount(val)}
+          </text>
+        ))}
+
+        {/* X-axis labels */}
+        {xLabels.map(({ key, label, xPos }, i) => (
+          <text
+            key={key}
+            x={xPos}
+            y={H - 6}
+            textAnchor={i === 0 ? 'start' : i === xLabels.length - 1 ? 'end' : 'middle'}
+            fontSize={13}
+            fill="#64748b"
+          >
+            {label}
+          </text>
+        ))}
+      </svg>
+    </div>
   )
 }
 
@@ -820,6 +924,28 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#1e3a5f', borderRadius: 8, padding: '0.75rem 1rem',
     marginBottom: '1.5rem', fontSize: '0.85rem', color: '#93c5fd',
     display: 'flex', flexDirection: 'column', gap: '0.25rem',
+  },
+  chartTooltip: {
+    position: 'absolute',
+    zIndex: 20,
+    minWidth: 170,
+    maxWidth: 220,
+    padding: '0.5rem 0.65rem',
+    borderRadius: 10,
+    border: '1px solid rgba(59, 130, 246, 0.35)',
+    background: 'rgba(15, 23, 42, 0.98)',
+    boxShadow: '0 14px 30px rgba(2, 6, 23, 0.42)',
+    pointerEvents: 'none',
+  },
+  chartTooltipTime: {
+    color: '#cbd5e1',
+    fontSize: '0.72rem',
+    marginBottom: '0.2rem',
+  },
+  chartTooltipValue: {
+    color: '#93c5fd',
+    fontSize: '0.92rem',
+    fontWeight: 700,
   },
   statusWrap: {
     background: '#1e293b', borderRadius: 10, padding: '0.8rem 1rem', border: '1px solid #334155', marginBottom: '1rem',
@@ -856,6 +982,14 @@ const styles: Record<string, React.CSSProperties> = {
   li: { display: 'flex', gap: '0.75rem', marginBottom: '0.4rem', fontSize: '0.82rem', color: '#f1f5f9' },
   count: { background: '#1e3a5f', color: '#93c5fd', borderRadius: 4, padding: '0 0.4rem', flexShrink: 0 },
   msg: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  bucketSelect: {
+    background: '#0f172a',
+    color: '#e2e8f0',
+    border: '1px solid #334155',
+    borderRadius: 6,
+    padding: '0.35rem 0.55rem',
+    fontSize: '0.82rem',
+  },
 }
 
 const pickerStyles: Record<string, React.CSSProperties> = {
