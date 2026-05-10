@@ -798,7 +798,7 @@ export default function DashboardPage() {
                           const newSevers = isSelected
                             ? topErrorsSeverities.filter(s => s !== sev)
                             : [...topErrorsSeverities, sev]
-                          setTopErrorsSeverities(newSevers.length > 0 ? newSevers : ['error', 'critical'])
+                          setTopErrorsSeverities(newSevers)
                         }}
                         style={{
                           padding: '0.35rem 0.6rem',
@@ -821,6 +821,11 @@ export default function DashboardPage() {
                   })}
                 </div>
               </div>
+              {topErrorsSeverities.length === 0 && (
+                <div style={{ color: '#fbbf24', fontSize: '0.8rem', marginBottom: '0.5rem', fontStyle: 'italic' }}>
+                  ⚠ Keine Severity ausgewählt – es werden keine Fehler angezeigt.
+                </div>
+              )}
               {errs.data ? (
                 <ol style={styles.ol}>
                   {errs.data.items.slice(0, 8).map((errorItem: TopErrorItem, i: number) => (
