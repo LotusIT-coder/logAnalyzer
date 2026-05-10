@@ -778,33 +778,48 @@ export default function DashboardPage() {
                 <span style={styles.panelMetaLabel}>Letztes Update:</span>
                 <span style={styles.panelMetaValue}>{formatAgeLabel(errs.dataUpdatedAt)}</span>
               </div>
-              <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <label style={{ fontSize: '0.8rem', color: '#94a3b8', fontWeight: 500 }}>Severity:</label>
-                <select
-                  multiple
-                  value={topErrorsSeverities}
-                  onChange={(e) => {
-                    const selected = Array.from(e.target.selectedOptions, opt => opt.value)
-                    setTopErrorsSeverities(selected.length > 0 ? selected : ['error', 'critical'])
-                  }}
-                  style={{
-                    padding: '0.35rem 0.5rem',
-                    fontSize: '0.8rem',
-                    borderRadius: '0.25rem',
-                    border: '1px solid #475569',
-                    background: '#1e293b',
-                    color: '#e2e8f0',
-                    cursor: 'pointer',
-                    minHeight: '2rem',
-                  }}
-                  title="Mehrfachauswahl möglich mit Ctrl/Cmd"
-                >
-                  <option value="debug">Debug</option>
-                  <option value="info">Info</option>
-                  <option value="warning">Warning</option>
-                  <option value="error">Error</option>
-                  <option value="critical">Critical</option>
-                </select>
+              <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Severity:</span>
+                <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                  {(['debug', 'info', 'warning', 'error', 'critical'] as const).map(sev => {
+                    const isSelected = topErrorsSeverities.includes(sev)
+                    const severityColors: Record<string, { bg: string; text: string }> = {
+                      debug: { bg: '#334155', text: '#94a3b8' },
+                      info: { bg: '#0f3460', text: '#06b6d4' },
+                      warning: { bg: '#5d2e0f', text: '#fb923c' },
+                      error: { bg: '#5e1b1b', text: '#f87171' },
+                      critical: { bg: '#7c1225', text: '#fca5a5' },
+                    }
+                    const colors = severityColors[sev]
+                    return (
+                      <button
+                        key={sev}
+                        onClick={() => {
+                          const newSevers = isSelected
+                            ? topErrorsSeverities.filter(s => s !== sev)
+                            : [...topErrorsSeverities, sev]
+                          setTopErrorsSeverities(newSevers.length > 0 ? newSevers : ['error', 'critical'])
+                        }}
+                        style={{
+                          padding: '0.35rem 0.6rem',
+                          fontSize: '0.75rem',
+                          fontWeight: 500,
+                          borderRadius: '0.3rem',
+                          border: `1.5px solid ${isSelected ? colors.text : '#475569'}`,
+                          background: isSelected ? colors.bg : '#0f172a',
+                          color: isSelected ? colors.text : '#64748b',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                          textTransform: 'capitalize',
+                          whiteSpace: 'nowrap',
+                        }}
+                        title={`${sev} ${isSelected ? 'ausgewählt' : 'nicht ausgewählt'}`}
+                      >
+                        {sev}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
               {errs.data ? (
                 <ol style={styles.ol}>
