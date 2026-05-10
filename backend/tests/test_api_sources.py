@@ -7,12 +7,14 @@ for SQLite the ORM falls back to JSON/TEXT columns automatically.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import subprocess
 
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 
 from app.domain.models import Event, RawLog, Source
+import app.services.source_service as source_service
 
 
 pytestmark = pytest.mark.asyncio
@@ -163,3 +165,24 @@ class TestSourcesCRUD:
         assert items[0]["source_id"] == str(src.id)
         assert items[0]["last_ingested_at"] is not None
         assert items[0]["last_event_timestamp"] is not None
+
+    async def test_source_test_supports_real_journald_source(self, client: AsyncClient, monkeypatch):
+        def fake_run(*args, **kwargs):
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout='{"MESSAGE":"ok"}\n', stderr='')
+
+        monkeypatch.setattr(source_service.subprocess, "run", fake_run)
+
+        create = await client.post("/api/v1/sources", json={
+            "name": "journald-boot",
+            "type": "journald",
+            "config": {"boot_only": True},
+            "enabled": True,
+        })
+        assert create.status_code == 201
+        source_id = create.json()["id"]
+
+        tested = await client.post(f"/api/v1/sources/{source_id}/test")
+        assert tested.status_code == 200
+        body = tested.json()
+        assert body["ok"] is True
+        assert "journalctl accessible" in (body.get("details") or "")

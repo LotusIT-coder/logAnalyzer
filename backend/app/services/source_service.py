@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 from typing import List, Optional
 
 from sqlalchemy import select
@@ -66,6 +67,20 @@ async def delete_source(session: AsyncSession, source: Source) -> None:
 
 def test_source(source: Source) -> tuple[bool, str]:
     """Check that the configured file path exists and is readable (MVP: file type only)."""
+    if source.type == "journald" and not get_source_config_path(source):
+        cfg = source.config_json or {}
+        command = ["journalctl", "--no-pager", "--output=json", "-n", "1"]
+        if cfg.get("boot_only", True):
+            command.append("-b")
+        unit = cfg.get("unit")
+        if isinstance(unit, str) and unit.strip():
+            command.extend(["-u", unit.strip()])
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "journalctl failed").strip()
+            return False, detail
+        return True, "journalctl accessible for this source."
+
     if source.type != "file":
         return True, f"Source type '{source.type}' – no connectivity test available in MVP."
 

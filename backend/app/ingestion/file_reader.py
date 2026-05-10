@@ -6,7 +6,9 @@ If the file is smaller than the cursor (log rotation), we reset to 0.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
 import os
 import re
 import uuid
@@ -18,15 +20,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models import Event, ParserProfile, RawLog, Source
 from app.parser.pipeline import parse_line
-from app.services.source_service import resolve_source_path, source_path_is_regex
+from app.services.source_service import get_source_config_path, resolve_source_path, source_path_is_regex
 
 
 _MAX_LINES_PER_RUN = 10_000  # safety cap per source per ingestion cycle
 _BATCH_SIZE = 200         # rows bulk-inserted and released per partial flush
-_PATH_BASED_SOURCE_TYPES = {"file", "docker", "journald"}
+_PATH_BASED_SOURCE_TYPES = {"file", "docker"}
 # If backlog is huge, skip ahead close to EOF to prioritize near-real-time data.
 _MAX_BACKLOG_BYTES_BEFORE_FAST_FORWARD = 20_000_000
 _FAST_FORWARD_TAIL_BYTES = 2_000_000
+_JOURNAL_CURSOR_PREFIX = "journal\t"
 _JOURNALD_PRIORITY_MAP = {
     "0": "critical",
     "1": "critical",
@@ -68,8 +71,153 @@ async def _get_last_cursor(session: AsyncSession, source_id: str) -> tuple[Optio
         return None, None
 
 
+async def _get_last_journal_cursor(session: AsyncSession, source_id: str) -> Optional[str]:
+    result = await session.execute(
+        select(RawLog.cursor)
+        .where(RawLog.source_id == source_id, RawLog.cursor.isnot(None))
+        .order_by(RawLog.ingested_at.desc())
+        .limit(1)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    cursor = str(row)
+    if cursor.startswith(_JOURNAL_CURSOR_PREFIX):
+        return cursor[len(_JOURNAL_CURSOR_PREFIX):]
+    return cursor or None
+
+
 def _line_hash(line: str) -> str:
     return hashlib.sha256(line.encode()).hexdigest()
+
+
+def _map_journald_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    raw_timestamp = entry.get("__REALTIME_TIMESTAMP")
+    timestamp = datetime.now(timezone.utc)
+    if isinstance(raw_timestamp, str) and raw_timestamp.isdigit():
+        timestamp = datetime.fromtimestamp(int(raw_timestamp) / 1_000_000, tz=timezone.utc)
+    elif isinstance(raw_timestamp, (int, float)):
+        timestamp = datetime.fromtimestamp(float(raw_timestamp) / 1_000_000, tz=timezone.utc)
+    elif isinstance(raw_timestamp, str):
+        try:
+            timestamp = datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+
+    priority = str(entry.get("PRIORITY", "")).strip()
+    severity = _JOURNALD_PRIORITY_MAP.get(priority, "info")
+    message = entry.get("MESSAGE")
+    if isinstance(message, list):
+        message = " ".join(str(part) for part in message)
+    if not isinstance(message, str) or not message.strip():
+        message = str(entry.get("MESSAGE", "")) or "journal entry"
+
+    return {
+        "timestamp": timestamp,
+        "severity": severity,
+        "service": entry.get("SYSLOG_IDENTIFIER") or entry.get("_COMM") or entry.get("_SYSTEMD_UNIT"),
+        "host": entry.get("_HOSTNAME"),
+        "message": message.rstrip("\r\n"),
+        "fields_json": {
+            key: value
+            for key, value in entry.items()
+            if key not in {"__CURSOR", "__REALTIME_TIMESTAMP", "PRIORITY", "MESSAGE", "SYSLOG_IDENTIFIER", "_COMM", "_SYSTEMD_UNIT", "_HOSTNAME"}
+        },
+        "cursor": entry.get("__CURSOR"),
+    }
+
+
+def _build_journalctl_command(source: Source, after_cursor: Optional[str] = None) -> list[str]:
+    cfg = source.config_json or {}
+    command = ["journalctl", "--no-pager", "--output=json"]
+    if cfg.get("boot_only", True):
+        command.append("-b")
+    unit = cfg.get("unit")
+    if isinstance(unit, str) and unit.strip():
+        command.extend(["-u", unit.strip()])
+    command.extend(["-n", str(_MAX_LINES_PER_RUN)])
+    if after_cursor:
+        command.append(f"--after-cursor={after_cursor}")
+    return command
+
+
+async def _ingest_live_journald_source(session: AsyncSession, source: Source) -> dict:
+    last_cursor = await _get_last_journal_cursor(session, source.id)
+    command = _build_journalctl_command(source, after_cursor=last_cursor)
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+
+    if process.returncode != 0:
+        detail = stderr.decode("utf-8", errors="replace").strip() or "journalctl failed"
+        return {
+            "source_id": str(source.id),
+            "skipped": True,
+            "reason": detail,
+        }
+
+    lines_ingested = 0
+    events_created = 0
+    raw_batch: list[dict] = []
+    evt_batch: list[dict] = []
+
+    for line in stdout.decode("utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            entry = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+
+        mapped = _map_journald_entry(entry)
+        cursor = mapped.pop("cursor", None)
+        if not cursor:
+            continue
+
+        raw_batch.append({
+            "id": str(uuid.uuid4()),
+            "source_id": source.id,
+            "raw_line": stripped,
+            "raw_hash": _line_hash(stripped),
+            "cursor": f"{_JOURNAL_CURSOR_PREFIX}{cursor}",
+        })
+        evt_batch.append({
+            "id": str(uuid.uuid4()),
+            "source_id": source.id,
+            "timestamp": mapped["timestamp"],
+            "severity": mapped["severity"],
+            "service": mapped.get("service"),
+            "host": mapped.get("host"),
+            "environment": None,
+            "event_type": None,
+            "message": mapped["message"],
+            "fields_json": mapped["fields_json"],
+        })
+        lines_ingested += 1
+        events_created += 1
+
+        if lines_ingested % _BATCH_SIZE == 0:
+            await session.execute(insert(RawLog), raw_batch)
+            await session.execute(insert(Event), evt_batch)
+            raw_batch.clear()
+            evt_batch.clear()
+
+    if raw_batch:
+        await session.execute(insert(RawLog), raw_batch)
+        await session.execute(insert(Event), evt_batch)
+
+    return {
+        "source_id": str(source.id),
+        "lines_ingested": lines_ingested,
+        "events_created": events_created,
+        "fast_forwarded": False,
+        "start_offset": 0,
+        "new_cursor": last_cursor,
+    }
 
 
 def _parse_specialized_source_line(source: Source, line: str) -> Optional[Dict[str, Any]]:
@@ -155,7 +303,12 @@ def _parse_syslog_header(line: str) -> Optional[Dict[str, Any]]:
 
 async def ingest_source(session: AsyncSession, source: Source) -> dict:
     """Read new lines from a file source, persist raw_log rows, return stats."""
-    if source.type not in _PATH_BASED_SOURCE_TYPES:
+    config_path = get_source_config_path(source)
+
+    if source.type == "journald" and not config_path:
+        return await _ingest_live_journald_source(session, source)
+
+    if source.type not in _PATH_BASED_SOURCE_TYPES and not (source.type == "journald" and config_path):
         return {"source_id": source.id, "skipped": True, "reason": "non-file source"}
 
     path, path_err = resolve_source_path(source)
@@ -166,7 +319,21 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
             "reason": path_err or "file path could not be resolved",
         }
 
-    file_size = os.path.getsize(path)
+    try:
+        file_size = os.path.getsize(path)
+    except PermissionError:
+        return {
+            "source_id": str(source.id),
+            "skipped": True,
+            "reason": f"no read permission for {path}; start the backend with access to this file",
+        }
+    except OSError as exc:
+        return {
+            "source_id": str(source.id),
+            "skipped": True,
+            "reason": f"file access failed: {exc}",
+        }
+
     last_path, last_cursor = await _get_last_cursor(session, source.id)
     fast_forwarded = False
 
@@ -209,106 +376,121 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
     _raw_batch: list[dict] = []
     _evt_batch: list[dict] = []
 
-    with open(path, "r", encoding="utf-8", errors="replace") as fh:
-        fh.seek(start_offset)
-        while lines_ingested < _MAX_LINES_PER_RUN:
-            raw_line = fh.readline()
-            if not raw_line:
-                break  # EOF
-            stripped = raw_line.rstrip("\n")
-            if not stripped:
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            fh.seek(start_offset)
+            while lines_ingested < _MAX_LINES_PER_RUN:
+                raw_line = fh.readline()
+                if not raw_line:
+                    break  # EOF
+                stripped = raw_line.rstrip("\n")
+                if not stripped:
+                    new_cursor = fh.tell()
+                    continue
+
                 new_cursor = fh.tell()
-                continue
+                _raw_batch.append({
+                    "id": str(uuid.uuid4()),
+                    "source_id": source.id,
+                    "raw_line": stripped,
+                    "raw_hash": _line_hash(stripped),
+                    "cursor": f"{path}\t{new_cursor}",
+                })
+                lines_ingested += 1
 
-            new_cursor = fh.tell()
-            _raw_batch.append({
-                "id": str(uuid.uuid4()),
-                "source_id": source.id,
-                "raw_line": stripped,
-                "raw_hash": _line_hash(stripped),
-                "cursor": f"{path}\t{new_cursor}",
-            })
-            lines_ingested += 1
+                parsed = _parse_specialized_source_line(source, stripped)
 
-            parsed = _parse_specialized_source_line(source, stripped)
-
-            # Attempt parsing with first matching profile
-            if parsed is None:
-                for profile in profiles:
-                    parsed = parse_line(stripped, profile.format, profile.pattern, profile.mapping_json)
-                    if parsed is not None:
-                        break
-
-            # Syslog RFC3164 pre-parser: extracts real timestamp/host/service/message
-            syslog_base = _parse_syslog_header(stripped)
-            if syslog_base:
-                # Merge: syslog_base wins for ts/host/service, kv wins for extra fields
-                kv_extra = parse_line(syslog_base["message"], "kv", None, None) or {}
-                kv_extra.pop("timestamp", None)
-                kv_extra.pop("host", None)
-                kv_extra.pop("service", None)
+                # Attempt parsing with first matching profile
                 if parsed is None:
-                    parsed = {**kv_extra, **syslog_base}
+                    for profile in profiles:
+                        parsed = parse_line(stripped, profile.format, profile.pattern, profile.mapping_json)
+                        if parsed is not None:
+                            break
+
+                # Syslog RFC3164 pre-parser: extracts real timestamp/host/service/message
+                syslog_base = _parse_syslog_header(stripped)
+                if syslog_base:
+                    # Merge: syslog_base wins for ts/host/service, kv wins for extra fields
+                    kv_extra = parse_line(syslog_base["message"], "kv", None, None) or {}
+                    kv_extra.pop("timestamp", None)
+                    kv_extra.pop("host", None)
+                    kv_extra.pop("service", None)
+                    if parsed is None:
+                        parsed = {**kv_extra, **syslog_base}
+                    else:
+                        # Profile parser ran on full line; patch in real timestamp/host/service
+                        parsed.setdefault("timestamp", syslog_base["timestamp"])
+                        parsed.setdefault("host", syslog_base["host"])
+                        parsed.setdefault("service", syslog_base["service"])
+                        if not parsed.get("message"):
+                            parsed["message"] = syslog_base["message"]
+
+                # Final fallback: try auto JSON → kv on full line
+                if parsed is None:
+                    parsed = parse_line(stripped, "json", None, None)
+                if parsed is None:
+                    parsed = parse_line(stripped, "kv", None, None)
+
+                # Fallback: keep every non-empty log line as an event.
+                if parsed is None:
+                    parsed = {
+                        "timestamp": now,
+                        "severity": "info",
+                        "service": source.name,
+                        "message": stripped,
+                    }
+
+                ts_raw = parsed.get("timestamp")
+                if ts_raw and isinstance(ts_raw, str):
+                    try:
+                        from datetime import datetime as _dt
+                        ts = _dt.fromisoformat(ts_raw.replace("Z", "+00:00"))
+                    except ValueError:
+                        ts = now
+                elif isinstance(ts_raw, datetime):
+                    ts = ts_raw
                 else:
-                    # Profile parser ran on full line; patch in real timestamp/host/service
-                    parsed.setdefault("timestamp", syslog_base["timestamp"])
-                    parsed.setdefault("host", syslog_base["host"])
-                    parsed.setdefault("service", syslog_base["service"])
-                    if not parsed.get("message"):
-                        parsed["message"] = syslog_base["message"]
-
-            # Final fallback: try auto JSON → kv on full line
-            if parsed is None:
-                parsed = parse_line(stripped, "json", None, None)
-            if parsed is None:
-                parsed = parse_line(stripped, "kv", None, None)
-
-            # Fallback: keep every non-empty log line as an event.
-            if parsed is None:
-                parsed = {
-                    "timestamp": now,
-                    "severity": "info",
-                    "service": source.name,
-                    "message": stripped,
-                }
-
-            ts_raw = parsed.get("timestamp")
-            if ts_raw and isinstance(ts_raw, str):
-                try:
-                    from datetime import datetime as _dt
-                    ts = _dt.fromisoformat(ts_raw.replace("Z", "+00:00"))
-                except ValueError:
                     ts = now
-            elif isinstance(ts_raw, datetime):
-                ts = ts_raw
-            else:
-                ts = now
 
-            _evt_batch.append({
-                "id": str(uuid.uuid4()),
-                "source_id": source.id,
-                "timestamp": ts,
-                "severity": parsed.get("severity", "info"),
-                "service": parsed.get("service"),
-                "host": parsed.get("host"),
-                "environment": parsed.get("environment"),
-                "event_type": parsed.get("event_type"),
-                "message": parsed.get("message", stripped),
-                "fields_json": {
-                    k: v for k, v in parsed.items()
-                    if k not in {"timestamp", "severity", "service", "host",
-                                 "environment", "event_type", "message"}
-                },
-            })
-            events_created += 1
+                _evt_batch.append({
+                    "id": str(uuid.uuid4()),
+                    "source_id": source.id,
+                    "timestamp": ts,
+                    "severity": parsed.get("severity", "info"),
+                    "service": parsed.get("service"),
+                    "host": parsed.get("host"),
+                    "environment": parsed.get("environment"),
+                    "event_type": parsed.get("event_type"),
+                    "message": parsed.get("message", stripped),
+                    "fields_json": {
+                        k: v for k, v in parsed.items()
+                        if k not in {"timestamp", "severity", "service", "host",
+                                     "environment", "event_type", "message"}
+                    },
+                })
+                events_created += 1
 
-            # Periodically bulk-insert and drop references so the session
-            # identity map never holds more than _BATCH_SIZE ORM objects.
-            if lines_ingested % _BATCH_SIZE == 0:
-                await session.execute(insert(RawLog), _raw_batch)
-                await session.execute(insert(Event), _evt_batch)
-                _raw_batch.clear()
-                _evt_batch.clear()
+                # Periodically bulk-insert and drop references so the session
+                # identity map never holds more than _BATCH_SIZE ORM objects.
+                if lines_ingested % _BATCH_SIZE == 0:
+                    await session.execute(insert(RawLog), _raw_batch)
+                    await session.execute(insert(Event), _evt_batch)
+                    _raw_batch.clear()
+                    _evt_batch.clear()
+    except PermissionError:
+        return {
+            "source_id": str(source.id),
+            "path": (source.config_json or {}).get("path", ""),
+            "skipped": True,
+            "reason": f"no read permission for {path}; start the backend with access to this file",
+        }
+    except OSError as exc:
+        return {
+            "source_id": str(source.id),
+            "path": (source.config_json or {}).get("path", ""),
+            "skipped": True,
+            "reason": f"file access failed: {exc}",
+        }
 
     # Flush the final partial batch (< _BATCH_SIZE rows).
     if _raw_batch:

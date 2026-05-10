@@ -1,18 +1,34 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getSources, createSource, testSource, patchSource, deleteSource, type SourceResponse, type SourceTestResponse } from '../lib/requests'
+import { getSources, createSource, testSource, patchSource, deleteSource, uploadImport, type SourceResponse, type SourceTestResponse, type UploadImportResponse } from '../lib/requests'
 import { useEffect, useRef, useState } from 'react'
 import { getApiBase } from '../lib/api'
 import HelpTip from '../components/HelpTip'
 import { getApiErrorMessage } from '../lib/errors'
+
+type UploadResultState = UploadImportResponse | { error: string }
+type SourceKind = 'file' | 'journald'
+
+function isUploadError(result: UploadResultState): result is { error: string } {
+  return 'error' in result
+}
+
+function describeSource(source: SourceResponse) {
+  if (source.type === 'journald' && !source.config?.path) {
+    return source.config?.boot_only === false ? 'systemd-journal (alle Boots)' : 'systemd-journal (aktueller Boot)'
+  }
+  return source.config?.path ?? '-'
+}
 
 // ─── Edit Modal ───────────────────────────────────────────────────────────────
 function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(source.name ?? '')
   const [path, setPath] = useState(source.config?.path ?? '')
   const [pathRegex, setPathRegex] = useState(Boolean(source.config?.path_regex))
+  const [bootOnly, setBootOnly] = useState(source.config?.boot_only !== false)
   const [enabled, setEnabled] = useState(source.enabled ?? true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const isJournald = source.type === 'journald' && !source.config?.path
 
   async function handleSave() {
     setSaving(true)
@@ -20,7 +36,9 @@ function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse;
     try {
       await patchSource(source.id, {
         name,
-        config: { ...source.config, path, path_regex: pathRegex },
+        config: isJournald
+          ? { ...source.config, boot_only: bootOnly }
+          : { ...source.config, path, path_regex: pathRegex },
         enabled,
       })
       onSaved()
@@ -41,14 +59,23 @@ function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse;
             <label style={styles.label}>Name</label>
             <input value={name} onChange={e => setName(e.target.value)} style={styles.input} />
           </div>
-          <div style={styles.field}>
-            <label style={styles.label}>Dateipfad</label>
-            <input value={path} onChange={e => setPath(e.target.value)} style={styles.input} />
-          </div>
-          <label style={styles.inlineCheckbox}>
-            <input type="checkbox" checked={pathRegex} onChange={e => setPathRegex(e.target.checked)} />
-            Dateipfad als Regex behandeln (Dateiname)
-          </label>
+          {isJournald ? (
+            <label style={styles.inlineCheckbox}>
+              <input type="checkbox" checked={bootOnly} onChange={e => setBootOnly(e.target.checked)} />
+              Nur aktuellen Boot aus dem systemd-Journal lesen
+            </label>
+          ) : (
+            <>
+              <div style={styles.field}>
+                <label style={styles.label}>Dateipfad</label>
+                <input value={path} onChange={e => setPath(e.target.value)} style={styles.input} />
+              </div>
+              <label style={styles.inlineCheckbox}>
+                <input type="checkbox" checked={pathRegex} onChange={e => setPathRegex(e.target.checked)} />
+                Dateipfad als Regex behandeln (Dateiname)
+              </label>
+            </>
+          )}
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.88rem', color: '#94a3b8', cursor: 'pointer' }}>
             <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
             Aktiv
@@ -56,7 +83,7 @@ function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse;
         </div>
         {error && <div style={{ color: '#f87171', fontSize: '0.82rem', marginTop: '0.5rem' }}>{error}</div>}
         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.25rem' }}>
-          <button onClick={handleSave} disabled={saving || !name || !path} style={styles.saveBtn}>
+          <button onClick={handleSave} disabled={saving || !name || (!isJournald && !path)} style={styles.saveBtn}>
             {saving ? 'Speichere...' : 'Speichern'}
           </button>
           <button onClick={onClose} style={modal.ctrlBtn}>Abbrechen</button>
@@ -171,26 +198,53 @@ export default function SourcesPage() {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({ queryKey: ['sources'], queryFn: getSources })
   const [showNew, setShowNew] = useState(false)
+  const [sourceType, setSourceType] = useState<SourceKind>('file')
   const [name, setName] = useState('')
   const [path, setPath] = useState('')
   const [pathRegex, setPathRegex] = useState(false)
+  const [bootOnly, setBootOnly] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [testResults, setTestResults] = useState<Record<string, SourceTestResponse>>({})
   const [tailSource, setTailSource] = useState<SourceResponse | null>(null)
   const [editSource, setEditSource] = useState<SourceResponse | null>(null)
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
+  const [uploadResult, setUploadResult] = useState<UploadResultState | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   async function handleCreate() {
     setSaving(true)
     try {
-      await createSource({ name, type: 'file', config: { path, path_regex: pathRegex }, enabled: true })
+      await createSource({
+        name,
+        type: sourceType,
+        config: sourceType === 'journald' ? { boot_only: bootOnly } : { path, path_regex: pathRegex },
+        enabled: true,
+      })
       qc.invalidateQueries({ queryKey: ['sources'] })
       setShowNew(false)
+      setSourceType('file')
       setName('')
       setPath('')
       setPathRegex(false)
+      setBootOnly(true)
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleUpload(file: File) {
+    setUploading(true)
+    try {
+      const result = await uploadImport(file)
+      setUploadResult(result)
+      setShowNew(false)
+      qc.invalidateQueries({ queryKey: ['sources'] })
+    } catch (error: unknown) {
+      setUploadResult({ error: getApiErrorMessage(error, 'Upload fehlgeschlagen.') })
+    } finally {
+      setUploading(false)
+      if (fileRef.current) fileRef.current.value = ''
     }
   }
 
@@ -229,11 +283,27 @@ export default function SourcesPage() {
         <HelpTip content="Die Live-Ansicht zeigt neu eintreffende Logzeilen der gewaehlten Datei in Echtzeit. Das ist besonders hilfreich nach Parser-, Ingestion- oder Quellenaenderungen." ariaLabel="Live-Ansicht der Quellen erklaeren" />
       </div>
 
+      {uploadResult && (
+        <div style={{ ...styles.uploadInfo, background: isUploadError(uploadResult) ? '#450a0a' : '#0f2d1a', color: isUploadError(uploadResult) ? '#f87171' : '#86efac', position: 'relative' }}>
+          <button onClick={() => setUploadResult(null)} style={styles.dismissBtn}>✕</button>
+          {isUploadError(uploadResult) ? (
+            <div>Upload-Fehler: {uploadResult.error}</div>
+          ) : (
+            <>
+              <div>📄 Importiert: {uploadResult.lines_ingested} Zeilen · {uploadResult.events_created} Events</div>
+              <div style={{ marginTop: '0.2rem', fontSize: '0.82rem', color: '#cbd5e1' }}>
+                Quelle: {uploadResult.source_name}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {showNew && (
         <div style={styles.form}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <h3 style={{ margin: 0, fontSize: '0.95rem', color: '#94a3b8' }}>Neue Quelle (Typ: file)</h3>
-            <HelpTip content="Lege hier eine neue Datei-Quelle an. Der Name erscheint spaeter in Filtern und Listen, waehrend der Dateipfad auf die tatsaechliche Logdatei zeigt." ariaLabel="Neue Quelle erklaeren" />
+            <h3 style={{ margin: 0, fontSize: '0.95rem', color: '#94a3b8' }}>Neue Quelle</h3>
+            <HelpTip content="Lege hier eine Datei-Quelle oder eine echte systemd-journal Quelle an. Journald-Quellen lesen ueber journalctl direkt aus dem System-Journal statt aus /var/log/boot.log." ariaLabel="Neue Quelle erklaeren" />
           </div>
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
             <div style={styles.field}>
@@ -243,21 +313,63 @@ export default function SourcesPage() {
               </div>
               <input value={name} onChange={e => setName(e.target.value)} style={styles.input} placeholder="z.B. syslog" />
             </div>
-            <div style={{ ...styles.field, flex: 2 }}>
+            <div style={styles.field}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <label style={styles.label}>Dateipfad</label>
-                <HelpTip content="Absoluter Pfad zur Logdatei auf dem Host. Mit aktivierter Regex-Option wird nur der Dateiname als Regex gematcht (z. B. bei rotierten Dateien)." ariaLabel="Dateipfad erklaeren" />
+                <label style={styles.label}>Typ</label>
+                <HelpTip content="Datei liest klassische Logdateien vom Dateisystem. Journald liest ueber journalctl direkt aus dem systemd-Journal des Hosts." ariaLabel="Quelltyp erklaeren" />
               </div>
-              <input value={path} onChange={e => setPath(e.target.value)} style={styles.input} placeholder="/var/log/syslog oder /home/user/logs/lotus-client-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log" />
+              <select value={sourceType} onChange={e => setSourceType(e.target.value as SourceKind)} style={styles.input}>
+                <option value="file">Datei</option>
+                <option value="journald">Journald</option>
+              </select>
             </div>
           </div>
-          <label style={styles.inlineCheckbox}>
-            <input type="checkbox" checked={pathRegex} onChange={e => setPathRegex(e.target.checked)} />
-            Dateipfad als Regex behandeln (Dateiname)
-          </label>
-          <button onClick={handleCreate} disabled={saving || !name || !path} style={styles.saveBtn}>
-            {saving ? 'Speichere...' : 'Erstellen'}
-          </button>
+          {sourceType === 'file' ? (
+            <>
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <div style={{ ...styles.field, flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <label style={styles.label}>Dateipfad</label>
+                    <HelpTip content="Absoluter Pfad zur Logdatei auf dem Host. Mit aktivierter Regex-Option wird nur der Dateiname als Regex gematcht." ariaLabel="Dateipfad erklaeren" />
+                  </div>
+                  <input value={path} onChange={e => setPath(e.target.value)} style={styles.input} placeholder="/var/log/syslog oder /home/user/logs/lotus-client-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log" />
+                </div>
+              </div>
+              <label style={styles.inlineCheckbox}>
+                <input type="checkbox" checked={pathRegex} onChange={e => setPathRegex(e.target.checked)} />
+                Dateipfad als Regex behandeln (Dateiname)
+              </label>
+            </>
+          ) : (
+            <label style={styles.inlineCheckbox}>
+              <input type="checkbox" checked={bootOnly} onChange={e => setBootOnly(e.target.checked)} />
+              Nur aktuellen Boot aus dem systemd-Journal lesen
+            </label>
+          )}
+          <div style={styles.formActions}>
+            <button onClick={handleCreate} disabled={saving || !name || (sourceType === 'file' && !path)} style={styles.saveBtn}>
+              {saving ? 'Speichere...' : 'Erstellen'}
+            </button>
+            {sourceType === 'file' && (
+              <>
+                <div style={styles.uploadDivider}>oder</div>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".log,.txt,.csv,text/*"
+                  style={{ display: 'none' }}
+                  onChange={async e => {
+                    const file = e.target.files?.[0]
+                    if (!file) return
+                    await handleUpload(file)
+                  }}
+                />
+                <button onClick={() => fileRef.current?.click()} disabled={uploading} style={styles.uploadBtn}>
+                  {uploading ? 'Importiere…' : '📂 Datei wählen & importieren'}
+                </button>
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -313,7 +425,7 @@ export default function SourcesPage() {
                   )}
                 </div>
               </div>
-              <div style={styles.path}>{src.config?.path ?? '-'}</div>
+              <div style={styles.path}>{describeSource(src)}</div>
               {testResults[src.id] && (
                 <div style={{ marginTop: '0.5rem', fontSize: '0.82rem', color: testResults[src.id].ok ? '#22c55e' : '#f87171' }}>
                   {testResults[src.id].ok
@@ -342,11 +454,16 @@ const styles: Record<string, React.CSSProperties> = {
   addBtn: { background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1rem', cursor: 'pointer', fontWeight: 600 },
   liveHint: { background: '#10223f', color: '#bfdbfe', border: '1px solid #1e3a8a', borderRadius: 8, padding: '0.65rem 0.9rem', marginBottom: '1rem', fontSize: '0.86rem' },
   form: { background: '#1e293b', borderRadius: 10, padding: '1.25rem', border: '1px solid #334155', marginBottom: '1.5rem' },
+  formActions: { display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.75rem' },
   field: { display: 'flex', flexDirection: 'column', gap: '0.3rem', flex: 1 },
   inlineCheckbox: { display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#94a3b8', fontSize: '0.84rem', marginTop: '0.5rem', cursor: 'pointer' },
   label: { color: '#64748b', fontSize: '0.78rem' },
   input: { background: '#0f172a', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.65rem', fontSize: '0.9rem' },
-  saveBtn: { marginTop: '0.75rem', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1.25rem', cursor: 'pointer', fontWeight: 600 },
+  saveBtn: { background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1.25rem', cursor: 'pointer', fontWeight: 600 },
+  uploadBtn: { background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1.25rem', cursor: 'pointer', fontWeight: 600 },
+  uploadDivider: { color: '#64748b', fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' },
+  uploadInfo: { borderRadius: 8, padding: '0.75rem 0.95rem', marginBottom: '1rem', border: '1px solid #334155' },
+  dismissBtn: { position: 'absolute', top: '0.4rem', right: '0.5rem', background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1rem' },
   sectionHeader: { display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.65rem' },
   sectionTitle: { color: '#94a3b8', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' },
   list: { display: 'flex', flexDirection: 'column', gap: '0.75rem' },

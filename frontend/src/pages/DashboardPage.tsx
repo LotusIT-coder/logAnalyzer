@@ -15,6 +15,7 @@ import {
   type SourceResponse,
   type SourceIngestionStatus,
   type TimeRange,
+  type TimeseriesResponse,
   type TopErrorItem,
   type TopServiceItem,
   type UploadImportResponse,
@@ -61,6 +62,19 @@ function chartBucketToMs(bucket: string) {
   return (seconds[bucket] ?? 15) * 1000
 }
 
+function resolveAutoRefreshMs(totalEvents: number, rangeHours: number, targetEventsPerRefresh: number) {
+  const windowHours = rangeHours > 0 ? rangeHours : 24
+  const clampedTotalEvents = Math.max(totalEvents, 0)
+  const clampedTargetEvents = Math.max(targetEventsPerRefresh, 1)
+
+  const eventsPerHour = clampedTotalEvents / windowHours
+
+  if (eventsPerHour <= 0) return 24 * 60 * 60 * 1000
+
+  const ms = (clampedTargetEvents / eventsPerHour) * 60 * 60 * 1000
+  return Math.max(5_000, Math.min(ms, 24 * 60 * 60 * 1000))
+}
+
 function resolveChartBucket(rangeHours: number) {
   if (rangeHours === 0 || rangeHours > 168) return '1h'
   if (rangeHours > 24) return '15m'
@@ -81,10 +95,41 @@ const PRESET_PATHS = [
   { label: 'Apache error',    path: '/var/log/apache2/error.log' },
   { label: 'MySQL error',     path: '/var/log/mysql/error.log' },
   { label: 'PostgreSQL',      path: '/var/log/postgresql/postgresql-16-main.log' },
-  { label: 'journald (boot)', path: '/var/log/boot.log' },
 ]
 
 const PRESET_PATH_SET = new Set(PRESET_PATHS.map(p => p.path))
+const AUTO_REFRESH_TARGET_EVENTS_KEY = 'dashboard:auto-refresh-target-events'
+const AUTO_REFRESH_PROFILE_KEY = 'dashboard:auto-refresh-profile'
+const DEFAULT_AUTO_REFRESH_TARGET_EVENTS = 5
+
+type AutoRefreshProfile = 'conservative' | 'balanced' | 'aggressive'
+
+const AUTO_REFRESH_PROFILES: { value: AutoRefreshProfile; label: string; targetEvents: number }[] = [
+  { value: 'conservative', label: 'Ruhig', targetEvents: 20 },
+  { value: 'balanced', label: 'Normal', targetEvents: 5 },
+  { value: 'aggressive', label: 'Schnell', targetEvents: 1 },
+]
+
+function resolveAutoRefreshProfileFromTarget(targetEvents: number): AutoRefreshProfile {
+  if (targetEvents >= 12) return 'conservative'
+  if (targetEvents <= 2) return 'aggressive'
+  return 'balanced'
+}
+
+function resolveAutoRefreshTargetEvents(profile: AutoRefreshProfile) {
+  return AUTO_REFRESH_PROFILES.find(item => item.value === profile)?.targetEvents ?? DEFAULT_AUTO_REFRESH_TARGET_EVENTS
+}
+
+function formatAgeLabel(updatedAt?: number) {
+  if (!updatedAt) return 'wird geladen...'
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - updatedAt) / 1000))
+  if (elapsedSeconds < 5) return 'gerade eben'
+  if (elapsedSeconds < 60) return `vor ${elapsedSeconds}s`
+  const minutes = Math.floor(elapsedSeconds / 60)
+  if (minutes < 60) return `vor ${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  return `vor ${hours} h`
+}
 
 type UploadResultState = UploadImportResponse | { error: string }
 
@@ -356,10 +401,28 @@ export default function DashboardPage() {
   const { filter, setFilter: setGlobalSourceFilter, selectedSources, setSelectedSources, customSources, setCustomSources } = useSourceFilter()
   const [rangeHours, setRangeHours] = useState(filter.rangeHours) // restored from context on re-mount
   const [chartBucketMode, setChartBucketMode] = useState('auto')
+  const [autoRefreshProfile, setAutoRefreshProfile] = useState<AutoRefreshProfile>(() => {
+    if (typeof window === 'undefined') return 'balanced'
+    const storedProfile = window.localStorage.getItem(AUTO_REFRESH_PROFILE_KEY)
+    if (storedProfile === 'conservative' || storedProfile === 'balanced' || storedProfile === 'aggressive') {
+      return storedProfile
+    }
+    const storedTarget = Number(window.localStorage.getItem(AUTO_REFRESH_TARGET_EVENTS_KEY))
+    if (Number.isFinite(storedTarget) && storedTarget > 0) {
+      return resolveAutoRefreshProfileFromTarget(storedTarget)
+    }
+    return 'balanced'
+  })
+  const autoRefreshTargetEvents = resolveAutoRefreshTargetEvents(autoRefreshProfile)
   const [ingesting, setIngesting] = useState(false)
   const [ingestResult, setIngestResult] = useState<IngestionRunResponse | null>(null)
   const [ingestError, setIngestError] = useState<string | null>(null)
   const [uploadResult, setUploadResult] = useState<UploadResultState | null>(null)
+
+  useEffect(() => {
+    window.localStorage.setItem(AUTO_REFRESH_PROFILE_KEY, autoRefreshProfile)
+    window.localStorage.setItem(AUTO_REFRESH_TARGET_EVENTS_KEY, String(autoRefreshTargetEvents))
+  }, [autoRefreshProfile, autoRefreshTargetEvents])
 
   function syncGlobalFilter(nextSelectedSources: SourceOption[], nextRangeHours = rangeHours) {
     const nextSelectedSourceIds = nextSelectedSources
@@ -432,8 +495,25 @@ export default function DashboardPage() {
 
   const chartBucket = chartBucketMode === 'auto' ? resolveChartBucket(rangeHours) : chartBucketMode
 
+  const rate = useQuery({
+    queryKey: ['error-rate', rangeHours, sourceKey],
+    queryFn: () => getErrorRate(buildTimeRange(rangeHours), metricsFilter),
+    enabled: selectedSources.length > 0,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+    refetchInterval: query => {
+      if (chartBucketMode !== 'auto') return false
+      const currentData = query.state.data as { total_events?: number } | undefined
+      const totalEvents = currentData?.total_events ?? 0
+      return totalEvents > 0
+        ? resolveAutoRefreshMs(totalEvents, rangeHours, autoRefreshTargetEvents)
+        : 15_000
+    },
+    refetchIntervalInBackground: true,
+  })
+
   const ts = useQuery({
-    queryKey: ['timeseries', rangeHours, sourceKey, chartBucketMode, chartBucket],
+    queryKey: ['timeseries', rangeHours, sourceKey, chartBucketMode, chartBucket, autoRefreshTargetEvents],
     queryFn: () => {
       const timeRange = buildTimeRange(rangeHours)
       return getTimeseries({
@@ -447,14 +527,29 @@ export default function DashboardPage() {
     staleTime: 15_000,
     placeholderData: keepPreviousData,
     retry: 1,
-    refetchInterval: chartBucketToMs(chartBucket),
+    refetchInterval: query => {
+      if (chartBucketMode !== 'auto') return chartBucketToMs(chartBucket)
+      const currentData = query.state.data as TimeseriesResponse | undefined
+      const totalEvents = currentData?.points.reduce((sum, point) => sum + point.count, 0) ?? 0
+      return totalEvents > 0
+        ? resolveAutoRefreshMs(totalEvents, rangeHours, autoRefreshTargetEvents)
+        : 15_000
+    },
+    refetchIntervalInBackground: true,
   })
+
+  const drilldownRefreshMs = chartBucketMode === 'auto'
+    ? 15_000
+    : Math.max(chartBucketToMs(chartBucket), 15_000)
+
   const errs = useQuery({
     queryKey: ['top-errors', rangeHours, sourceKey],
     queryFn: () => getTopErrors(buildTimeRange(rangeHours), metricsFilter),
     enabled: selectedSources.length > 0,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
+    refetchInterval: drilldownRefreshMs,
+    refetchIntervalInBackground: true,
   })
   const svcs = useQuery({
     queryKey: ['top-services', rangeHours, sourceKey],
@@ -462,13 +557,8 @@ export default function DashboardPage() {
     enabled: selectedSources.length > 0,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
-  })
-  const rate = useQuery({
-    queryKey: ['error-rate', rangeHours, sourceKey],
-    queryFn: () => getErrorRate(buildTimeRange(rangeHours), metricsFilter),
-    enabled: selectedSources.length > 0,
-    staleTime: 60_000,
-    placeholderData: keepPreviousData,
+    refetchInterval: drilldownRefreshMs,
+    refetchIntervalInBackground: true,
   })
 
   const sourceStatus = useQuery({
@@ -499,6 +589,14 @@ export default function DashboardPage() {
   const errorRate = rr ? (rr.total_events > 0 ? (rr.error_rate * 100).toFixed(1) : '0.0') : '–'
   const totalEvents = rr?.total_events ?? '–'
   const sourceStatusById = new Map<string, SourceIngestionStatus>((sourceStatus.data ?? []).map(entry => [entry.source_id, entry]))
+  const [clockTick, setClockTick] = useState(0)
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockTick(prev => (prev + 1) % 3600), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  void clockTick
 
   function sourceStatusTone(status?: SourceIngestionStatus) {
     if (!status?.last_event_timestamp) return { bg: '#3f1d1d', fg: '#fca5a5', text: 'keine Events' }
@@ -541,7 +639,34 @@ export default function DashboardPage() {
             >
               {CHART_BUCKETS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
             </select>
-            <HelpTip content="Steuert, wie fein die Events-Linie zusammengefasst wird: Auto passt das Raster an das Zeitfenster an, manuell geht von wenigen Sekunden bis zu Stunden pro Punkt." ariaLabel="Raster fuer Events-Graph erklaeren" />
+            {chartBucketMode === 'auto' && (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <span style={{ color: '#64748b', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Auto</span>
+                  <div style={styles.autoProfileGroup} role="group" aria-label="Auto-Refresh-Profil">
+                    {AUTO_REFRESH_PROFILES.map(profile => {
+                      const active = autoRefreshProfile === profile.value
+                      return (
+                        <button
+                          key={profile.value}
+                          type="button"
+                          onClick={() => setAutoRefreshProfile(profile.value)}
+                          style={{
+                            ...styles.autoProfileButton,
+                            ...(active ? styles.autoProfileButtonActive : {}),
+                          }}
+                          aria-pressed={active}
+                          title={`Auto-Profil: ${profile.label}`}
+                        >
+                          {profile.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+                <HelpTip content="Steuert, wie aggressiv Auto aktualisiert: Ruhig spart Last, Normal ist ausgewogen, Schnell zieht neue Peaks frueher nach. Die Einstellung wird lokal im Browser gespeichert." ariaLabel="Auto-Refresh-Schärfe erklaeren" />
+              </>
+            )}
           </div>
           <div style={styles.ingestRow}>
             <SourcePicker selected={selectedSources} onChange={handleSelectedSourcesChange} onUploadResult={handleUploadResult} customSources={customSources} onRemoveCustom={removeCustomSource} />
@@ -648,6 +773,10 @@ export default function DashboardPage() {
             </Panel>
 
             <Panel title="Top Fehler-Meldungen" help="Hier siehst du die haeufigsten Fehlermeldungen im aktuellen Datenfenster. Das hilft beim Clustern wiederkehrender Stoerungen.">
+              <div style={styles.panelMetaRow}>
+                <span style={styles.panelMetaLabel}>Letztes Update:</span>
+                <span style={styles.panelMetaValue}>{formatAgeLabel(errs.dataUpdatedAt)}</span>
+              </div>
               {errs.data ? (
                 <ol style={styles.ol}>
                   {errs.data.items.slice(0, 8).map((errorItem: TopErrorItem, i: number) => (
@@ -990,6 +1119,9 @@ const styles: Record<string, React.CSSProperties> = {
   panel: { background: '#1e293b', borderRadius: 10, padding: '1.25rem', border: '1px solid #334155' },
   panelTitle: { margin: '0 0 1rem 0', fontSize: '0.95rem', color: '#94a3b8' },
   panelTitleRow: { display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '1rem' },
+  panelMetaRow: { display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.65rem' },
+  panelMetaLabel: { color: '#64748b', fontSize: '0.76rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' },
+  panelMetaValue: { color: '#cbd5e1', fontSize: '0.8rem' },
   ol: { margin: 0, padding: '0 0 0 1.2rem' },
   li: { display: 'flex', gap: '0.75rem', marginBottom: '0.4rem', fontSize: '0.82rem', color: '#f1f5f9' },
   count: { background: '#1e3a5f', color: '#93c5fd', borderRadius: 4, padding: '0 0.4rem', flexShrink: 0 },
@@ -1001,6 +1133,29 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     padding: '0.35rem 0.55rem',
     fontSize: '0.82rem',
+  },
+  autoProfileGroup: {
+    display: 'inline-flex',
+    border: '1px solid #334155',
+    borderRadius: 8,
+    overflow: 'hidden',
+    background: '#0f172a',
+  },
+  autoProfileButton: {
+    background: 'transparent',
+    color: '#94a3b8',
+    border: 'none',
+    borderRight: '1px solid #334155',
+    padding: '0.32rem 0.55rem',
+    fontSize: '0.76rem',
+    fontWeight: 700,
+    cursor: 'pointer',
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
+  },
+  autoProfileButtonActive: {
+    background: '#1d4ed8',
+    color: '#fff',
   },
 }
 

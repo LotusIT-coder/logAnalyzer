@@ -186,3 +186,73 @@ class TestSpecializedSourceIngestion:
         events = list(result.scalars().all())
         assert events
         assert any("recent-" in (e.message or "") for e in events)
+
+    async def test_file_source_skips_unreadable_file(self, db_session, tmp_path, monkeypatch):
+        log_path = tmp_path / "boot.log"
+        log_path.write_text("cannot read me\n", encoding="utf-8")
+
+        source = Source(
+            name="boot",
+            type="file",
+            config_json={"path": str(log_path)},
+            enabled=True,
+        )
+        db_session.add(source)
+        await db_session.flush()
+
+        real_open = open
+
+        def fake_open(path, *args, **kwargs):
+            if os.fspath(path) == os.fspath(log_path):
+                raise PermissionError("Permission denied")
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", fake_open)
+
+        stats = await ingest_source(db_session, source)
+
+        assert stats["skipped"] is True
+        assert "file access failed" in stats["reason"]
+        result = await db_session.execute(select(Event).where(Event.source_id == source.id))
+        assert list(result.scalars().all()) == []
+
+    async def test_real_journald_source_uses_journalctl(self, db_session, monkeypatch):
+        source = Source(
+            name="journald-boot",
+            type="journald",
+            config_json={"boot_only": True},
+            enabled=True,
+        )
+        db_session.add(source)
+        await db_session.flush()
+
+        class FakeProcess:
+            returncode = 0
+
+            async def communicate(self):
+                payload = json.dumps({
+                    "__CURSOR": "cursor-1",
+                    "__REALTIME_TIMESTAMP": "1746525660000000",
+                    "PRIORITY": "3",
+                    "MESSAGE": "System boot complete",
+                    "_HOSTNAME": "srv-01",
+                    "SYSLOG_IDENTIFIER": "systemd",
+                })
+                return payload.encode("utf-8"), b""
+
+        async def fake_create_subprocess_exec(*cmd, **kwargs):
+            assert "journalctl" in cmd[0]
+            assert "-b" in cmd
+            return FakeProcess()
+
+        monkeypatch.setattr(file_reader.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+        stats = await ingest_source(db_session, source)
+
+        assert stats["events_created"] == 1
+        result = await db_session.execute(select(Event).where(Event.source_id == source.id))
+        event = result.scalar_one()
+        assert event.message == "System boot complete"
+        assert event.service == "systemd"
+        assert event.host == "srv-01"
+        assert event.severity == "error"
