@@ -128,7 +128,7 @@ CREATE INDEX idx_rule_enabled ON rule (enabled);
 CREATE TABLE incident (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('open', 'investigating', 'resolved', 'false_positive')),
+    status TEXT NOT NULL CHECK (status IN ('open', 'investigating', 'resolved', 'false_positive', 'archived')),
     severity TEXT NOT NULL,
     first_seen TIMESTAMPTZ NOT NULL,
     last_seen TIMESTAMPTZ NOT NULL,

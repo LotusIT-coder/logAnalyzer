@@ -1,0 +1,7 @@
+[Unit]
+Description=Log Analyzer Dev Stack (backend + frontend)
+Wants=loganalyzer-backend.service loganalyzer-frontend.service
+After=loganalyzer-backend.service
+
+[Install]
+WantedBy=default.target

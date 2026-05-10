@@ -418,6 +418,7 @@ export default function DashboardPage() {
   const [ingestResult, setIngestResult] = useState<IngestionRunResponse | null>(null)
   const [ingestError, setIngestError] = useState<string | null>(null)
   const [uploadResult, setUploadResult] = useState<UploadResultState | null>(null)
+  const [topErrorsSeverities, setTopErrorsSeverities] = useState<string[]>(['error', 'critical'])
 
   useEffect(() => {
     window.localStorage.setItem(AUTO_REFRESH_PROFILE_KEY, autoRefreshProfile)
@@ -488,7 +489,7 @@ export default function DashboardPage() {
     .filter(s => s.kind === 'preset' || s.kind === 'custom')
     .map(s => s.path)
   const metricsFilter: MetricsFilter | undefined = selectedSources.length > 0
-    ? { sourceIds: selectedSourceIds, sourcePaths: selectedSourcePaths }
+    ? { sourceIds: selectedSourceIds, sourcePaths: selectedSourcePaths, severities: topErrorsSeverities }
     : undefined
 
   const sourceKey = `${selectedSourceIds.join('|')}::${selectedSourcePaths.join('|')}`
@@ -543,7 +544,7 @@ export default function DashboardPage() {
     : Math.max(chartBucketToMs(chartBucket), 15_000)
 
   const errs = useQuery({
-    queryKey: ['top-errors', rangeHours, sourceKey],
+    queryKey: ['top-errors', rangeHours, sourceKey, topErrorsSeverities.join(',')],
     queryFn: () => getTopErrors(buildTimeRange(rangeHours), metricsFilter),
     enabled: selectedSources.length > 0,
     staleTime: 60_000,
@@ -776,6 +777,34 @@ export default function DashboardPage() {
               <div style={styles.panelMetaRow}>
                 <span style={styles.panelMetaLabel}>Letztes Update:</span>
                 <span style={styles.panelMetaValue}>{formatAgeLabel(errs.dataUpdatedAt)}</span>
+              </div>
+              <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <label style={{ fontSize: '0.8rem', color: '#94a3b8', fontWeight: 500 }}>Severity:</label>
+                <select
+                  multiple
+                  value={topErrorsSeverities}
+                  onChange={(e) => {
+                    const selected = Array.from(e.target.selectedOptions, opt => opt.value)
+                    setTopErrorsSeverities(selected.length > 0 ? selected : ['error', 'critical'])
+                  }}
+                  style={{
+                    padding: '0.35rem 0.5rem',
+                    fontSize: '0.8rem',
+                    borderRadius: '0.25rem',
+                    border: '1px solid #475569',
+                    background: '#1e293b',
+                    color: '#e2e8f0',
+                    cursor: 'pointer',
+                    minHeight: '2rem',
+                  }}
+                  title="Mehrfachauswahl möglich mit Ctrl/Cmd"
+                >
+                  <option value="debug">Debug</option>
+                  <option value="info">Info</option>
+                  <option value="warning">Warning</option>
+                  <option value="error">Error</option>
+                  <option value="critical">Critical</option>
+                </select>
               </div>
               {errs.data ? (
                 <ol style={styles.ol}>

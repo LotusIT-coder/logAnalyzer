@@ -84,6 +84,14 @@ class TestIncidentsAPI:
         assert resp.status_code == 200
         assert resp.json()["status"] == "resolved"
 
+    async def test_patch_to_archived(self, client: AsyncClient, db_session: AsyncSession):
+        inc = await _seed_incident(db_session, status="resolved")
+        await db_session.commit()
+
+        resp = await client.patch(f"/api/v1/incidents/{inc.id}", json={"status": "archived"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "archived"
+
     async def test_patch_to_invalid_status_returns_422(self, client: AsyncClient, db_session: AsyncSession):
         inc = await _seed_incident(db_session)
         await db_session.commit()
@@ -96,6 +104,33 @@ class TestIncidentsAPI:
             "/api/v1/incidents/00000000-0000-0000-0000-000000000000",
             json={"status": "resolved"}
         )
+        assert resp.status_code == 404
+
+    async def test_archive_endpoint_sets_status_archived(self, client: AsyncClient, db_session: AsyncSession):
+        inc = await _seed_incident(db_session, status="open")
+        await db_session.commit()
+
+        resp = await client.post(f"/api/v1/incidents/{inc.id}/archive")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "archived"
+
+    async def test_archive_nonexistent_returns_404(self, client: AsyncClient):
+        resp = await client.post("/api/v1/incidents/00000000-0000-0000-0000-000000000000/archive")
+        assert resp.status_code == 404
+
+    async def test_delete_incident(self, client: AsyncClient, db_session: AsyncSession):
+        inc = await _seed_incident(db_session, status="open")
+        await db_session.commit()
+
+        resp = await client.delete(f"/api/v1/incidents/{inc.id}")
+        assert resp.status_code == 204
+
+        after = await client.get("/api/v1/incidents")
+        ids = [item["id"] for item in after.json()["items"]]
+        assert str(inc.id) not in ids
+
+    async def test_delete_nonexistent_returns_404(self, client: AsyncClient):
+        resp = await client.delete("/api/v1/incidents/00000000-0000-0000-0000-000000000000")
         assert resp.status_code == 404
 
     async def test_get_incident_by_id(self, client: AsyncClient, db_session: AsyncSession):

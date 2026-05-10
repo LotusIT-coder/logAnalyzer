@@ -128,7 +128,7 @@ class Incident(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(
         Text,
-        CheckConstraint("status IN ('open','investigating','resolved','false_positive')"),
+        CheckConstraint("status IN ('open','investigating','resolved','false_positive','archived')"),
         nullable=False,
     )
     severity: Mapped[str] = mapped_column(Text, nullable=False)

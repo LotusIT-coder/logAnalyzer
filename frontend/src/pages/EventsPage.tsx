@@ -5,6 +5,9 @@ import { getEvents, getSources, type EventResponse, type SourceResponse } from '
 import dayjs from 'dayjs'
 import { getApiBase } from '../lib/api'
 import HelpTip from '../components/HelpTip'
+import GlobalSourceFilterNotice from '../components/GlobalSourceFilterNotice'
+import { useSourceFilter } from '../ctx/useSourceFilter'
+import { type SourceOption } from '../ctx/SourceFilterContext.shared'
 
 const SEV_COLOR: Record<string, string> = {
   critical: '#ef4444',
@@ -153,6 +156,7 @@ function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: (
 }
 
 export default function EventsPage() {
+  const { filter: globalFilter, setFilter: setGlobalFilter, setSelectedSources } = useSourceFilter()
   const [searchParams] = useSearchParams()
   const [cursor, setCursor] = useState<string | undefined>()
   const [sourceId, setSourceId] = useState(() => getInitialFilterValue(searchParams, 'source_id'))
@@ -171,17 +175,21 @@ export default function EventsPage() {
 
   const { data: sources = [] } = useQuery({ queryKey: ['sources'], queryFn: getSources })
   const selectedSource = sourceId ? sources.find(source => source.id === sourceId) ?? null : null
+  const globalSourceIdsCsv = globalFilter.sourceIds.join(',')
+  const globalSourcePathsCsv = globalFilter.sourcePaths.join(',')
+  const effectiveSourceIdsCsv = sourceIdsCsv || (!sourceId ? globalSourceIdsCsv : '')
+  const effectiveSourcePathsCsv = sourcePathsCsv || (!sourceId ? globalSourcePathsCsv : '')
 
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['events', cursor, sourceId, sourceIdsCsv, sourcePathsCsv, fromTime, toTime, severity, host, service, search, refreshTick],
+    queryKey: ['events', cursor, sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, fromTime, toTime, severity, host, service, search, refreshTick],
     queryFn: () => getEvents({
       limit: 50,
       cursor: cursor || undefined,
       from: fromTime || undefined,
       to: toTime || undefined,
       source_id: sourceId || undefined,
-      source_ids: sourceIdsCsv || undefined,
-      source_paths: sourcePathsCsv || undefined,
+      source_ids: effectiveSourceIdsCsv || undefined,
+      source_paths: effectiveSourcePathsCsv || undefined,
       severity: severity || undefined,
       host: host || undefined,
       service: service || undefined,
@@ -208,6 +216,34 @@ export default function EventsPage() {
     setService('')
     setSearch('')
     setSearchInput('')
+    setGlobalFilter({ sourceIds: [], sourcePaths: [], rangeHours: globalFilter.rangeHours })
+    setSelectedSources([])
+  }
+
+  function handleSourceChange(nextSourceId: string) {
+    setSourceId(nextSourceId)
+    setSourceIdsCsv('')
+    setSourcePathsCsv('')
+    setCursor(undefined)
+
+    if (!nextSourceId) {
+      setGlobalFilter({ sourceIds: [], sourcePaths: [], rangeHours: globalFilter.rangeHours })
+      setSelectedSources([])
+      return
+    }
+
+    const selected = sources.find(source => source.id === nextSourceId)
+    const nextSelectedSources: SourceOption[] = selected
+      ? [{
+        id: `source:${selected.id}`,
+        label: selected.name,
+        path: selected.config?.path ?? '',
+        kind: 'configured',
+      }]
+      : []
+
+    setGlobalFilter({ sourceIds: [nextSourceId], sourcePaths: [], rangeHours: globalFilter.rangeHours })
+    setSelectedSources(nextSelectedSources)
   }
 
   function toggleExpand(id: string) {
@@ -223,8 +259,8 @@ export default function EventsPage() {
   const hasFilters = sourceId || sourceIdsCsv || sourcePathsCsv || fromTime || toTime || severity || host || service || search
   const contextItems = buildContextItems({
     sourceId,
-    sourceIdsCsv,
-    sourcePathsCsv,
+    sourceIdsCsv: effectiveSourceIdsCsv,
+    sourcePathsCsv: effectiveSourcePathsCsv,
     fromTime,
     toTime,
     severity,
@@ -248,8 +284,10 @@ export default function EventsPage() {
         </button>
       </div>
 
+      <GlobalSourceFilterNotice />
+
       <div style={styles.filters}>
-        <select value={sourceId} onChange={e => { setSourceId(e.target.value); setSourceIdsCsv(''); setSourcePathsCsv(''); setCursor(undefined) }} style={{ ...styles.select, minWidth: 220 }}>
+        <select value={sourceId} onChange={e => handleSourceChange(e.target.value)} style={{ ...styles.select, minWidth: 220 }}>
           <option value="">Alle Quellen</option>
           {sources.map((source: SourceResponse) => (
             <option key={source.id} value={source.id}>{source.name}{source.config?.path ? ` (${source.config.path})` : ''}</option>

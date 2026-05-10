@@ -1,0 +1,23 @@
+INFO:     Started server process [338859]
+INFO:     Waiting for application startup.
+[2m2026-05-10T11:20:14.586955Z[0m [[32m[1minfo     [0m] [1mwatcher_started               [0m [36minterval_seconds[0m=[35m5.0[0m
+[2m2026-05-10T11:20:14.587109Z[0m [[32m[1minfo     [0m] [1mrule_scheduler_started        [0m [36minterval_seconds[0m=[35m30.0[0m
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+[2m2026-05-10T11:20:14.781446Z[0m [[32m[1minfo     [0m] [1mrequest_started               [0m [36mmethod[0m=[35mGET[0m [36mpath[0m=[35m/api/v1/health[0m [36mtrace_id[0m=[35m1029d2f0-49ae-48b8-850e-cc987fd12712[0m
+[2m2026-05-10T11:20:14.783959Z[0m [[32m[1minfo     [0m] [1mrequest_finished              [0m [36mmethod[0m=[35mGET[0m [36mpath[0m=[35m/api/v1/health[0m [36mstatus_code[0m=[35m200[0m [36mtrace_id[0m=[35m1029d2f0-49ae-48b8-850e-cc987fd12712[0m
+INFO:     127.0.0.1:52978 - "GET /api/v1/health HTTP/1.1" 200 OK
+[2m2026-05-10T11:20:15.016150Z[0m [[32m[1minfo     [0m] [1mwatcher_tick_ingested         [0m [36mend_offset[0m=[35m395145[0m [36mevents_created[0m=[35m497[0m [36mfast_forwarded[0m=[35mFalse[0m [36mlines_ingested[0m=[35m497[0m [36mpath[0m=[35m/var/log/syslog[0m [36msource_id[0m=[35m09e02179-2018-473b-a64e-c6e170a0cec7[0m [36mstart_offset[0m=[35m323305[0m
+[2m2026-05-10T11:20:15.888232Z[0m [[32m[1minfo     [0m] [1mrequest_started               [0m [36mmethod[0m=[35mGET[0m [36mpath[0m=[35m/api/v1/health[0m [36mtrace_id[0m=[35m69ba4212-3343-4f63-898a-481b4088deb5[0m
+[2m2026-05-10T11:20:15.888572Z[0m [[32m[1minfo     [0m] [1mrequest_finished              [0m [36mmethod[0m=[35mGET[0m [36mpath[0m=[35m/api/v1/health[0m [36mstatus_code[0m=[35m200[0m [36mtrace_id[0m=[35m69ba4212-3343-4f63-898a-481b4088deb5[0m
+INFO:     127.0.0.1:52982 - "GET /api/v1/health HTTP/1.1" 200 OK
+[2m2026-05-10T11:20:22.154314Z[0m [[32m[1minfo     [0m] [1mwatcher_tick_ingested         [0m [36mend_offset[0m=[35m33024[0m [36mevents_created[0m=[35m67[0m [36mfast_forwarded[0m=[35mFalse[0m [36mlines_ingested[0m=[35m67[0m [36mpath[0m=[35m/var/log/kern.log[0m [36msource_id[0m=[35mc160696f-a286-4f2d-ac3e-2d995d32169b[0m [36mstart_offset[0m=[35m24808[0m
+[2m2026-05-10T11:20:22.166596Z[0m [[32m[1minfo     [0m] [1mwatcher_tick_ingested         [0m [36mend_offset[0m=[35m15166[0m [36mevents_created[0m=[35m11[0m [36mfast_forwarded[0m=[35mFalse[0m [36mlines_ingested[0m=[35m11[0m [36mpath[0m=[35m/var/log/auth.log[0m [36msource_id[0m=[35m8cbca78a-54d2-4ce4-b1b8-d17f2cd3dd7a[0m [36mstart_offset[0m=[35m13762[0m
+[2m2026-05-10T11:20:22.186532Z[0m [[32m[1minfo     [0m] [1mwatcher_tick_ingested         [0m [36mend_offset[0m=[35m22234[0m [36mevents_created[0m=[35m7[0m [36mfast_forwarded[0m=[35mFalse[0m [36mlines_ingested[0m=[35m7[0m [36mpath[0m=[35m/var/log/postgresql/postgresql-16-main.log[0m [36msource_id[0m=[35m7ceaea30-f4ce-4cdd-8089-14f0d3d23b61[0m [36mstart_offset[0m=[35m21521[0m
+[2m2026-05-10T11:20:22.835503Z[0m [[32m[1minfo     [0m] [1mwatcher_tick_ingested         [0m [36mevents_created[0m=[35m551[0m [36mfast_forwarded[0m=[35mFalse[0m [36mlines_ingested[0m=[35m551[0m [36mnew_cursor[0m=[35m's=17c744caff87418ba886d4bdcaa540c6;i=76e7d7;b=0cbc633eba8a48f3be31f8c775c93b7d;m=1899410f28;t=651747be2ad4e;x=3c5648470d74e133'[0m [36msource_id[0m=[35me635e26d-fd0f-4007-9c3f-03bfd64b463b[0m [36mstart_offset[0m=[35m0[0m
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+[2m2026-05-10T11:20:25.140720Z[0m [[32m[1minfo     [0m] [1mwatcher_stopped               [0m
+[2m2026-05-10T11:20:25.140937Z[0m [[32m[1minfo     [0m] [1mrule_scheduler_stopped        [0m
+INFO:     Application shutdown complete.
+INFO:     Finished server process [338859]

@@ -1,4 +1,4 @@
-"""Incidents endpoints – GET/PATCH /api/v1/incidents, GET /{id}."""
+"""Incidents endpoints – GET/PATCH/DELETE /api/v1/incidents, GET /{id}."""
 from __future__ import annotations
 
 from typing import Optional
@@ -18,7 +18,7 @@ from app.schemas.domain import (
 
 router = APIRouter(prefix="/incidents", tags=["Incidents"])
 
-_VALID_STATUSES = {"open", "investigating", "resolved", "false_positive"}
+_VALID_STATUSES = {"open", "investigating", "resolved", "false_positive", "archived"}
 
 
 @router.get("", response_model=IncidentListResponse)
@@ -100,3 +100,34 @@ async def patch_incident(
     await session.flush()
     await session.refresh(incident)
     return IncidentResponse.model_validate(incident)
+
+
+@router.post("/{incident_id}/archive", response_model=IncidentResponse)
+async def archive_incident(
+    incident_id: str,
+    session: AsyncSession = Depends(get_db),
+):
+    result = await session.execute(select(Incident).where(Incident.id == incident_id))
+    incident = result.scalar_one_or_none()
+    if incident is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found.")
+
+    incident.status = "archived"
+    session.add(incident)
+    await session.flush()
+    await session.refresh(incident)
+    return IncidentResponse.model_validate(incident)
+
+
+@router.delete("/{incident_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_incident(
+    incident_id: str,
+    session: AsyncSession = Depends(get_db),
+):
+    result = await session.execute(select(Incident).where(Incident.id == incident_id))
+    incident = result.scalar_one_or_none()
+    if incident is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found.")
+
+    await session.delete(incident)
+    await session.flush()

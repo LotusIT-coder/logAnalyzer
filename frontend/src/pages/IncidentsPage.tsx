@@ -1,25 +1,38 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getIncidents, patchIncident } from '../lib/requests'
+import { archiveIncident, deleteIncident, getIncidents, patchIncident } from '../lib/requests'
 import dayjs from 'dayjs'
 import { useState } from 'react'
 import HelpTip from '../components/HelpTip'
+import GlobalSourceFilterNotice from '../components/GlobalSourceFilterNotice'
+import { useSourceFilter } from '../ctx/useSourceFilter'
 
 const STATUS_COLOR: Record<string, string> = {
   open: '#ef4444',
   investigating: '#f97316',
   resolved: '#22c55e',
   false_positive: '#64748b',
+  archived: '#334155',
 }
 
-const STATUSES = ['open', 'investigating', 'resolved', 'false_positive']
+const STATUSES = ['open', 'investigating', 'resolved', 'false_positive', 'archived']
+const ACTIVE_STATUSES = new Set(['open', 'investigating'])
 
 export default function IncidentsPage() {
+  const { filter: globalFilter } = useSourceFilter()
   const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState('')
+  const [activeOnly, setActiveOnly] = useState(false)
   const [search, setSearch] = useState('')
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
+  const globalSourceIdsCsv = globalFilter.sourceIds.join(',')
+  const globalSourcePathsCsv = globalFilter.sourcePaths.join(',')
   const { data, isLoading } = useQuery({
-    queryKey: ['incidents', statusFilter],
-    queryFn: () => getIncidents(statusFilter ? { status: statusFilter } : {}),
+    queryKey: ['incidents', statusFilter, globalSourceIdsCsv, globalSourcePathsCsv],
+    queryFn: () => getIncidents({
+      ...(statusFilter ? { status: statusFilter } : {}),
+      ...(globalSourceIdsCsv ? { source_ids: globalSourceIdsCsv } : {}),
+      ...(globalSourcePathsCsv ? { source_paths: globalSourcePathsCsv } : {}),
+    }),
   })
 
   async function changeStatus(id: string, status: string) {
@@ -27,9 +40,21 @@ export default function IncidentsPage() {
     qc.invalidateQueries({ queryKey: ['incidents'] })
   }
 
+  async function archive(id: string) {
+    await archiveIncident(id)
+    qc.invalidateQueries({ queryKey: ['incidents'] })
+  }
+
+  async function remove(id: string) {
+    setPendingDelete(null)
+    await deleteIncident(id)
+    qc.invalidateQueries({ queryKey: ['incidents'] })
+  }
+
   // Client-side: newest first + title search
   const items = [...(data?.items ?? [])]
     .sort((a, b) => new Date(b.last_seen).getTime() - new Date(a.last_seen).getTime())
+    .filter(inc => !activeOnly || ACTIVE_STATUSES.has(inc.status))
     .filter(inc => !search || inc.title.toLowerCase().includes(search.toLowerCase()))
 
   return (
@@ -51,9 +76,25 @@ export default function IncidentsPage() {
             <option value="">Alle Status</option>
             {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveOnly(v => !v)
+              setStatusFilter('')
+            }}
+            style={{
+              ...styles.quickFilterBtn,
+              ...(activeOnly ? styles.quickFilterBtnActive : {}),
+            }}
+            aria-pressed={activeOnly}
+          >
+            Nur aktive
+          </button>
           <HelpTip content="Filtert die Incident-Liste nach Bearbeitungsstatus, zum Beispiel nur offene oder bereits geloeste Vorfaelle." ariaLabel="Statusfilter erklaeren" />
         </div>
       </div>
+
+      <GlobalSourceFilterNotice />
 
       {isLoading ? (
         <div style={{ color: '#64748b', padding: '2rem' }}>Lade…</div>
@@ -79,11 +120,27 @@ export default function IncidentsPage() {
                   <span>Zuletzt: {dayjs(inc.last_seen).format('DD.MM.YYYY HH:mm')}</span>
                 </div>
                 <div style={styles.actions}>
+                  {inc.status !== 'archived' && (
+                    <button onClick={() => archive(inc.id)} style={styles.archiveBtn}>
+                      Archivieren
+                    </button>
+                  )}
                   {STATUSES.filter(s => s !== inc.status).map(s => (
                     <button key={s} onClick={() => changeStatus(inc.id, s)} style={styles.statusBtn}>
                       → {s}
                     </button>
                   ))}
+                  {pendingDelete === inc.id ? (
+                    <>
+                      <span style={styles.deleteHint}>Wirklich löschen?</span>
+                      <button onClick={() => remove(inc.id)} style={styles.deleteBtnConfirm}>Ja</button>
+                      <button onClick={() => setPendingDelete(null)} style={styles.statusBtn}>Abbrechen</button>
+                    </>
+                  ) : (
+                    <button onClick={() => setPendingDelete(inc.id)} style={styles.deleteBtn}>
+                      Löschen
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -103,6 +160,23 @@ const styles: Record<string, React.CSSProperties> = {
   readOnlyNotice: { background: '#1f2937', color: '#cbd5e1', border: '1px solid #334155', borderRadius: 8, padding: '0.65rem 0.9rem', marginBottom: '1rem', fontSize: '0.86rem' },
   searchInput: { background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.75rem', minWidth: 200 },
   select: { background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.6rem' },
+  quickFilterBtn: {
+    background: 'none',
+    color: '#94a3b8',
+    border: '1px solid #334155',
+    borderRadius: 6,
+    padding: '0.4rem 0.75rem',
+    cursor: 'pointer',
+    fontSize: '0.82rem',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
+  },
+  quickFilterBtnActive: {
+    background: '#1d4ed8',
+    color: '#fff',
+    borderColor: '#1d4ed8',
+  },
   sectionHeader: { display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.65rem' },
   sectionTitle: { color: '#94a3b8', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' },
   list: { display: 'flex', flexDirection: 'column', gap: '0.75rem' },
@@ -116,4 +190,17 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'none', border: '1px solid #334155', color: '#94a3b8',
     borderRadius: 6, padding: '0.25rem 0.65rem', cursor: 'pointer', fontSize: '0.78rem',
   },
+  archiveBtn: {
+    background: '#10223f', border: '1px solid #1d4ed8', color: '#93c5fd',
+    borderRadius: 6, padding: '0.25rem 0.65rem', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700,
+  },
+  deleteBtn: {
+    background: 'none', border: '1px solid #7f1d1d', color: '#f87171',
+    borderRadius: 6, padding: '0.25rem 0.65rem', cursor: 'pointer', fontSize: '0.78rem',
+  },
+  deleteBtnConfirm: {
+    background: '#7f1d1d', border: '1px solid #b91c1c', color: '#fff',
+    borderRadius: 6, padding: '0.25rem 0.65rem', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700,
+  },
+  deleteHint: { color: '#fca5a5', fontSize: '0.78rem', alignSelf: 'center' },
 }

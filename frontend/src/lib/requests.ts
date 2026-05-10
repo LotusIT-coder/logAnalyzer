@@ -201,6 +201,15 @@ export async function patchIncident(id: string, body: JsonObject) {
   return r.data as IncidentResponse
 }
 
+export async function archiveIncident(id: string) {
+  const r = await api.post(`/incidents/${id}/archive`)
+  return r.data as IncidentResponse
+}
+
+export async function deleteIncident(id: string) {
+  await api.delete(`/incidents/${id}`)
+}
+
 export async function getRules() {
   const r = await api.get('/rules')
   return r.data as RuleListResponse
@@ -230,6 +239,7 @@ export interface TimeRange { from: string; to: string }
 export interface MetricsFilter {
   sourceIds?: string[]
   sourcePaths?: string[]
+  severities?: string[]
 }
 
 function withMetricsFilter(base: QueryParams, range?: TimeRange, filter?: MetricsFilter) {
@@ -238,6 +248,7 @@ function withMetricsFilter(base: QueryParams, range?: TimeRange, filter?: Metric
   if (range?.to) params.to = range.to
   if (filter?.sourceIds?.length) params.source_ids = filter.sourceIds.join(',')
   if (filter?.sourcePaths?.length) params.source_paths = filter.sourcePaths.join(',')
+  if (filter?.severities?.length) params.severity = filter.severities.join(',')
   return params
 }
 

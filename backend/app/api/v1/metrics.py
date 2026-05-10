@@ -114,18 +114,25 @@ async def top_errors(
     to: Optional[datetime] = Query(None),
     source_ids: Optional[str] = Query(None),
     source_paths: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
 ):
     from_dt, to_dt = from_ or _default_range()[0], to or _default_range()[1]
     resolved_source_ids = await resolve_source_ids(session, source_ids_csv=source_ids, source_paths_csv=source_paths)
     if resolved_source_ids == []:
         return TopErrorsResponse(items=[])
 
+    severity_levels = ["error", "critical"]
+    if severity:
+        severity_levels = [s.strip().lower() for s in severity.split(",") if s.strip()]
+        if not severity_levels:
+            severity_levels = ["error", "critical"]
+
     stmt = (
         select(Event.message, func.count().label("count"))
         .where(
             Event.timestamp >= from_dt,
             Event.timestamp <= to_dt,
-            Event.severity.in_(["error", "critical"]),
+            Event.severity.in_(severity_levels),
         )
         .group_by(Event.message)
         .order_by(text("count DESC"))
