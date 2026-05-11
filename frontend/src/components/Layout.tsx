@@ -1,8 +1,9 @@
 import { NavLink, Outlet } from 'react-router-dom'
+import { useFeatureFlags } from '../ctx/FeatureFlagsContext'
 import HelpTip from './HelpTip'
 import QuickTutorial from './QuickTutorial'
 
-const NAV: { to: string; label: string; help: string }[] = [
+const NAV_BASE: { to: string; label: string; help: string }[] = [
   { to: '/', label: 'Dashboard', help: 'Zentrale Metriken, Quellenauswahl und Zeitraeume fuer den aktuellen Arbeitskontext.' },
   { to: '/events', label: 'Events', help: 'Detailansicht der Rohereignisse mit Filtern fuer Quelle, Host, Service, Schweregrad und Zeit.' },
   { to: '/incidents', label: 'Incidents', help: 'Gruppierte Auffaelligkeiten und bereits erkannte Stoerungen mit Status und Bearbeitungshinweisen.' },
@@ -12,7 +13,14 @@ const NAV: { to: string; label: string; help: string }[] = [
 ]
 
 export default function Layout() {
-  const navItems: typeof NAV = NAV
+  const flags = useFeatureFlags()
+  
+  const navItems = NAV_BASE.filter(item => {
+    if (item.to === '/ai') {
+      return flags.ollama_available
+    }
+    return true
+  })
 
   return (
     <div style={styles.root}>

@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     database_url: str
     ollama_base_url: str = "http://127.0.0.1:11434"
 
+    # Logging
+    log_dir: str = "logs"
+
+    # Ollama availability
+    ollama_path: str = "/usr/bin/ollama"
+
     cors_allowed_origins: str = "http://localhost:5173"
     watcher_interval_seconds: float = 5.0
     rule_scheduler_interval_seconds: float = 30.0

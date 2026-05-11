@@ -1,5 +1,5 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { getEvents, getSources, type EventResponse, type SourceResponse } from '../lib/requests'
 import dayjs from 'dayjs'
@@ -168,7 +168,6 @@ function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: (
 export default function EventsPage() {
   const { filter: globalFilter, setFilter: setGlobalFilter, selectedSources, setSelectedSources } = useSourceFilter()
   const [searchParams] = useSearchParams()
-  const [cursor, setCursor] = useState<string | undefined>()
   const [sourceId, setSourceId] = useState(() => getInitialFilterValue(searchParams, 'source_id'))
   const [sourceIdsCsv, setSourceIdsCsv] = useState(() => getInitialFilterValue(searchParams, 'source_ids'))
   const [sourcePathsCsv, setSourcePathsCsv] = useState(() => getInitialFilterValue(searchParams, 'source_paths'))
@@ -182,6 +181,7 @@ export default function EventsPage() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [refreshTick, setRefreshTick] = useState(0)
   const [tailSource, setTailSource] = useState<SourceResponse | null>(null)
+  const tableContainerRef = useRef<HTMLDivElement>(null)
 
   const { data: sources = [] } = useQuery({ queryKey: ['sources'], queryFn: getSources })
   const selectedSource = sourceId ? sources.find(source => source.id === sourceId) ?? null : null
@@ -217,7 +217,6 @@ export default function EventsPage() {
         setSourceId(globalSingleSourceId)
         setSourceIdsCsv('')
         setSourcePathsCsv('')
-        setCursor(undefined)
       }
       return
     }
@@ -227,7 +226,6 @@ export default function EventsPage() {
         setSourceId('')
         setSourceIdsCsv('')
         setSourcePathsCsv(globalSingleSourcePath)
-        setCursor(undefined)
       }
       return
     }
@@ -236,15 +234,15 @@ export default function EventsPage() {
       setSourceId('')
       setSourceIdsCsv('')
       setSourcePathsCsv('')
-      setCursor(undefined)
     }
   }, [globalSingleSourceId, globalSingleSourcePath, sourceId, sourceIdsCsv, sourcePathsCsv])
 
-  const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['events', cursor, sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, fromTime, toTime, selectedSeveritiesCsv, host, service, search, refreshTick],
-    queryFn: () => getEvents({
-      limit: 50,
-      cursor: cursor || undefined,
+  // Infinite query: loads events page by page
+  const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage, isFetching } = useInfiniteQuery({
+    queryKey: ['events', sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, fromTime, toTime, selectedSeveritiesCsv, host, service, search, refreshTick],
+    queryFn: ({ pageParam }: { pageParam?: string }) => getEvents({
+      limit: 100,
+      cursor: pageParam,
       from: fromTime || undefined,
       to: toTime || undefined,
       source_id: sourceId || undefined,
@@ -255,17 +253,39 @@ export default function EventsPage() {
       service: service || undefined,
       q: search || undefined,
     }),
+    initialPageParam: undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
   })
 
+  // Flatten all pages into single events array
+  const allEvents = data?.pages.flatMap(page => page.items) ?? []
+
+  // Scroll observer: trigger next page fetch when user scrolls near bottom
+  const observerRef = useRef<IntersectionObserver | null>(null)
+  const loadMoreRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const container = tableContainerRef.current
+    if (!container || !hasNextPage || isFetchingNextPage) return
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container
+      // Trigger when user scrolls to 80% of content
+      if (scrollTop + clientHeight >= scrollHeight * 0.8) {
+        fetchNextPage()
+      }
+    }
+
+    container.addEventListener('scroll', handleScroll)
+    return () => container.removeEventListener('scroll', handleScroll)
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+
   function applySearch() {
-    setCursor(undefined)
     setSearch(searchInput)
   }
 
   function resetFilters() {
-    setCursor(undefined)
     setSourceId('')
     setSourceIdsCsv('')
     setSourcePathsCsv('')
@@ -287,7 +307,6 @@ export default function EventsPage() {
     setSourceId(nextSourceId)
     setSourceIdsCsv('')
     setSourcePathsCsv(nextSourcePath)
-    setCursor(undefined)
 
     if (!nextSourceId && !nextSourcePath) {
       setGlobalFilter({ sourceIds: [], sourcePaths: [], rangeHours: globalFilter.rangeHours })
@@ -322,7 +341,6 @@ export default function EventsPage() {
 
   function refreshLatest() {
     setExpanded({})
-    setCursor(undefined)
     setRefreshTick(v => v + 1)
   }
 
@@ -476,75 +494,71 @@ export default function EventsPage() {
       ) : (
         <>
           <div style={styles.resultsMeta}>
-            <span>{data?.items.length ?? 0} Einträge (neueste zuerst)</span>
-            <HelpTip content="Die Liste ist standardmaessig absteigend nach Zeit sortiert. Ein Klick auf eine Zeile klappt die vollstaendigen Felder und die Originalnachricht aus." ariaLabel="Eventliste erklaeren" />
+            <span>{allEvents.length} Einträge geladen (neueste zuerst)</span>
+            {hasNextPage && <span style={{ color: '#64748b' }}>↓ Scrollen zum Laden von mehr</span>}
+            <HelpTip content="Die Liste ist standardmaessig absteigend nach Zeit sortiert. Scrolle nach unten um weitere Events zu laden. Ein Klick auf eine Zeile klappt die vollstaendigen Felder aus." ariaLabel="Eventliste erklaeren" />
           </div>
-          <div style={styles.table}>
-            <div style={styles.theader}>
-              <span style={{ width: 150 }}>Zeitstempel</span>
-              <span style={{ width: 75 }}>Severity</span>
-              <span style={{ width: 110 }}>Host</span>
-              <span style={{ width: 120 }}>Service</span>
-              <span style={{ flex: 1 }}>Nachricht</span>
-            </div>
-            {data?.items.map((event: EventResponse) => (
-              <div key={event.id}>
-                <div
-                  style={{ ...styles.row, cursor: 'pointer', background: expanded[event.id] ? '#162032' : undefined }}
-                  onClick={() => toggleExpand(event.id)}
-                  title="Klicken zum Expandieren"
-                >
-                  <span style={{ width: 150, color: '#64748b', flexShrink: 0, fontSize: '0.78rem' }}>
-                    {dayjs(event.timestamp).format('DD.MM.YY HH:mm:ss')}
-                  </span>
-                  <span style={{ width: 75, flexShrink: 0 }}>
-                    <span style={{ ...styles.badge, background: SEV_COLOR[event.severity] ?? '#475569' }}>
-                      {event.severity}
-                    </span>
-                  </span>
-                  <span style={{ width: 110, color: '#64748b', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {event.host ?? '-'}
-                  </span>
-                  <span style={{ width: 120, color: '#94a3b8', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {event.service ?? '-'}
-                  </span>
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.85rem' }}>
-                    {event.message}
-                  </span>
-                </div>
-                {expanded[event.id] && (
-                  <div style={styles.detail}>
-                    <div style={styles.detailGrid}>
-                      <span style={styles.detailLabel}>ID</span><span style={styles.detailVal}>{event.id}</span>
-                      <span style={styles.detailLabel}>Quelle</span><span style={styles.detailVal}>{event.source_id ?? '-'}</span>
-                      <span style={styles.detailLabel}>Zeitstempel</span><span style={styles.detailVal}>{dayjs(event.timestamp).format('DD.MM.YYYY HH:mm:ss.SSS')}</span>
-                      <span style={styles.detailLabel}>Host</span><span style={styles.detailVal}>{event.host ?? '-'}</span>
-                      <span style={styles.detailLabel}>Service</span><span style={styles.detailVal}>{event.service ?? '-'}</span>
-                      <span style={styles.detailLabel}>Severity</span><span style={styles.detailVal}>{event.severity}</span>
-                    </div>
-                    <div style={{ marginTop: '0.5rem' }}>
-                      <span style={styles.detailLabel}>Nachricht:</span>
-                      <pre style={styles.detailPre}>{event.message}</pre>
-                    </div>
-                  </div>
-                )}
+          <div ref={tableContainerRef} style={styles.tableContainer}>
+            <div style={styles.table}>
+              <div style={styles.theader}>
+                <span style={{ width: 150 }}>Zeitstempel</span>
+                <span style={{ width: 75 }}>Severity</span>
+                <span style={{ width: 110 }}>Host</span>
+                <span style={{ width: 120 }}>Service</span>
+                <span style={{ flex: 1 }}>Nachricht</span>
               </div>
-            ))}
-            {!data?.items.length && (
-              <div style={{ padding: '2rem', color: '#64748b', textAlign: 'center' }}>Keine Events gefunden</div>
-            )}
-          </div>
-
-          <div style={styles.pagination}>
-            {cursor && (
-              <button onClick={() => setCursor(undefined)} style={styles.btn}>Neueste</button>
-            )}
-            {data?.next_cursor && (
-              <button onClick={() => setCursor(data.next_cursor ?? undefined)} style={styles.btn}>Aeltere laden</button>
-            )}
-            {(cursor || data?.next_cursor) && (
-              <HelpTip content="'Neueste' springt an den Anfang der Liste zurueck. 'Aeltere laden' laedt die naechste Seite, ohne den aktuellen Filterkontext zu verlieren." ariaLabel="Pagination erklaeren" />
-            )}
+              {allEvents.map((event: EventResponse) => (
+                <div key={event.id}>
+                  <div
+                    style={{ ...styles.row, cursor: 'pointer', background: expanded[event.id] ? '#162032' : undefined }}
+                    onClick={() => toggleExpand(event.id)}
+                    title="Klicken zum Expandieren"
+                  >
+                    <span style={{ width: 150, color: '#64748b', flexShrink: 0, fontSize: '0.78rem' }}>
+                      {dayjs(event.timestamp).format('DD.MM.YY HH:mm:ss')}
+                    </span>
+                    <span style={{ width: 75, flexShrink: 0 }}>
+                      <span style={{ ...styles.badge, background: SEV_COLOR[event.severity] ?? '#475569' }}>
+                        {event.severity}
+                      </span>
+                    </span>
+                    <span style={{ width: 110, color: '#64748b', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {event.host ?? '-'}
+                    </span>
+                    <span style={{ width: 120, color: '#94a3b8', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {event.service ?? '-'}
+                    </span>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.85rem' }}>
+                      {event.message}
+                    </span>
+                  </div>
+                  {expanded[event.id] && (
+                    <div style={styles.detail}>
+                      <div style={styles.detailGrid}>
+                        <span style={styles.detailLabel}>ID</span><span style={styles.detailVal}>{event.id}</span>
+                        <span style={styles.detailLabel}>Quelle</span><span style={styles.detailVal}>{event.source_id ?? '-'}</span>
+                        <span style={styles.detailLabel}>Zeitstempel</span><span style={styles.detailVal}>{dayjs(event.timestamp).format('DD.MM.YYYY HH:mm:ss.SSS')}</span>
+                        <span style={styles.detailLabel}>Host</span><span style={styles.detailVal}>{event.host ?? '-'}</span>
+                        <span style={styles.detailLabel}>Service</span><span style={styles.detailVal}>{event.service ?? '-'}</span>
+                        <span style={styles.detailLabel}>Severity</span><span style={styles.detailVal}>{event.severity}</span>
+                      </div>
+                      <div style={{ marginTop: '0.5rem' }}>
+                        <span style={styles.detailLabel}>Nachricht:</span>
+                        <pre style={styles.detailPre}>{event.message}</pre>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {!allEvents.length && (
+                <div style={{ padding: '2rem', color: '#64748b', textAlign: 'center' }}>Keine Events gefunden</div>
+              )}
+              {isFetchingNextPage && (
+                <div style={{ padding: '1rem', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
+                  Lade weitere Events...
+                </div>
+              )}
+            </div>
           </div>
         </>
       )}
@@ -588,10 +602,20 @@ const styles: Record<string, React.CSSProperties> = {
   search: { flex: 1, minWidth: 120, background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.75rem' },
   btn: { background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', whiteSpace: 'nowrap' },
   resetBtn: { background: 'none', border: '1px solid #475569', color: '#64748b', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', whiteSpace: 'nowrap' },
+  tableContainer: {
+    maxHeight: 'calc(100vh - 450px)',
+    overflowY: 'auto' as const,
+    borderRadius: 10,
+    border: '1px solid #334155',
+    background: '#1e293b',
+  },
   table: { background: '#1e293b', borderRadius: 10, border: '1px solid #334155', overflow: 'hidden' },
   theader: {
     display: 'flex', gap: '1rem', padding: '0.6rem 1rem',
     background: '#0f172a', color: '#475569', fontSize: '0.73rem', fontWeight: 700, textTransform: 'uppercase',
+    position: 'sticky' as const,
+    top: 0,
+    zIndex: 10,
   },
   row: {
     display: 'flex', gap: '1rem', padding: '0.5rem 1rem',

@@ -54,23 +54,44 @@ async def generate(
 
 async def chat(
     model: str,
-    messages: List[Dict[str, str]],
+    messages: List[Dict[str, Any]],
     temperature: float = 0.2,
     max_tokens: int = 1024,
 ) -> str:
-    """Chat-style completion via /api/chat (non-streaming)."""
+    """Chat-style completion via /api/chat (non-streaming, no tools)."""
+    msg = await chat_full(model, messages, temperature, max_tokens, tools=None)
+    return msg.get("content", "") or ""
+
+
+async def chat_full(
+    model: str,
+    messages: List[Dict[str, Any]],
+    temperature: float = 0.2,
+    max_tokens: int = 1024,
+    tools: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Chat completion that returns the full assistant message dict.
+
+    The dict may include ``tool_calls`` (list of ``{"function": {"name", "arguments"}}``)
+    which the caller has to execute before sending another round.
+    """
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,
         "stream": False,
-        "think": False,  # disable extended thinking for qwen3 and similar models
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
         },
     }
+    if tools:
+        payload["tools"] = tools
+    else:
+        # Disable extended thinking only when no tools are involved.
+        # qwen3 needs internal reasoning to pick tools correctly.
+        payload["think"] = False
     timeout = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=60.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(f"{_base_url()}/api/chat", json=payload)
         resp.raise_for_status()
-        return resp.json().get("message", {}).get("content", "")
+        return resp.json().get("message", {}) or {}

@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from app.config import get_settings
 
@@ -14,11 +14,13 @@ _start_time = time.monotonic()
 
 
 @router.get("/health")
-async def health():
+async def health(request: Request):
+    ollama_available = getattr(request.app.state, "ollama_available", False)
     return {
         "status": "ok",
         "uptime_seconds": int(time.monotonic() - _start_time),
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "ollama_available": ollama_available,
     }
 
 

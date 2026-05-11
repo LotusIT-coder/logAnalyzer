@@ -99,6 +99,13 @@ export interface ModelProfileResponse extends JsonObject {
   name: string
 }
 
+export interface HealthResponse extends JsonObject {
+  status: string
+  uptime_seconds: number
+  timestamp: string
+  ollama_available?: boolean
+}
+
 export interface TimeseriesPoint {
   ts: string
   count: number
@@ -338,4 +345,9 @@ export async function getParserProfiles() {
 export async function getModelProfiles() {
   const r = await api.get('/model-profiles')
   return r.data as ModelProfileResponse[]
+}
+
+export async function getHealth(): Promise<HealthResponse> {
+  const r = await api.get('/health')
+  return r.data as HealthResponse
 }

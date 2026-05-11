@@ -3,14 +3,20 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import job_store, ollama_client
+from app.ai.tools import (
+    TOOL_REGISTRY,
+    TOOL_SCHEMAS,
+    ToolContext,
+    collect_references,
+)
 from app.config import get_settings
 from app.dependencies import get_db
 from app.domain.models import AIAnalysis, Event, Incident, ModelProfile
@@ -30,49 +36,261 @@ router = APIRouter(prefix="/ai", tags=["AI"])
 
 _DEFAULT_MODEL = "llama3"
 _DEFAULT_SYSTEM = (
-    "You are a senior site-reliability engineer analyzing log events. "
-    "Be concise, factual, and actionable. Respond in the same language as the logs."
+    "You are a Senior SOC (Security Operations Center) analyst working on a "
+    "self-hosted log analyzer. You have direct, read-only access to the log "
+    "database via tools.\n\n"
+    "HARD RULES:\n"
+    "1. NEVER invent log lines, timestamps, hostnames, services, IPs or error "
+    "messages. Every concrete fact MUST come from a tool result you executed "
+    "in the current conversation OR from the baseline snapshot you receive in "
+    "the system context.\n"
+    "2. If a tool returns 0 events, say so explicitly. Do not fall back to "
+    "generic example logs.\n"
+    "3. For ANY question about what is in the logs, what happened, anomalies, "
+    "errors, incidents or status: first consult the baseline snapshot you "
+    "already received; if you need more detail, call a tool (`search_logs`, "
+    "`get_recent_logs`, `get_log_stats`, `get_top_errors`, `get_incidents`, "
+    "`list_sources`).\n"
+    "4. When the user asks 'auf welche Logs hast du dich bezogen?' or similar, "
+    "quote the actual events from the baseline / your previous tool results, "
+    "never generic examples.\n\n"
+    "STYLE:\n"
+    "- Reply in the user's language (German or English), concise and factual.\n"
+    "- Quote concrete log lines with timestamp and severity when reporting "
+    "findings.\n"
+    "- Suggest next investigation steps or remediation when relevant."
 )
 
-_STOP_WORDS = {
-    # English
-    'the','a','an','is','are','was','were','in','on','at','to','for','of','and','or',
-    'not','with','from','that','this','what','when','where','how','why','which','who',
-    'my','all','any','some','no','be','have','do','can','will','would','could','should',
-    'may','might','log','logs','event','events','show','find','list','get','tell','me',
-    'about','please',
-    # German
-    'ich','die','der','das','ein','eine','ist','sind','war','für','von','mit','aus',
-    'bei','zeig','zeige','finde','was','wie','wann','warum','welche','welcher','welches',
-    'alle','meine','bitte','gibt','es','im','den','dem','des','nach','sich','auch','noch',
-    'nur','dann','wenn','aber','oder','und','nicht','sehr','mehr','als','schau','zeige',
-}
+_MAX_TOOL_ITERATIONS = 6
+
+# Heuristic: which user messages should never be answered without consulting
+# the log database. Used to detect when the model ignored its tools.
+_LOG_INTENT_RE = __import__("re").compile(
+    r"\b(log|logs|event|events|fehler|error|errors|warn|warning|critical|"
+    r"incident|alert|auffall|auffällig|verdächtig|attack|angriff|status|alles\s*ok|"
+    r"anomal|ausfall|crash|exception|trace|stacktrace|bezogen|gefunden|datenbank|"
+    r"system|service|host|server)\b",
+    __import__("re").IGNORECASE,
+)
 
 
-def _extract_keywords(text: str) -> list[str]:
-    """Extract meaningful keywords from a natural-language query."""
-    import re
-    words = re.split(r'[\s,;:!?.()\[\]{}"\']+', text.lower())
-    seen: dict[str, None] = {}
-    for w in words:
-        if len(w) >= 4 and w not in _STOP_WORDS:
-            seen[w] = None
-    return list(seen.keys())
-
-
-def _augment_message(message: str, context: dict | None, references: list[str]) -> str:
-    parts = [message]
-    if context:
+def _build_scope_message(
+    source_ids: list[str],
+    source_paths: list[str],
+    since_hours: float | None,
+    extra_context: dict | None,
+) -> str | None:
+    parts: list[str] = []
+    scope_bits: list[str] = []
+    if source_ids:
+        scope_bits.append(f"source_ids={source_ids}")
+    if source_paths:
+        scope_bits.append(f"source_paths={source_paths}")
+    if since_hours:
+        scope_bits.append(f"hours_back={since_hours}")
+    if scope_bits:
         parts.append(
-            "Structured application context:\n"
-            + json.dumps(context, ensure_ascii=False, indent=2, default=str)
+            "User has selected the following default scope. Tools you call "
+            "will already respect these defaults; only override them if the "
+            "user explicitly asks for a different scope. "
+            + ", ".join(scope_bits)
         )
-    if references:
+    else:
         parts.append(
-            "Relevant log events from the database:\n"
-            + "\n".join(references[:10])
+            "User has NOT selected a source filter. If you need a starting "
+            "point, call `list_sources` first or `get_recent_logs` for an "
+            "overview."
         )
-    return "\n\n".join(parts)
+    if extra_context:
+        parts.append(
+            "Additional structured context attached by the user:\n"
+            + json.dumps(extra_context, ensure_ascii=False, indent=2, default=str)
+        )
+    return "\n\n".join(parts) if parts else None
+
+
+def _coerce_tool_args(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            value = json.loads(raw)
+            return value if isinstance(value, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+async def _build_baseline_snapshot(ctx: ToolContext) -> str:
+    """Pre-compute real log data so the LLM cannot hallucinate.
+
+    We always run a small, cheap set of queries and inject the result as a
+    system message. This guarantees that every answer is grounded in real
+    events from the user's selected scope, even if the model decides not to
+    call any tool.
+    """
+    parts: list[str] = []
+    try:
+        stats = await TOOL_REGISTRY["get_log_stats"](ctx, {})
+        parts.append("# Log statistics (current scope)")
+        parts.append(json.dumps(stats, ensure_ascii=False, indent=2, default=str))
+    except Exception as exc:  # noqa: BLE001
+        parts.append(f"# Log statistics unavailable: {type(exc).__name__}: {exc}")
+
+    try:
+        top = await TOOL_REGISTRY["get_top_errors"](ctx, {"limit": 10})
+        parts.append("\n# Top errors (current scope)")
+        parts.append(json.dumps(top, ensure_ascii=False, indent=2, default=str))
+    except Exception as exc:  # noqa: BLE001
+        parts.append(f"# Top errors unavailable: {type(exc).__name__}: {exc}")
+
+    try:
+        severe = await TOOL_REGISTRY["get_recent_logs"](
+            ctx,
+            {"severity": "critical,error", "limit": 12},
+        )
+        parts.append("\n# Recent critical/error events (current scope)")
+        parts.append(json.dumps(severe, ensure_ascii=False, indent=2, default=str))
+    except Exception as exc:  # noqa: BLE001
+        parts.append(f"# Recent critical/error events unavailable: {type(exc).__name__}: {exc}")
+
+    try:
+        warnings = await TOOL_REGISTRY["get_recent_logs"](
+            ctx,
+            {"severity": "warning", "limit": 10},
+        )
+        parts.append("\n# Recent warning events (current scope)")
+        parts.append(json.dumps(warnings, ensure_ascii=False, indent=2, default=str))
+    except Exception as exc:  # noqa: BLE001
+        parts.append(f"# Recent warning events unavailable: {type(exc).__name__}: {exc}")
+
+    try:
+        recent = await TOOL_REGISTRY["get_recent_logs"](ctx, {"limit": 8})
+        parts.append("\n# Most recent events (all severities, current scope)")
+        parts.append(json.dumps(recent, ensure_ascii=False, indent=2, default=str))
+    except Exception as exc:  # noqa: BLE001
+        parts.append(f"# Recent events unavailable: {type(exc).__name__}: {exc}")
+
+    body = "\n".join(parts)
+    return (
+        "BASELINE LOG SNAPSHOT (auto-collected from the live database – use "
+        "these as your primary source of truth, call tools only if you need "
+        "more detail):\n\n" + body
+    )
+
+
+async def _run_tool_chat(
+    session: AsyncSession,
+    *,
+    model: str,
+    system: str,
+    temperature: float,
+    max_tokens: int,
+    message: str,
+    source_ids: list[str],
+    source_paths: list[str],
+    since_hours: float | None,
+    context: dict | None,
+) -> tuple[str, list[str]]:
+    """Run a multi-turn tool-calling chat and return (answer, references)."""
+    ctx = ToolContext(
+        session=session,
+        default_source_ids=source_ids,
+        default_source_paths=source_paths,
+        default_hours=since_hours,
+    )
+
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
+    scope_msg = _build_scope_message(source_ids, source_paths, since_hours, context)
+    if scope_msg:
+        messages.append({"role": "system", "content": scope_msg})
+
+    # Always pre-load real data so the model has ground truth even if it
+    # decides to skip tool calls.
+    baseline = await _build_baseline_snapshot(ctx)
+    messages.append({"role": "system", "content": baseline})
+
+    messages.append({"role": "user", "content": message})
+
+    answer = ""
+    forced_retry_used = False
+    for _ in range(_MAX_TOOL_ITERATIONS):
+        assistant_msg = await ollama_client.chat_full(
+            model, messages, temperature, max_tokens, tools=TOOL_SCHEMAS
+        )
+        tool_calls = assistant_msg.get("tool_calls") or []
+
+        if not tool_calls:
+            answer = (assistant_msg.get("content") or "").strip()
+            # If the user asked something log-related but the model neither
+            # called a tool nor referenced the baseline snapshot, push back
+            # once and demand evidence-grounded answers.
+            if (
+                not forced_retry_used
+                and _LOG_INTENT_RE.search(message)
+                and not ctx.collected_events
+            ):
+                forced_retry_used = True
+                messages.append({
+                    "role": "assistant",
+                    "content": answer or "",
+                })
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Stop. Du hast weder ein Tool aufgerufen noch dich "
+                        "auf das BASELINE LOG SNAPSHOT bezogen. Antworte "
+                        "erneut: zitiere ausschließlich konkrete Einträge aus "
+                        "dem BASELINE LOG SNAPSHOT oder rufe ein passendes "
+                        "Tool (search_logs / get_recent_logs / get_log_stats "
+                        "/ get_top_errors) auf. Keine erfundenen Beispiele."
+                    ),
+                })
+                continue
+            break
+
+        # Append the assistant message verbatim so the model sees its own call.
+        messages.append({
+            "role": "assistant",
+            "content": assistant_msg.get("content", "") or "",
+            "tool_calls": tool_calls,
+        })
+
+        for call in tool_calls:
+            fn = (call.get("function") or {})
+            name = fn.get("name") or ""
+            args = _coerce_tool_args(fn.get("arguments"))
+            handler = TOOL_REGISTRY.get(name)
+            if handler is None:
+                tool_result: dict[str, Any] = {"error": f"unknown tool: {name}"}
+            else:
+                try:
+                    tool_result = await handler(ctx, args)
+                except Exception as exc:  # noqa: BLE001 - surface to model
+                    tool_result = {"error": f"{type(exc).__name__}: {exc}"}
+            messages.append({
+                "role": "tool",
+                "name": name,
+                "content": json.dumps(tool_result, ensure_ascii=False, default=str),
+            })
+    else:
+        # Loop exhausted without a final answer.
+        answer = (
+            "Ich habe die maximale Anzahl an Tool-Aufrufen erreicht, ohne zu "
+            "einer abschließenden Antwort zu kommen. Bitte stelle die Frage "
+            "konkreter oder schränke den Zeitraum / die Quelle ein."
+        )
+
+    # Pull baseline events into references so the UI panel always shows the
+    # real events the answer is grounded in, even if the model did not call a
+    # tool itself.
+    if not ctx.collected_events:
+        try:
+            await TOOL_REGISTRY["get_recent_logs"](ctx, {"limit": 15})
+        except Exception:  # noqa: BLE001
+            pass
+
+    return answer, collect_references(ctx)
 
 
 async def _get_model_settings(
@@ -323,41 +541,26 @@ async def ai_chat(
     else:
         model, system, temperature, max_tokens = await _get_model_settings(session, None)
 
-    # --- Fetch relevant log events as context ---
-    references: list[str] = []
-    keywords = _extract_keywords(body.message)
-    augmented_message = body.message
-
-    if keywords:
-        conditions = [Event.message.ilike(f"%{kw}%") for kw in keywords[:4]]
-        stmt = (
-            select(Event)
-            .where(or_(*conditions))
-            .order_by(Event.timestamp.desc())
-            .limit(20)
-        )
-        result = await session.execute(stmt)
-        events = result.scalars().all()
-        references = [
-            f"[{e.timestamp.strftime('%Y-%m-%d %H:%M:%S')}] [{e.severity.upper()}] {e.message}"
-            for e in events
-        ]
-    augmented_message = _augment_message(body.message, body.context, references)
-
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": augmented_message},
-    ]
-
     try:
-        answer = await ollama_client.chat(model, messages, temperature, max_tokens)
+        answer, references = await _run_tool_chat(
+            session,
+            model=model,
+            system=system,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            message=body.message,
+            source_ids=[],
+            source_paths=[],
+            since_hours=None,
+            context=body.context,
+        )
     except (httpx.ConnectError, httpx.HTTPError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Ollama error: {exc}",
         )
 
-    return AIChatResponse(answer=answer, references=references[:10])
+    return AIChatResponse(answer=answer, references=references[:25])
 
 
 # ---------------------------------------------------------------------------
@@ -383,45 +586,19 @@ async def _run_chat_async(
     try:
         factory = get_session_factory()
         async with factory() as session:
-            keywords = _extract_keywords(message)
-            references: list[str] = []
-            augmented = message
-
-            if keywords:
-                from datetime import timedelta
-                conditions = [Event.message.ilike(f"%{kw}%") for kw in keywords[:4]]
-                stmt = select(Event).where(or_(*conditions))
-
-                # Apply source filters
-                if source_ids:
-                    from sqlalchemy import cast
-                    from sqlalchemy import String as SAString
-                    stmt = stmt.where(cast(Event.source_id, SAString).in_(source_ids))
-                if source_paths:
-                    from app.domain.models import Source
-                    sub = select(Source.id).where(
-                        or_(*[Source.config_json["path"].astext == p for p in source_paths])
-                    )
-                    stmt = stmt.where(Event.source_id.in_(sub))
-                if since_hours:
-                    cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
-                    stmt = stmt.where(Event.timestamp >= cutoff)
-
-                stmt = stmt.order_by(Event.timestamp.desc()).limit(20)
-                result = await session.execute(stmt)
-                events = result.scalars().all()
-                references = [
-                    f"[{e.timestamp.strftime('%Y-%m-%d %H:%M:%S')}] [{e.severity.upper()}] {e.message}"
-                    for e in events
-                ]
-            augmented = _augment_message(message, context, references)
-
-        msgs = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": augmented},
-        ]
-        answer = await ollama_client.chat(model, msgs, temperature, max_tokens)
-        job_store.set_completed(job_id, {"answer": answer, "references": references[:10]})
+            answer, references = await _run_tool_chat(
+                session,
+                model=model,
+                system=system,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                message=message,
+                source_ids=source_ids,
+                source_paths=source_paths,
+                since_hours=since_hours,
+                context=context,
+            )
+        job_store.set_completed(job_id, {"answer": answer, "references": references[:25]})
     except Exception as exc:
         job_store.set_failed(job_id, str(exc))
 
