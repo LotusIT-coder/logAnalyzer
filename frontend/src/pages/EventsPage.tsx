@@ -19,6 +19,13 @@ const SEV_COLOR: Record<string, string> = {
 
 const SEVERITIES = ['debug', 'info', 'warning', 'error', 'critical']
 
+function parseSeverityCsv(value: string) {
+  return value
+    .split(',')
+    .map(entry => entry.trim().toLowerCase())
+    .filter(Boolean)
+}
+
 function getInitialFilterValue(searchParams: URLSearchParams, key: string) {
   return searchParams.get(key) ?? ''
 }
@@ -36,7 +43,7 @@ function buildContextItems(params: {
   sourcePathsCsv: string
   fromTime: string
   toTime: string
-  severity: string
+  severityCsv: string
   host: string
   service: string
   search: string
@@ -53,7 +60,10 @@ function buildContextItems(params: {
   if (sourceIds.length) items.push(`Quellen: ${sourceIds.length}`)
   if (sourcePaths.length) items.push(`Pfade: ${sourcePaths.length}`)
   if (rangeLabel) items.push(`Zeitraum: ${rangeLabel}`)
-  if (params.severity) items.push(`Severity: ${params.severity}`)
+  if (params.severityCsv) {
+    const labels = params.severityCsv.split(',').map(value => value.trim()).filter(Boolean)
+    if (labels.length) items.push(`Severity: ${labels.join(', ')}`)
+  }
   if (params.host) items.push(`Host: ${params.host}`)
   if (params.service) items.push(`Service: ${params.service}`)
   if (params.search) items.push(`Suche: ${params.search}`)
@@ -156,7 +166,7 @@ function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: (
 }
 
 export default function EventsPage() {
-  const { filter: globalFilter, setFilter: setGlobalFilter, setSelectedSources } = useSourceFilter()
+  const { filter: globalFilter, setFilter: setGlobalFilter, selectedSources, setSelectedSources } = useSourceFilter()
   const [searchParams] = useSearchParams()
   const [cursor, setCursor] = useState<string | undefined>()
   const [sourceId, setSourceId] = useState(() => getInitialFilterValue(searchParams, 'source_id'))
@@ -164,7 +174,7 @@ export default function EventsPage() {
   const [sourcePathsCsv, setSourcePathsCsv] = useState(() => getInitialFilterValue(searchParams, 'source_paths'))
   const [fromTime, setFromTime] = useState(() => getInitialFilterValue(searchParams, 'from'))
   const [toTime, setToTime] = useState(() => getInitialFilterValue(searchParams, 'to'))
-  const [severity, setSeverity] = useState(() => getInitialFilterValue(searchParams, 'severity'))
+  const [selectedSeverities, setSelectedSeverities] = useState<string[]>(() => parseSeverityCsv(getInitialFilterValue(searchParams, 'severity')))
   const [host, setHost] = useState(() => getInitialFilterValue(searchParams, 'host'))
   const [service, setService] = useState(() => getInitialFilterValue(searchParams, 'service'))
   const [search, setSearch] = useState(() => getInitialFilterValue(searchParams, 'q'))
@@ -177,11 +187,61 @@ export default function EventsPage() {
   const selectedSource = sourceId ? sources.find(source => source.id === sourceId) ?? null : null
   const globalSourceIdsCsv = globalFilter.sourceIds.join(',')
   const globalSourcePathsCsv = globalFilter.sourcePaths.join(',')
+  const globalSingleSourceId = globalFilter.sourceIds.length === 1 && globalFilter.sourcePaths.length === 0
+    ? globalFilter.sourceIds[0]
+    : ''
+  const globalSingleSourcePath = globalFilter.sourcePaths.length === 1 && globalFilter.sourceIds.length === 0
+    ? globalFilter.sourcePaths[0]
+    : ''
+  const showGlobalFilterNotice = !(
+    (globalSingleSourceId && sourceId === globalSingleSourceId) ||
+    (globalSingleSourcePath && !sourceId && sourcePathsCsv === globalSingleSourcePath)
+  )
   const effectiveSourceIdsCsv = sourceIdsCsv || (!sourceId ? globalSourceIdsCsv : '')
   const effectiveSourcePathsCsv = sourcePathsCsv || (!sourceId ? globalSourcePathsCsv : '')
 
+  const sourcePathOptions = Array.from(new Set([
+    ...globalFilter.sourcePaths,
+    ...selectedSources.filter(source => source.kind === 'preset' || source.kind === 'custom').map(source => source.path),
+  ]))
+
+  const sourceSelectValue = sourceId
+    ? `source:${sourceId}`
+    : (sourcePathsCsv ? `path:${sourcePathsCsv}` : '')
+  const selectedSeveritiesCsv = selectedSeverities.join(',')
+
+  useEffect(() => {
+    // Keep Events dropdown aligned with global dashboard/source context.
+    if (globalSingleSourceId) {
+      if (sourceId !== globalSingleSourceId || sourcePathsCsv) {
+        setSourceId(globalSingleSourceId)
+        setSourceIdsCsv('')
+        setSourcePathsCsv('')
+        setCursor(undefined)
+      }
+      return
+    }
+
+    if (globalSingleSourcePath) {
+      if (sourceId || sourcePathsCsv !== globalSingleSourcePath) {
+        setSourceId('')
+        setSourceIdsCsv('')
+        setSourcePathsCsv(globalSingleSourcePath)
+        setCursor(undefined)
+      }
+      return
+    }
+
+    if (sourceId || sourceIdsCsv || sourcePathsCsv) {
+      setSourceId('')
+      setSourceIdsCsv('')
+      setSourcePathsCsv('')
+      setCursor(undefined)
+    }
+  }, [globalSingleSourceId, globalSingleSourcePath, sourceId, sourceIdsCsv, sourcePathsCsv])
+
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['events', cursor, sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, fromTime, toTime, severity, host, service, search, refreshTick],
+    queryKey: ['events', cursor, sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, fromTime, toTime, selectedSeveritiesCsv, host, service, search, refreshTick],
     queryFn: () => getEvents({
       limit: 50,
       cursor: cursor || undefined,
@@ -190,7 +250,7 @@ export default function EventsPage() {
       source_id: sourceId || undefined,
       source_ids: effectiveSourceIdsCsv || undefined,
       source_paths: effectiveSourcePathsCsv || undefined,
-      severity: severity || undefined,
+      severity: selectedSeveritiesCsv || undefined,
       host: host || undefined,
       service: service || undefined,
       q: search || undefined,
@@ -211,7 +271,7 @@ export default function EventsPage() {
     setSourcePathsCsv('')
     setFromTime('')
     setToTime('')
-    setSeverity('')
+    setSelectedSeverities([])
     setHost('')
     setService('')
     setSearch('')
@@ -220,15 +280,25 @@ export default function EventsPage() {
     setSelectedSources([])
   }
 
-  function handleSourceChange(nextSourceId: string) {
+  function handleSourceChange(nextSourceValue: string) {
+    const nextSourceId = nextSourceValue.startsWith('source:') ? nextSourceValue.slice('source:'.length) : ''
+    const nextSourcePath = nextSourceValue.startsWith('path:') ? nextSourceValue.slice('path:'.length) : ''
+
     setSourceId(nextSourceId)
     setSourceIdsCsv('')
-    setSourcePathsCsv('')
+    setSourcePathsCsv(nextSourcePath)
     setCursor(undefined)
 
-    if (!nextSourceId) {
+    if (!nextSourceId && !nextSourcePath) {
       setGlobalFilter({ sourceIds: [], sourcePaths: [], rangeHours: globalFilter.rangeHours })
       setSelectedSources([])
+      return
+    }
+
+    if (nextSourcePath) {
+      const pathLabel = nextSourcePath.split('/').pop() ?? nextSourcePath
+      setGlobalFilter({ sourceIds: [], sourcePaths: [nextSourcePath], rangeHours: globalFilter.rangeHours })
+      setSelectedSources([{ id: `preset:${nextSourcePath}`, label: pathLabel, path: nextSourcePath, kind: 'preset' }])
       return
     }
 
@@ -256,14 +326,14 @@ export default function EventsPage() {
     setRefreshTick(v => v + 1)
   }
 
-  const hasFilters = sourceId || sourceIdsCsv || sourcePathsCsv || fromTime || toTime || severity || host || service || search
+  const hasFilters = sourceId || sourceIdsCsv || sourcePathsCsv || fromTime || toTime || selectedSeveritiesCsv || host || service || search
   const contextItems = buildContextItems({
     sourceId,
     sourceIdsCsv: effectiveSourceIdsCsv,
     sourcePathsCsv: effectiveSourcePathsCsv,
     fromTime,
     toTime,
-    severity,
+    severityCsv: selectedSeveritiesCsv,
     host,
     service,
     search,
@@ -284,16 +354,23 @@ export default function EventsPage() {
         </button>
       </div>
 
-      <GlobalSourceFilterNotice />
+      {showGlobalFilterNotice && <GlobalSourceFilterNotice />}
 
       <div style={styles.filters}>
-        <select value={sourceId} onChange={e => handleSourceChange(e.target.value)} style={{ ...styles.select, minWidth: 220 }}>
+        <select value={sourceSelectValue} onChange={e => handleSourceChange(e.target.value)} style={{ ...styles.select, minWidth: 220 }}>
           <option value="">Alle Quellen</option>
           {sources.map((source: SourceResponse) => (
-            <option key={source.id} value={source.id}>{source.name}{source.config?.path ? ` (${source.config.path})` : ''}</option>
+            <option key={source.id} value={`source:${source.id}`}>{source.name}{source.config?.path ? ` (${source.config.path})` : ''}</option>
           ))}
+          {sourcePathOptions.map(path => {
+            const label = path.split('/').pop() ?? path
+            return <option key={`path:${path}`} value={`path:${path}`}>{label} ({path})</option>
+          })}
         </select>
         <HelpTip content="Filtert die Eventliste auf genau eine konfigurierte Quelle. Die Live-Ansicht ist nur aktiv, wenn hier eine Datei-Quelle ausgewaehlt wurde." ariaLabel="Quellenfilter erklaeren" />
+        <button onClick={refreshLatest} disabled={isFetching} style={styles.refBtn}>
+          {isFetching ? 'Refresh...' : 'Refresh'}
+        </button>
         <button
           onClick={() => selectedSource && setTailSource(selectedSource)}
           disabled={!selectedSource || selectedSource.type !== 'file'}
@@ -304,10 +381,57 @@ export default function EventsPage() {
         </button>
         <HelpTip content="Die Live-Ansicht streamt neue Zeilen der aktuell gewaehlten Datei-Quelle direkt in ein Tail-Fenster. Damit pruefst du schnell, ob gerade frische Daten ankommen." ariaLabel="Live-Ansicht erklaeren" />
 
-        <select value={severity} onChange={e => { setSeverity(e.target.value); setCursor(undefined) }} style={styles.select}>
-          <option value="">Alle Schweregrade</option>
-          {SEVERITIES.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
+        <details style={styles.severityDropdown}>
+          <summary style={styles.severitySummary}>
+            {selectedSeverities.length > 0
+              ? `${selectedSeverities.length} Schweregrade`
+              : 'Alle Schweregrade'}
+          </summary>
+          <div style={styles.severityMenu}>
+            {SEVERITIES.map(level => {
+              const checked = selectedSeverities.includes(level)
+              return (
+                <label key={level} style={styles.severityOption}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => {
+                      setSelectedSeverities(prev => (
+                        prev.includes(level)
+                          ? prev.filter(value => value !== level)
+                          : [...prev, level]
+                      ))
+                      setCursor(undefined)
+                    }}
+                  />
+                  <span style={{ textTransform: 'capitalize' }}>{level}</span>
+                </label>
+              )
+            })}
+            <div style={{ display: 'flex', gap: '0.35rem', marginTop: '0.3rem' }}>
+              <button
+                type="button"
+                style={styles.severityActionBtn}
+                onClick={() => {
+                  setSelectedSeverities(SEVERITIES)
+                  setCursor(undefined)
+                }}
+              >
+                Alle
+              </button>
+              <button
+                type="button"
+                style={styles.severityActionBtn}
+                onClick={() => {
+                  setSelectedSeverities([])
+                  setCursor(undefined)
+                }}
+              >
+                Keine
+              </button>
+            </div>
+          </div>
+        </details>
         <HelpTip content="Schweregrade helfen beim Priorisieren. Fehler und kritische Events deuten auf unmittelbaren Handlungsbedarf hin, waehrend Info- und Debug-Events meist Kontext liefern." ariaLabel="Severity-Filter erklaeren" />
         <input
           value={host}
@@ -443,6 +567,24 @@ const styles: Record<string, React.CSSProperties> = {
   contextChip: { background: '#0f2d46', color: '#bae6fd', borderRadius: 999, padding: '0.2rem 0.65rem', fontSize: '0.82rem' },
   resultsMeta: { display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', color: '#475569', marginBottom: '0.5rem' },
   select: { background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.6rem' },
+  severityDropdown: { position: 'relative' },
+  severitySummary: {
+    background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6,
+    padding: '0.4rem 0.6rem', listStyle: 'none', cursor: 'pointer', minWidth: 160,
+  },
+  severityMenu: {
+    position: 'absolute', top: 'calc(100% + 0.3rem)', left: 0, zIndex: 30,
+    minWidth: 180, background: '#0f172a', border: '1px solid #334155', borderRadius: 8,
+    padding: '0.45rem 0.55rem', boxShadow: '0 10px 24px rgba(2, 6, 23, 0.5)',
+  },
+  severityOption: {
+    display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#cbd5e1',
+    fontSize: '0.84rem', padding: '0.18rem 0',
+  },
+  severityActionBtn: {
+    background: '#1e293b', color: '#93c5fd', border: '1px solid #334155', borderRadius: 6,
+    padding: '0.2rem 0.5rem', fontSize: '0.75rem', cursor: 'pointer',
+  },
   search: { flex: 1, minWidth: 120, background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.75rem' },
   btn: { background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', whiteSpace: 'nowrap' },
   resetBtn: { background: 'none', border: '1px solid #475569', color: '#64748b', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', whiteSpace: 'nowrap' },

@@ -9,8 +9,6 @@ import {
   getTopServices,
   runIngestion,
   uploadImport,
-  type IngestionRunEntry,
-  type IngestionRunResponse,
   type MetricsFilter,
   type SourceResponse,
   type SourceIngestionStatus,
@@ -197,8 +195,14 @@ function SourcePicker({
     kind: 'preset',
   }))
 
+  function optionMatches(a: SourceOption, b: SourceOption) {
+    if (a.id === b.id) return true
+    if (a.path && b.path && a.path === b.path) return true
+    return false
+  }
+
   function toggle(opt: SourceOption) {
-    const idx = selected.findIndex(s => s.id === opt.id)
+    const idx = selected.findIndex(s => optionMatches(s, opt))
     if (idx >= 0) onChange(selected.filter((_, i) => i !== idx))
     else onChange([...selected, opt])
   }
@@ -261,7 +265,7 @@ function SourcePicker({
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, cursor: 'pointer', minWidth: 0 }}>
                   <input
                     type="checkbox"
-                    checked={!!selected.find(s => s.id === opt.id)}
+                    checked={selected.some(s => optionMatches(s, opt))}
                     onChange={() => toggle(opt)}
                     style={{ accentColor: '#3b82f6', flexShrink: 0 }}
                   />
@@ -277,7 +281,7 @@ function SourcePicker({
                         setPendingDeleteId(null)
                         await deleteSource(rawId)
                         qc.invalidateQueries({ queryKey: ['sources'] })
-                        onChange(selected.filter(s => s.id !== opt.id))
+                        onChange(selected.filter(s => !optionMatches(s, opt)))
                       }}
                       style={{ background: 'none', border: '1px solid #ef4444', color: '#ef4444', cursor: 'pointer', fontSize: '0.72rem', borderRadius: 4, padding: '1px 5px' }}
                     >Ja</button>
@@ -300,7 +304,7 @@ function SourcePicker({
           {/* Presets */}
           <div style={pickerStyles.groupHeader}>Standard-Log-Dateien</div>
           {presetOptions.map(opt => (
-            <OptionRow key={opt.id} opt={opt} checked={!!selected.find(s => s.id === opt.id)} onToggle={toggle} />
+            <OptionRow key={opt.id} opt={opt} checked={selected.some(s => optionMatches(s, opt))} onToggle={toggle} />
           ))}
 
           {/* Custom / uploaded sources */}
@@ -312,7 +316,7 @@ function SourcePicker({
                   <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, cursor: 'pointer' }}>
                     <input
                       type="checkbox"
-                      checked={!!selected.find(s => s.id === opt.id)}
+                      checked={selected.some(s => optionMatches(s, opt))}
                       onChange={() => toggle(opt)}
                       style={{ accentColor: '#3b82f6', flexShrink: 0 }}
                     />
@@ -415,7 +419,6 @@ export default function DashboardPage() {
   })
   const autoRefreshTargetEvents = resolveAutoRefreshTargetEvents(autoRefreshProfile)
   const [ingesting, setIngesting] = useState(false)
-  const [ingestResult, setIngestResult] = useState<IngestionRunResponse | null>(null)
   const [ingestError, setIngestError] = useState<string | null>(null)
   const [uploadResult, setUploadResult] = useState<UploadResultState | null>(null)
   const [topErrorsSeverities, setTopErrorsSeverities] = useState<string[]>(['error', 'critical'])
@@ -447,15 +450,13 @@ export default function DashboardPage() {
 
     setIngesting(true)
     setIngestError(null)
-    setIngestResult(null)
     try {
-      const result = await runIngestion({
+      await runIngestion({
         sourceIds: activeSourceIds,
         extraEntries: activeSources
           .filter(source => source.kind === 'preset' || source.kind === 'custom')
           .map(source => ({ path: source.path, origin: source.kind === 'preset' ? 'preset' as const : 'custom' as const })),
       })
-      setIngestResult(result)
       refetchAll()
     } catch (error: unknown) {
       setIngestError(getApiErrorMessage(error, 'Ingestion fehlgeschlagen.'))
@@ -546,7 +547,7 @@ export default function DashboardPage() {
   const errs = useQuery({
     queryKey: ['top-errors', rangeHours, sourceKey, topErrorsSeverities.join(',')],
     queryFn: () => getTopErrors(buildTimeRange(rangeHours), metricsFilter),
-    enabled: selectedSources.length > 0,
+    enabled: selectedSources.length > 0 && topErrorsSeverities.length > 0,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
     refetchInterval: drilldownRefreshMs,
@@ -683,22 +684,6 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {ingestResult && (
-        <div style={styles.ingestInfo}>
-          {ingestResult.results?.map((result: IngestionRunEntry, i: number) => {
-            const sourceLabel = result.path || result.source_name
-            const label = sourceLabel ? sourceLabel.split('/').pop() : result.source_id?.slice(0, 16)
-            return (
-              <div key={i}>
-                {result.skipped
-                  ? `⚠ ${label}: ${result.reason}`
-                  : `✓ ${label}: ${result.lines_ingested ?? 0} Zeilen, ${result.events_created ?? 0} Events`}
-              </div>
-            )
-          })}
-        </div>
-      )}
-
       {uploadResult && (
         <div style={{ ...styles.ingestInfo, background: isUploadError(uploadResult) ? '#450a0a' : '#0f2d1a', color: isUploadError(uploadResult) ? '#f87171' : '#86efac', position: 'relative' }}>
           <button onClick={() => setUploadResult(null)} style={{ position: 'absolute', top: '0.4rem', right: '0.5rem', background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
@@ -826,7 +811,9 @@ export default function DashboardPage() {
                   ⚠ Keine Severity ausgewählt – es werden keine Fehler angezeigt.
                 </div>
               )}
-              {errs.data ? (
+              {topErrorsSeverities.length === 0 ? (
+                <div style={{ color: '#64748b', fontSize: '0.85rem' }}>–</div>
+              ) : errs.data ? (
                 <ol style={styles.ol}>
                   {errs.data.items.slice(0, 8).map((errorItem: TopErrorItem, i: number) => (
                     <li key={i} style={styles.li}>

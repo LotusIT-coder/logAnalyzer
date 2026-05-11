@@ -113,7 +113,9 @@ async def list_events(
     if resolved_source_ids is not None:
         stmt = stmt.where(Event.source_id.in_(resolved_source_ids))
     if severity:
-        stmt = stmt.where(Event.severity == severity)
+        severity_values = [value.strip().lower() for value in severity.split(",") if value.strip()]
+        if severity_values:
+            stmt = stmt.where(Event.severity.in_(severity_values))
     if service:
         stmt = stmt.where(Event.service == service)
     if host:
