@@ -1,13 +1,14 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { getEvents, getSources, type EventResponse, type SourceResponse } from '../lib/requests'
 import dayjs from 'dayjs'
 import { getApiBase } from '../lib/api'
 import HelpTip from '../components/HelpTip'
 import GlobalSourceFilterNotice from '../components/GlobalSourceFilterNotice'
-import { useSourceFilter } from '../ctx/useSourceFilter'
+import { SourcePicker, type UploadResultState, isUploadError } from '../components/SourcePicker'
 import { type SourceOption } from '../ctx/SourceFilterContext.shared'
+import { useSourceFilter } from '../ctx/useSourceFilter'
 
 const SEV_COLOR: Record<string, string> = {
   critical: '#ef4444',
@@ -57,8 +58,19 @@ function buildContextItems(params: {
 
   if (source) items.push(`Quelle: ${source.name}`)
   else if (params.sourceId) items.push(`Quelle: ${params.sourceId}`)
-  if (sourceIds.length) items.push(`Quellen: ${sourceIds.length}`)
-  if (sourcePaths.length) items.push(`Pfade: ${sourcePaths.length}`)
+  if (sourceIds.length === 1) {
+    const srcName = params.sources.find(s => s.id === sourceIds[0])?.name ?? sourceIds[0]
+    items.push(`Quelle: ${srcName}`)
+  } else if (sourceIds.length > 1) {
+    const names = sourceIds.map(id => params.sources.find(s => s.id === id)?.name ?? id)
+    items.push(`Mehrfachauswahl: ${names.join(', ')}`)
+  }
+  if (sourcePaths.length === 1) {
+    items.push(`Pfad: ${sourcePaths[0].split('/').pop() ?? sourcePaths[0]}`)
+  } else if (sourcePaths.length > 1) {
+    const pathNames = sourcePaths.map(p => p.split('/').pop() ?? p)
+    items.push(`Mehrfachauswahl: ${pathNames.join(', ')}`)
+  }
   if (rangeLabel) items.push(`Zeitraum: ${rangeLabel}`)
   if (params.severityCsv) {
     const labels = params.severityCsv.split(',').map(value => value.trim()).filter(Boolean)
@@ -71,58 +83,95 @@ function buildContextItems(params: {
   return items
 }
 
-function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: () => void }) {
-  const [lines, setLines] = useState<string[]>([])
-  const [connected, setConnected] = useState(false)
-  const [error, setError] = useState('')
+interface TailLine {
+  text: string
+  sourceId: string
+  sourceName: string
+  seq: number
+}
+
+const SOURCE_COLORS = ['#7dd3fc', '#fbbf24', '#a78bfa', '#34d399', '#fb7185', '#60a5fa', '#f97316', '#c084fc']
+
+function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClose: () => void }) {
+  const [lines, setLines] = useState<TailLine[]>([])
+  const [connected, setConnected] = useState<Record<string, boolean>>({})
+  const [errors, setErrors] = useState<Record<string, string>>({})
   const [paused, setPaused] = useState(false)
   const [filter, setFilter] = useState('')
+  const [sourceFilter, setSourceFilter] = useState<string>('')
   const bottomRef = useRef<HTMLDivElement>(null)
   const pausedRef = useRef(false)
+  const seqRef = useRef(0)
 
   useEffect(() => {
     pausedRef.current = paused
   }, [paused])
 
+  const sourceColor = useMemo(() => {
+    const map: Record<string, string> = {}
+    sources.forEach((s, i) => { map[s.id] = SOURCE_COLORS[i % SOURCE_COLORS.length] })
+    return map
+  }, [sources])
+
   useEffect(() => {
-    const url = `${getApiBase()}/sources/${source.id}/tail?lines=100`
-    const es = new EventSource(url)
-
-    es.onopen = () => setConnected(true)
-    es.onmessage = (e) => {
-      if (pausedRef.current) return
-      setLines(prev => {
-        const next = [...prev, e.data]
-        return next.length > 2000 ? next.slice(-2000) : next
-      })
-    }
-    es.onerror = () => {
-      setError('Verbindung unterbrochen.')
-      setConnected(false)
-      es.close()
-    }
-
-    return () => { es.close() }
-  }, [source.id])
+    const eventSources: EventSource[] = []
+    sources.forEach(source => {
+      const url = `${getApiBase()}/sources/${source.id}/tail?lines=100`
+      const es = new EventSource(url)
+      es.onopen = () => setConnected(prev => ({ ...prev, [source.id]: true }))
+      es.onmessage = (e) => {
+        if (pausedRef.current) return
+        seqRef.current += 1
+        const seq = seqRef.current
+        setLines(prev => {
+          const next = [...prev, { text: e.data, sourceId: source.id, sourceName: source.name, seq }]
+          return next.length > 2000 ? next.slice(-2000) : next
+        })
+      }
+      es.onerror = () => {
+        setErrors(prev => ({ ...prev, [source.id]: 'Verbindung unterbrochen.' }))
+        setConnected(prev => ({ ...prev, [source.id]: false }))
+        es.close()
+      }
+      eventSources.push(es)
+    })
+    return () => { eventSources.forEach(es => es.close()) }
+  }, [sources])
 
   useEffect(() => {
     if (!paused) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [lines, paused])
 
-  const displayed = filter
-    ? lines.filter(l => l.toLowerCase().includes(filter.toLowerCase()))
-    : lines
+  const displayed = lines.filter(l => {
+    if (sourceFilter && l.sourceId !== sourceFilter) return false
+    if (filter && !l.text.toLowerCase().includes(filter.toLowerCase())) return false
+    return true
+  })
+
+  const allConnected = sources.every(s => connected[s.id])
+  const anyConnected = sources.some(s => connected[s.id])
+  const errorList = Object.entries(errors).filter(([id]) => sources.find(s => s.id === id))
+  const showSourceTag = sources.length > 1
+  const title = sources.length === 1 ? `Live-Tail: ${sources[0].name}` : `Live-Tail: ${sources.length} Quellen`
 
   return (
     <div style={modal.overlay} onClick={onClose}>
       <div style={modal.box} onClick={e => e.stopPropagation()}>
         <div style={modal.header}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>Live-Tail: {source.name}</span>
-            <span style={{ ...modal.dot, background: connected ? '#22c55e' : '#ef4444' }} />
-            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{connected ? 'verbunden' : 'getrennt'}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>{title}</span>
+            <span style={{ ...modal.dot, background: allConnected ? '#22c55e' : anyConnected ? '#fbbf24' : '#ef4444' }} />
+            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+              {allConnected ? 'alle verbunden' : anyConnected ? `${sources.filter(s => connected[s.id]).length}/${sources.length} verbunden` : 'getrennt'}
+            </span>
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            {showSourceTag && (
+              <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)} style={modal.filterInput}>
+                <option value="">Alle Quellen</option>
+                {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            )}
             <input
               value={filter}
               onChange={e => setFilter(e.target.value)}
@@ -135,38 +184,64 @@ function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: (
           </div>
         </div>
 
-        {error && <div style={{ color: '#f87171', padding: '0.5rem 1rem', fontSize: '0.82rem' }}>{error}</div>}
+        {showSourceTag && (
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', padding: '0.4rem 1rem', borderBottom: '1px solid #1e293b', fontSize: '0.72rem' }}>
+            {sources.map(s => (
+              <span key={s.id} style={{ color: sourceColor[s.id], display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: sourceColor[s.id], display: 'inline-block' }} />
+                {s.name}
+                <span style={{ color: connected[s.id] ? '#22c55e' : '#ef4444' }}>●</span>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {errorList.length > 0 && (
+          <div style={{ color: '#f87171', padding: '0.5rem 1rem', fontSize: '0.82rem' }}>
+            {errorList.map(([id, msg]) => {
+              const s = sources.find(x => x.id === id)
+              return <div key={id}>{s?.name ?? id}: {msg}</div>
+            })}
+          </div>
+        )}
 
         <div style={modal.log}>
-          {displayed.map((line, i) => (
+          {displayed.map((line) => (
             <div
-              key={i}
+              key={line.seq}
               style={{
                 ...modal.logLine,
-                color: /error|crit|fatal|emerg/i.test(line)
+                color: /error|crit|fatal|emerg/i.test(line.text)
                   ? '#f87171'
-                  : /warn/i.test(line)
+                  : /warn/i.test(line.text)
                     ? '#fbbf24'
-                    : /debug/i.test(line)
+                    : /debug/i.test(line.text)
                       ? '#6366f1'
                       : '#d1fae5',
               }}
             >
-              {line}
+              {showSourceTag && (
+                <span style={{ color: sourceColor[line.sourceId], marginRight: '0.5rem', fontWeight: 600 }}>
+                  [{line.sourceName}]
+                </span>
+              )}
+              {line.text}
             </div>
           ))}
-          {!displayed.length && <div style={{ color: '#475569', padding: '1rem' }}>{connected ? 'Warte auf neue Zeilen...' : 'Keine Daten'}</div>}
+          {!displayed.length && <div style={{ color: '#475569', padding: '1rem' }}>{anyConnected ? 'Warte auf neue Zeilen...' : 'Keine Daten'}</div>}
           <div ref={bottomRef} />
         </div>
 
-        <div style={modal.footer}>{displayed.length} Zeilen | {source.config?.path}</div>
+        <div style={modal.footer}>
+          {displayed.length} Zeilen{sources.length === 1 && sources[0].config?.path ? ` | ${sources[0].config.path}` : ''}
+        </div>
       </div>
     </div>
   )
 }
 
 export default function EventsPage() {
-  const { filter: globalFilter, setFilter: setGlobalFilter, selectedSources, setSelectedSources } = useSourceFilter()
+  const { filter: globalFilter, setFilter: setGlobalFilter, selectedSources, setSelectedSources, customSources, setCustomSources } = useSourceFilter()
   const [searchParams] = useSearchParams()
   const [sourceId, setSourceId] = useState(() => getInitialFilterValue(searchParams, 'source_id'))
   const [sourceIdsCsv, setSourceIdsCsv] = useState(() => getInitialFilterValue(searchParams, 'source_ids'))
@@ -180,11 +255,30 @@ export default function EventsPage() {
   const [searchInput, setSearchInput] = useState(() => getInitialFilterValue(searchParams, 'q'))
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [refreshTick, setRefreshTick] = useState(0)
-  const [tailSource, setTailSource] = useState<SourceResponse | null>(null)
+  const [tailSources, setTailSources] = useState<SourceResponse[] | null>(null)
+  const [uploadResult, setUploadResult] = useState<UploadResultState | null>(null)
   const tableContainerRef = useRef<HTMLDivElement>(null)
 
   const { data: sources = [] } = useQuery({ queryKey: ['sources'], queryFn: getSources })
-  const selectedSource = sourceId ? sources.find(source => source.id === sourceId) ?? null : null
+  // Live-Tail works for all selected file sources (1..n) – configured directly,
+  // presets/custom paths are resolved against configured sources by path.
+  const liveTailSources: SourceResponse[] = (() => {
+    const result: SourceResponse[] = []
+    const seen = new Set<string>()
+    for (const sel of selectedSources) {
+      let match: SourceResponse | undefined
+      if (sel.kind === 'configured') {
+        match = sources.find(s => s.id === sel.id.replace('source:', ''))
+      } else if (sel.path) {
+        match = sources.find(s => s.config?.path === sel.path)
+      }
+      if (match && match.type === 'file' && !seen.has(match.id)) {
+        seen.add(match.id)
+        result.push(match)
+      }
+    }
+    return result
+  })()
   const globalSourceIdsCsv = globalFilter.sourceIds.join(',')
   const globalSourcePathsCsv = globalFilter.sourcePaths.join(',')
   const globalSingleSourceId = globalFilter.sourceIds.length === 1 && globalFilter.sourcePaths.length === 0
@@ -200,14 +294,11 @@ export default function EventsPage() {
   const effectiveSourceIdsCsv = sourceIdsCsv || (!sourceId ? globalSourceIdsCsv : '')
   const effectiveSourcePathsCsv = sourcePathsCsv || (!sourceId ? globalSourcePathsCsv : '')
 
-  const sourcePathOptions = Array.from(new Set([
-    ...globalFilter.sourcePaths,
-    ...selectedSources.filter(source => source.kind === 'preset' || source.kind === 'custom').map(source => source.path),
-  ]))
+  const effectiveSourceIdCount = effectiveSourceIdsCsv ? effectiveSourceIdsCsv.split(',').filter(Boolean).length : 0
+  const effectiveSourcePathCount = effectiveSourcePathsCsv ? effectiveSourcePathsCsv.split(',').filter(Boolean).length : 0
+  const showSourceColumn = (effectiveSourceIdCount + effectiveSourcePathCount) > 1
+  const sourceNameById = new Map<string, string>(sources.map(s => [s.id, s.name]))
 
-  const sourceSelectValue = sourceId
-    ? `source:${sourceId}`
-    : (sourcePathsCsv ? `path:${sourcePathsCsv}` : '')
   const selectedSeveritiesCsv = selectedSeverities.join(',')
 
   useEffect(() => {
@@ -261,10 +352,6 @@ export default function EventsPage() {
   // Flatten all pages into single events array
   const allEvents = data?.pages.flatMap(page => page.items) ?? []
 
-  // Scroll observer: trigger next page fetch when user scrolls near bottom
-  const observerRef = useRef<IntersectionObserver | null>(null)
-  const loadMoreRef = useRef<HTMLDivElement>(null)
-
   useEffect(() => {
     const container = tableContainerRef.current
     if (!container || !hasNextPage || isFetchingNextPage) return
@@ -298,41 +385,26 @@ export default function EventsPage() {
     setSearchInput('')
     setGlobalFilter({ sourceIds: [], sourcePaths: [], rangeHours: globalFilter.rangeHours })
     setSelectedSources([])
+    setCustomSources([])
   }
 
-  function handleSourceChange(nextSourceValue: string) {
-    const nextSourceId = nextSourceValue.startsWith('source:') ? nextSourceValue.slice('source:'.length) : ''
-    const nextSourcePath = nextSourceValue.startsWith('path:') ? nextSourceValue.slice('path:'.length) : ''
-
-    setSourceId(nextSourceId)
+  function handleSourcePickerChange(nextSelected: SourceOption[]) {
+    setSelectedSources(nextSelected)
+    const nextSourceIds = nextSelected.filter(s => s.kind === 'configured').map(s => s.id.replace('source:', ''))
+    const nextSourcePaths = nextSelected.filter(s => s.kind === 'preset' || s.kind === 'custom').map(s => s.path)
+    setGlobalFilter({ sourceIds: nextSourceIds, sourcePaths: nextSourcePaths, rangeHours: globalFilter.rangeHours })
+    setSourceId('')
     setSourceIdsCsv('')
-    setSourcePathsCsv(nextSourcePath)
+    setSourcePathsCsv('')
+  }
 
-    if (!nextSourceId && !nextSourcePath) {
-      setGlobalFilter({ sourceIds: [], sourcePaths: [], rangeHours: globalFilter.rangeHours })
-      setSelectedSources([])
-      return
-    }
+  function removeCustomSource(id: string) {
+    setCustomSources(prev => prev.filter(s => s.id !== id))
+    handleSourcePickerChange(selectedSources.filter(s => s.id !== id))
+  }
 
-    if (nextSourcePath) {
-      const pathLabel = nextSourcePath.split('/').pop() ?? nextSourcePath
-      setGlobalFilter({ sourceIds: [], sourcePaths: [nextSourcePath], rangeHours: globalFilter.rangeHours })
-      setSelectedSources([{ id: `preset:${nextSourcePath}`, label: pathLabel, path: nextSourcePath, kind: 'preset' }])
-      return
-    }
-
-    const selected = sources.find(source => source.id === nextSourceId)
-    const nextSelectedSources: SourceOption[] = selected
-      ? [{
-        id: `source:${selected.id}`,
-        label: selected.name,
-        path: selected.config?.path ?? '',
-        kind: 'configured',
-      }]
-      : []
-
-    setGlobalFilter({ sourceIds: [nextSourceId], sourcePaths: [], rangeHours: globalFilter.rangeHours })
-    setSelectedSources(nextSelectedSources)
+  async function handleUploadResult(r: UploadResultState) {
+    setUploadResult(r)
   }
 
   function toggleExpand(id: string) {
@@ -360,7 +432,7 @@ export default function EventsPage() {
 
   return (
     <div>
-      {tailSource && <LiveTailModal source={tailSource} onClose={() => setTailSource(null)} />}
+      {tailSources && <LiveTailModal sources={tailSources} onClose={() => setTailSources(null)} />}
 
       <div style={styles.header}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -374,30 +446,40 @@ export default function EventsPage() {
 
       {showGlobalFilterNotice && <GlobalSourceFilterNotice />}
 
+      {uploadResult && (
+        <div style={{ padding: '0.5rem 1rem', marginBottom: '0.5rem', borderRadius: 8, background: isUploadError(uploadResult) ? '#450a0a' : '#0f2d1a', color: isUploadError(uploadResult) ? '#f87171' : '#86efac', fontSize: '0.85rem', position: 'relative' }}>
+          <button onClick={() => setUploadResult(null)} style={{ position: 'absolute', top: '0.4rem', right: '0.5rem', background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
+          {isUploadError(uploadResult) ? uploadResult.error : `Import abgeschlossen: ${uploadResult.events_created ?? 0} Events importiert.`}
+        </div>
+      )}
+
       <div style={styles.filters}>
-        <select value={sourceSelectValue} onChange={e => handleSourceChange(e.target.value)} style={{ ...styles.select, minWidth: 220 }}>
-          <option value="">Alle Quellen</option>
-          {sources.map((source: SourceResponse) => (
-            <option key={source.id} value={`source:${source.id}`}>{source.name}{source.config?.path ? ` (${source.config.path})` : ''}</option>
-          ))}
-          {sourcePathOptions.map(path => {
-            const label = path.split('/').pop() ?? path
-            return <option key={`path:${path}`} value={`path:${path}`}>{label} ({path})</option>
-          })}
-        </select>
-        <HelpTip content="Filtert die Eventliste auf genau eine konfigurierte Quelle. Die Live-Ansicht ist nur aktiv, wenn hier eine Datei-Quelle ausgewaehlt wurde." ariaLabel="Quellenfilter erklaeren" />
+        <SourcePicker
+          selected={selectedSources}
+          onChange={handleSourcePickerChange}
+          onUploadResult={handleUploadResult}
+          customSources={customSources}
+          onRemoveCustom={removeCustomSource}
+        />
+        <HelpTip content="Wähle eine oder mehrere Quellen für die Eventliste. Die Auswahl steuert auch den globalen Kontext für den AI-Chat." ariaLabel="Quellenfilter erklaeren" />
         <button onClick={refreshLatest} disabled={isFetching} style={styles.refBtn}>
           {isFetching ? 'Refresh...' : 'Refresh'}
         </button>
         <button
-          onClick={() => selectedSource && setTailSource(selectedSource)}
-          disabled={!selectedSource || selectedSource.type !== 'file'}
-          style={!selectedSource || selectedSource.type !== 'file' ? styles.liveBtnDisabled : styles.liveBtn}
-          title={!selectedSource ? 'Zuerst Quelle auswaehlen' : selectedSource.type !== 'file' ? 'Nur fuer Datei-Quellen' : 'Live-Ansicht fuer gewaehlte Quelle'}
+          onClick={() => liveTailSources.length > 0 && setTailSources(liveTailSources)}
+          disabled={liveTailSources.length === 0}
+          style={liveTailSources.length === 0 ? styles.liveBtnDisabled : styles.liveBtn}
+          title={
+            liveTailSources.length === 0
+              ? 'Mindestens eine Datei-Quelle auswaehlen'
+              : liveTailSources.length === 1
+                ? `Live-Ansicht fuer ${liveTailSources[0].name}`
+                : `Live-Ansicht fuer ${liveTailSources.length} Quellen`
+          }
         >
-          Live-Ansicht
+          {liveTailSources.length > 1 ? `Live-Ansicht (${liveTailSources.length})` : 'Live-Ansicht'}
         </button>
-        <HelpTip content="Die Live-Ansicht streamt neue Zeilen der aktuell gewaehlten Datei-Quelle direkt in ein Tail-Fenster. Damit pruefst du schnell, ob gerade frische Daten ankommen." ariaLabel="Live-Ansicht erklaeren" />
+        <HelpTip content="Die Live-Ansicht streamt neue Zeilen aller gewaehlten Datei-Quellen direkt in ein Tail-Fenster. Damit pruefst du schnell, ob gerade frische Daten ankommen." ariaLabel="Live-Ansicht erklaeren" />
 
         <details style={styles.severityDropdown}>
           <summary style={styles.severitySummary}>
@@ -419,7 +501,6 @@ export default function EventsPage() {
                           ? prev.filter(value => value !== level)
                           : [...prev, level]
                       ))
-                      setCursor(undefined)
                     }}
                   />
                   <span style={{ textTransform: 'capitalize' }}>{level}</span>
@@ -432,7 +513,6 @@ export default function EventsPage() {
                 style={styles.severityActionBtn}
                 onClick={() => {
                   setSelectedSeverities(SEVERITIES)
-                  setCursor(undefined)
                 }}
               >
                 Alle
@@ -442,7 +522,6 @@ export default function EventsPage() {
                 style={styles.severityActionBtn}
                 onClick={() => {
                   setSelectedSeverities([])
-                  setCursor(undefined)
                 }}
               >
                 Keine
@@ -454,14 +533,12 @@ export default function EventsPage() {
         <input
           value={host}
           onChange={e => setHost(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && (setCursor(undefined))}
           placeholder="Host filtern..."
           style={{ ...styles.search, flex: '0 0 140px' }}
         />
         <input
           value={service}
           onChange={e => setService(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && (setCursor(undefined))}
           placeholder="Service filtern..."
           style={{ ...styles.search, flex: '0 0 140px' }}
         />
@@ -503,6 +580,7 @@ export default function EventsPage() {
               <div style={styles.theader}>
                 <span style={{ width: 150 }}>Zeitstempel</span>
                 <span style={{ width: 75 }}>Severity</span>
+                {showSourceColumn && <span style={{ width: 140 }}>Quelle</span>}
                 <span style={{ width: 110 }}>Host</span>
                 <span style={{ width: 120 }}>Service</span>
                 <span style={{ flex: 1 }}>Nachricht</span>
@@ -522,6 +600,11 @@ export default function EventsPage() {
                         {event.severity}
                       </span>
                     </span>
+                    {showSourceColumn && (
+                      <span style={{ width: 140, color: '#7dd3fc', flexShrink: 0, fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={event.source_id ?? ''}>
+                        {event.source_id ? (sourceNameById.get(event.source_id) ?? event.source_id.slice(0, 8)) : '-'}
+                      </span>
+                    )}
                     <span style={{ width: 110, color: '#64748b', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {event.host ?? '-'}
                     </span>
@@ -536,7 +619,7 @@ export default function EventsPage() {
                     <div style={styles.detail}>
                       <div style={styles.detailGrid}>
                         <span style={styles.detailLabel}>ID</span><span style={styles.detailVal}>{event.id}</span>
-                        <span style={styles.detailLabel}>Quelle</span><span style={styles.detailVal}>{event.source_id ?? '-'}</span>
+                        <span style={styles.detailLabel}>Quelle</span><span style={styles.detailVal}>{event.source_id ? `${sourceNameById.get(event.source_id) ?? event.source_id} (${event.source_id})` : '-'}</span>
                         <span style={styles.detailLabel}>Zeitstempel</span><span style={styles.detailVal}>{dayjs(event.timestamp).format('DD.MM.YYYY HH:mm:ss.SSS')}</span>
                         <span style={styles.detailLabel}>Host</span><span style={styles.detailVal}>{event.host ?? '-'}</span>
                         <span style={styles.detailLabel}>Service</span><span style={styles.detailVal}>{event.service ?? '-'}</span>
