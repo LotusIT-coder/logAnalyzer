@@ -45,7 +45,7 @@ function EditRuleModal({
   return (
     <div style={modal.overlay} onClick={onClose}>
       <div style={modal.box} onClick={e => e.stopPropagation()}>
-        <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem', color: '#f1f5f9' }}>Regel bearbeiten</h3>
+        <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem', color: 'var(--fg)' }}>Regel bearbeiten</h3>
         <div style={styles.formGrid}>
           <Field label="Name">
             <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={styles.input} />
@@ -144,7 +144,7 @@ export default function RulesPage() {
       {showNew && (
         <div style={styles.form}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-            <h3 style={{ margin: 0, fontSize: '0.95rem', color: '#94a3b8' }}>Neue Regel</h3>
+            <h3 style={{ margin: 0, fontSize: '0.95rem', color: 'var(--muted-fg)' }}>Neue Regel</h3>
             <HelpTip content="Definiere hier Name, Severity, Schwellwert und Bedingung fuer eine neue Erkennungsregel. Die Kombination steuert, wann aus Events ein Incident wird." ariaLabel="Neue Regel erklaeren" />
           </div>
           <div style={styles.formGrid}>
@@ -178,7 +178,7 @@ export default function RulesPage() {
       )}
 
       {isLoading ? (
-        <div style={{ color: '#64748b', padding: '2rem' }}>Lade…</div>
+        <div style={{ color: 'var(--muted-fg)', padding: '2rem' }}>Lade…</div>
       ) : (
         <>
           <div style={styles.sectionHeader}>
@@ -198,10 +198,10 @@ export default function RulesPage() {
               <div key={r.id} style={styles.row}>
                 <span style={{ flex: 2, fontWeight: 500 }}>{r.name}</span>
                 <span style={{ width: 80, color: '#f97316' }}>{r.severity}</span>
-                <span style={{ width: 80, color: '#94a3b8' }}>{r.threshold}</span>
-                <span style={{ width: 100, color: '#94a3b8' }}>{r.window_seconds}s</span>
+                <span style={{ width: 80, color: 'var(--muted-fg)' }}>{r.threshold}</span>
+                <span style={{ width: 100, color: 'var(--muted-fg)' }}>{r.window_seconds}s</span>
                 <span style={{ width: 80 }}>
-                  <span style={{ ...styles.pill, background: r.enabled ? '#16a34a' : '#475569' }}>
+                  <span style={{ ...styles.pill, background: r.enabled ? '#16a34a' : 'var(--border)' }}>
                     {r.enabled ? 'aktiv' : 'inaktiv'}
                   </span>
                 </span>
@@ -222,7 +222,7 @@ export default function RulesPage() {
               </div>
             ))}
             {!data?.items.length && (
-              <div style={{ padding: '2rem', color: '#64748b', textAlign: 'center' }}>Keine Regeln definiert</div>
+              <div style={{ padding: '2rem', color: 'var(--muted-fg)', textAlign: 'center' }}>Keine Regeln definiert</div>
             )}
           </div>
         </>
@@ -235,7 +235,7 @@ function Field({ label, help, children }: { label: string; help?: string; childr
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-        <label style={{ color: '#64748b', fontSize: '0.78rem' }}>{label}</label>
+        <label style={{ color: 'var(--muted-fg)', fontSize: '0.78rem' }}>{label}</label>
         {help && <HelpTip content={help} ariaLabel={`${label} erklaeren`} />}
       </div>
       {children}
@@ -246,20 +246,20 @@ function Field({ label, help, children }: { label: string; help?: string; childr
 const styles: Record<string, React.CSSProperties> = {
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' },
   h2: { margin: 0, fontSize: '1.5rem' },
-  addBtn: { background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1rem', cursor: 'pointer', fontWeight: 600 },
-  readOnlyNotice: { background: '#10223f', color: '#bfdbfe', border: '1px solid #1e3a8a', borderRadius: 8, padding: '0.65rem 0.9rem', marginBottom: '1rem', fontSize: '0.86rem' },
-  form: { background: '#1e293b', borderRadius: 10, padding: '1.25rem', border: '1px solid #334155', marginBottom: '1.5rem' },
+  addBtn: { background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1rem', cursor: 'pointer', fontWeight: 600 },
+  readOnlyNotice: { background: 'var(--accent-soft)', color: 'var(--accent-fg)', border: '1px solid var(--accent)', borderRadius: 8, padding: '0.65rem 0.9rem', marginBottom: '1rem', fontSize: '0.86rem' },
+  form: { background: 'var(--surface)', borderRadius: 10, padding: '1.25rem', border: '1px solid var(--border)', marginBottom: '1.5rem' },
   formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginBottom: '1rem' },
-  input: { background: '#0f172a', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.65rem', fontSize: '0.9rem' },
+  input: { background: 'var(--surface-2)', color: 'var(--fg)', border: '1px solid var(--border)', borderRadius: 6, padding: '0.4rem 0.65rem', fontSize: '0.9rem' },
   saveBtn: { background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1.25rem', cursor: 'pointer', fontWeight: 600 },
   sectionHeader: { display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.65rem' },
-  sectionTitle: { color: '#94a3b8', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' },
-  table: { background: '#1e293b', borderRadius: 10, border: '1px solid #334155', overflow: 'hidden' },
-  thead: { display: 'flex', gap: '1rem', padding: '0.6rem 1rem', background: '#0f172a', color: '#475569', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase' },
-  row: { display: 'flex', gap: '1rem', padding: '0.6rem 1rem', borderTop: '1px solid #1e293b', alignItems: 'center', fontSize: '0.87rem' },
+  sectionTitle: { color: 'var(--muted-fg)', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' },
+  table: { background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)', overflow: 'hidden' },
+  thead: { display: 'flex', gap: '1rem', padding: '0.6rem 1rem', background: 'var(--table-head-bg)', color: 'var(--muted-fg)', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase' },
+  row: { display: 'flex', gap: '1rem', padding: '0.6rem 1rem', borderTop: '1px solid var(--border)', alignItems: 'center', fontSize: '0.87rem' },
   pill: { borderRadius: 4, padding: '0.1rem 0.5rem', fontSize: '0.72rem', color: '#fff', fontWeight: 700 },
-  toggleBtn: { background: 'none', border: '1px solid #334155', color: '#94a3b8', borderRadius: 5, padding: '0.2rem 0.55rem', cursor: 'pointer', fontSize: '0.78rem' },
-  deleteBtn: { background: 'none', border: '1px solid #7f1d1d', color: '#f87171', borderRadius: 5, padding: '0.2rem 0.55rem', cursor: 'pointer', fontSize: '0.78rem' },
+  toggleBtn: { background: 'none', border: '1px solid var(--border)', color: 'var(--muted-fg)', borderRadius: 5, padding: '0.2rem 0.55rem', cursor: 'pointer', fontSize: '0.78rem' },
+  deleteBtn: { background: 'none', border: '1px solid var(--danger-fg)', color: 'var(--danger-fg)', borderRadius: 5, padding: '0.2rem 0.55rem', cursor: 'pointer', fontSize: '0.78rem' },
 }
 
 const modal: Record<string, React.CSSProperties> = {
@@ -268,7 +268,7 @@ const modal: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
   box: {
-    background: '#0f172a', border: '1px solid #334155', borderRadius: 12,
+    background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12,
     width: '92vw', maxWidth: 900, padding: '1.25rem',
   },
 }

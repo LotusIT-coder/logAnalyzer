@@ -33,9 +33,9 @@ export function TimeRangePicker({ value, onChange }: Props) {
               borderRadius: '0.375rem',
               border: '1px solid',
               cursor: 'pointer',
-              background: active ? '#3b82f6' : '#1e293b',
-              color: active ? '#fff' : '#94a3b8',
-              borderColor: active ? '#3b82f6' : '#334155',
+              background: active ? 'var(--accent)' : 'var(--surface)',
+              color: active ? '#fff' : 'var(--muted-fg)',
+              borderColor: active ? 'var(--accent)' : 'var(--border)',
             }}
           >
             {p.label}

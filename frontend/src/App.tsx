@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AIChatProvider } from './ctx/AIChatContext'
 import { SourceFilterProvider } from './ctx/SourceFilterContext'
 import { FeatureFlagsProvider } from './ctx/FeatureFlagsContext'
+import { ThemeProvider } from './ctx/ThemeContext'
 import Layout from './components/Layout'
 import DashboardPage from './pages/DashboardPage'
 import EventsPage from './pages/EventsPage'
@@ -37,15 +38,17 @@ export function AppRoutes() {
 export default function App() {
   return (
     <QueryClientProvider client={qc}>
-      <FeatureFlagsProvider>
-        <SourceFilterProvider>
-          <AIChatProvider>
-            <BrowserRouter>
-              <AppRoutes />
-            </BrowserRouter>
-          </AIChatProvider>
-        </SourceFilterProvider>
-      </FeatureFlagsProvider>
+      <ThemeProvider>
+        <FeatureFlagsProvider>
+          <SourceFilterProvider>
+            <AIChatProvider>
+              <BrowserRouter>
+                <AppRoutes />
+              </BrowserRouter>
+            </AIChatProvider>
+          </SourceFilterProvider>
+        </FeatureFlagsProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   )
 }

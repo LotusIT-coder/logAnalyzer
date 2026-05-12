@@ -53,7 +53,7 @@ function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse;
   return (
     <div style={modal.overlay} onClick={onClose}>
       <div style={{ ...modal.box, height: 'auto', maxWidth: 540, padding: '1.5rem' }} onClick={e => e.stopPropagation()}>
-        <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem', color: '#f1f5f9' }}>Quelle bearbeiten</h3>
+        <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem', color: 'var(--fg)' }}>Quelle bearbeiten</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <div style={styles.field}>
             <label style={styles.label}>Name</label>
@@ -76,12 +76,12 @@ function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse;
               </label>
             </>
           )}
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.88rem', color: '#94a3b8', cursor: 'pointer' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.88rem', color: 'var(--muted-fg)', cursor: 'pointer' }}>
             <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
             Aktiv
           </label>
         </div>
-        {error && <div style={{ color: '#f87171', fontSize: '0.82rem', marginTop: '0.5rem' }}>{error}</div>}
+        {error && <div style={{ color: 'var(--danger-fg)', fontSize: '0.82rem', marginTop: '0.5rem' }}>{error}</div>}
         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.25rem' }}>
           <button onClick={handleSave} disabled={saving || !name || (!isJournald && !path)} style={styles.saveBtn}>
             {saving ? 'Speichere...' : 'Speichern'}
@@ -143,8 +143,8 @@ function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>Live-Tail: {source.name}</span>
             <span style={{ ...modal.dot, background: connected ? '#22c55e' : '#ef4444' }} />
-            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{connected ? 'verbunden' : 'getrennt'}</span>
-            {paused && <span style={{ fontSize: '0.72rem', color: '#f97316', fontWeight: 700 }}>PAUSIERT</span>}
+            <span style={{ fontSize: '0.75rem', color: 'var(--muted-fg)' }}>{connected ? 'verbunden' : 'getrennt'}</span>
+            {paused && <span style={{ fontSize: '0.72rem', color: 'var(--warning-fg)', fontWeight: 700 }}>PAUSIERT</span>}
             <HelpTip content="Pause stoppt nur den sichtbaren Stream, Leeren entfernt den bisherigen Puffer und der Filter wirkt nur auf die gerade angezeigten Zeilen." ariaLabel="Live-Tail erklaeren" />
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -158,11 +158,11 @@ function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: (
               {paused ? 'Weiter' : 'Pause'}
             </button>
             <button onClick={() => setLines([])} style={modal.ctrlBtn}>Leeren</button>
-            <button onClick={onClose} style={{ ...modal.ctrlBtn, color: '#f87171' }}>x Schliessen</button>
+            <button onClick={onClose} style={{ ...modal.ctrlBtn, color: 'var(--danger-fg)' }}>x Schliessen</button>
           </div>
         </div>
 
-        {error && <div style={{ color: '#f87171', padding: '0.5rem 1rem', fontSize: '0.82rem' }}>{error}</div>}
+        {error && <div style={{ color: 'var(--danger-fg)', padding: '0.5rem 1rem', fontSize: '0.82rem' }}>{error}</div>}
 
         <div style={modal.log}>
           {displayed.map((line, i) => (
@@ -177,7 +177,7 @@ function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: (
             </div>
           ))}
           {!displayed.length && (
-            <div style={{ color: '#475569', padding: '1rem' }}>
+            <div style={{ color: 'var(--muted-fg)', padding: '1rem' }}>
               {connected ? 'Warte auf neue Zeilen...' : 'Keine Daten'}
             </div>
           )}
@@ -284,14 +284,14 @@ export default function SourcesPage() {
       </div>
 
       {uploadResult && (
-        <div style={{ ...styles.uploadInfo, background: isUploadError(uploadResult) ? '#450a0a' : '#0f2d1a', color: isUploadError(uploadResult) ? '#f87171' : '#86efac', position: 'relative' }}>
+        <div style={{ ...styles.uploadInfo, background: isUploadError(uploadResult) ? 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))' : 'color-mix(in srgb, var(--success-fg) 16%, var(--surface))', color: isUploadError(uploadResult) ? 'var(--danger-fg)' : 'var(--success-fg)', position: 'relative' }}>
           <button onClick={() => setUploadResult(null)} style={styles.dismissBtn}>✕</button>
           {isUploadError(uploadResult) ? (
             <div>Upload-Fehler: {uploadResult.error}</div>
           ) : (
             <>
               <div>📄 Importiert: {uploadResult.lines_ingested} Zeilen · {uploadResult.events_created} Events</div>
-              <div style={{ marginTop: '0.2rem', fontSize: '0.82rem', color: '#cbd5e1' }}>
+              <div style={{ marginTop: '0.2rem', fontSize: '0.82rem', color: 'var(--fg)' }}>
                 Quelle: {uploadResult.source_name}
               </div>
             </>
@@ -302,7 +302,7 @@ export default function SourcesPage() {
       {showNew && (
         <div style={styles.form}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <h3 style={{ margin: 0, fontSize: '0.95rem', color: '#94a3b8' }}>Neue Quelle</h3>
+            <h3 style={{ margin: 0, fontSize: '0.95rem', color: 'var(--muted-fg)' }}>Neue Quelle</h3>
             <HelpTip content="Lege hier eine Datei-Quelle oder eine echte systemd-journal Quelle an. Journald-Quellen lesen ueber journalctl direkt aus dem System-Journal statt aus /var/log/boot.log." ariaLabel="Neue Quelle erklaeren" />
           </div>
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -374,7 +374,7 @@ export default function SourcesPage() {
       )}
 
       {isLoading ? (
-        <div style={{ color: '#64748b', padding: '2rem' }}>Lade...</div>
+        <div style={{ color: 'var(--muted-fg)', padding: '2rem' }}>Lade...</div>
       ) : (
         <>
           <div style={styles.sectionHeader}>
@@ -387,10 +387,10 @@ export default function SourcesPage() {
               <div style={styles.cardTop}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <span style={styles.srcName}>{src.name}</span>
-                  <span style={{ ...styles.badge, background: src.enabled ? '#16a34a' : '#475569' }}>
+                  <span style={{ ...styles.badge, background: src.enabled ? '#16a34a' : 'var(--border)' }}>
                     {src.enabled ? 'aktiv' : 'inaktiv'}
                   </span>
-                  <span style={{ ...styles.badge, background: '#1e3a5f', color: '#93c5fd' }}>
+                  <span style={{ ...styles.badge, background: 'var(--accent-soft)', color: 'var(--accent-fg)' }}>
                     {src.type}
                   </span>
                   {Boolean(src.config?.path_regex) && (
@@ -416,8 +416,8 @@ export default function SourcesPage() {
                   </button>
                   {pendingDelete === src.id ? (
                     <>
-                      <span style={{ fontSize: '0.82rem', color: '#fca5a5', alignSelf: 'center' }}>Wirklich löschen?</span>
-                      <button onClick={() => handleDelete(src.id)} style={{ ...styles.deleteBtn, background: '#7f1d1d' }}>Ja</button>
+                      <span style={{ fontSize: '0.82rem', color: 'var(--danger-fg)', alignSelf: 'center' }}>Wirklich löschen?</span>
+                      <button onClick={() => handleDelete(src.id)} style={{ ...styles.deleteBtn, background: 'var(--danger-fg)', color: '#fff' }}>Ja</button>
                       <button onClick={() => setPendingDelete(null)} style={styles.testBtn}>Abbrechen</button>
                     </>
                   ) : (
@@ -427,7 +427,7 @@ export default function SourcesPage() {
               </div>
               <div style={styles.path}>{describeSource(src)}</div>
               {testResults[src.id] && (
-                <div style={{ marginTop: '0.5rem', fontSize: '0.82rem', color: testResults[src.id].ok ? '#22c55e' : '#f87171' }}>
+                <div style={{ marginTop: '0.5rem', fontSize: '0.82rem', color: testResults[src.id].ok ? 'var(--success-fg)' : 'var(--danger-fg)' }}>
                   {testResults[src.id].ok
                     ? 'Erreichbar'
                     : `Fehler: ${testResults[src.id].error ?? testResults[src.id].details}`}
@@ -451,32 +451,32 @@ export default function SourcesPage() {
 const styles: Record<string, React.CSSProperties> = {
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' },
   h2: { margin: 0, fontSize: '1.5rem' },
-  addBtn: { background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1rem', cursor: 'pointer', fontWeight: 600 },
-  liveHint: { background: '#10223f', color: '#bfdbfe', border: '1px solid #1e3a8a', borderRadius: 8, padding: '0.65rem 0.9rem', marginBottom: '1rem', fontSize: '0.86rem' },
-  form: { background: '#1e293b', borderRadius: 10, padding: '1.25rem', border: '1px solid #334155', marginBottom: '1.5rem' },
+  addBtn: { background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1rem', cursor: 'pointer', fontWeight: 600 },
+  liveHint: { background: 'var(--accent-soft)', color: 'var(--accent-fg)', border: '1px solid var(--accent)', borderRadius: 8, padding: '0.65rem 0.9rem', marginBottom: '1rem', fontSize: '0.86rem' },
+  form: { background: 'var(--surface)', borderRadius: 10, padding: '1.25rem', border: '1px solid var(--border)', marginBottom: '1.5rem' },
   formActions: { display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.75rem' },
   field: { display: 'flex', flexDirection: 'column', gap: '0.3rem', flex: 1 },
-  inlineCheckbox: { display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#94a3b8', fontSize: '0.84rem', marginTop: '0.5rem', cursor: 'pointer' },
-  label: { color: '#64748b', fontSize: '0.78rem' },
-  input: { background: '#0f172a', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.65rem', fontSize: '0.9rem' },
+  inlineCheckbox: { display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--muted-fg)', fontSize: '0.84rem', marginTop: '0.5rem', cursor: 'pointer' },
+  label: { color: 'var(--muted-fg)', fontSize: '0.78rem' },
+  input: { background: 'var(--surface-2)', color: 'var(--fg)', border: '1px solid var(--border)', borderRadius: 6, padding: '0.4rem 0.65rem', fontSize: '0.9rem' },
   saveBtn: { background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1.25rem', cursor: 'pointer', fontWeight: 600 },
-  uploadBtn: { background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1.25rem', cursor: 'pointer', fontWeight: 600 },
-  uploadDivider: { color: '#64748b', fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' },
-  uploadInfo: { borderRadius: 8, padding: '0.75rem 0.95rem', marginBottom: '1rem', border: '1px solid #334155' },
-  dismissBtn: { position: 'absolute', top: '0.4rem', right: '0.5rem', background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1rem' },
+  uploadBtn: { background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '0.5rem 1.25rem', cursor: 'pointer', fontWeight: 600 },
+  uploadDivider: { color: 'var(--muted-fg)', fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' },
+  uploadInfo: { borderRadius: 8, padding: '0.75rem 0.95rem', marginBottom: '1rem', border: '1px solid var(--border)' },
+  dismissBtn: { position: 'absolute', top: '0.4rem', right: '0.5rem', background: 'none', border: 'none', color: 'var(--muted-fg)', cursor: 'pointer', fontSize: '1rem' },
   sectionHeader: { display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.65rem' },
-  sectionTitle: { color: '#94a3b8', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' },
+  sectionTitle: { color: 'var(--muted-fg)', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' },
   list: { display: 'flex', flexDirection: 'column', gap: '0.75rem' },
-  card: { background: '#1e293b', borderRadius: 10, padding: '1rem 1.25rem', border: '1px solid #334155' },
+  card: { background: 'var(--surface)', borderRadius: 10, padding: '1rem 1.25rem', border: '1px solid var(--border)' },
   cardTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.5rem' },
   srcName: { fontWeight: 600, fontSize: '0.95rem' },
   badge: { borderRadius: 4, padding: '0.12rem 0.5rem', fontSize: '0.72rem', fontWeight: 700, color: '#fff' },
-  path: { fontSize: '0.82rem', color: '#64748b', fontFamily: 'monospace' },
-  testBtn: { background: 'none', border: '1px solid #334155', color: '#94a3b8', borderRadius: 6, padding: '0.35rem 0.85rem', cursor: 'pointer', fontSize: '0.84rem' },
-  tailBtn: { background: '#1e3a5f', border: '1px solid #1d4ed8', color: '#93c5fd', borderRadius: 6, padding: '0.35rem 0.9rem', cursor: 'pointer', fontSize: '0.84rem', fontWeight: 700 },
-  tailBtnDisabled: { background: '#0f172a', border: '1px solid #334155', color: '#64748b', borderRadius: 6, padding: '0.35rem 0.9rem', cursor: 'not-allowed', fontSize: '0.84rem', fontWeight: 700 },
-  deleteBtn: { background: 'none', border: '1px solid #7f1d1d', color: '#f87171', borderRadius: 6, padding: '0.35rem 0.85rem', cursor: 'pointer', fontSize: '0.84rem' },
-  emptyState: { padding: '2rem', color: '#64748b', textAlign: 'center' },
+  path: { fontSize: '0.82rem', color: 'var(--muted-fg)', fontFamily: 'monospace' },
+  testBtn: { background: 'none', border: '1px solid var(--border)', color: 'var(--muted-fg)', borderRadius: 6, padding: '0.35rem 0.85rem', cursor: 'pointer', fontSize: '0.84rem' },
+  tailBtn: { background: 'var(--accent-soft)', border: '1px solid var(--accent)', color: 'var(--accent-fg)', borderRadius: 6, padding: '0.35rem 0.9rem', cursor: 'pointer', fontSize: '0.84rem', fontWeight: 700 },
+  tailBtnDisabled: { background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--muted-fg)', borderRadius: 6, padding: '0.35rem 0.9rem', cursor: 'not-allowed', fontSize: '0.84rem', fontWeight: 700 },
+  deleteBtn: { background: 'none', border: '1px solid var(--danger-fg)', color: 'var(--danger-fg)', borderRadius: 6, padding: '0.35rem 0.85rem', cursor: 'pointer', fontSize: '0.84rem' },
+  emptyState: { padding: '2rem', color: 'var(--muted-fg)', textAlign: 'center' },
 }
 
 const modal: Record<string, React.CSSProperties> = {
@@ -485,30 +485,30 @@ const modal: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
   box: {
-    background: '#0f172a', border: '1px solid #334155', borderRadius: 12,
+    background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12,
     width: '90vw', maxWidth: 1100, height: '80vh',
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
   },
   header: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    padding: '0.75rem 1rem', borderBottom: '1px solid #334155', flexWrap: 'wrap', gap: '0.5rem',
+    padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', gap: '0.5rem',
   },
   dot: { width: 8, height: 8, borderRadius: '50%', flexShrink: 0, display: 'inline-block' },
   filterInput: {
-    background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155',
+    background: 'var(--surface-2)', color: 'var(--fg)', border: '1px solid var(--border)',
     borderRadius: 6, padding: '0.3rem 0.65rem', fontSize: '0.82rem', width: 200,
   },
   ctrlBtn: {
-    background: '#1e293b', color: '#94a3b8', border: '1px solid #334155',
+    background: 'var(--surface-2)', color: 'var(--muted-fg)', border: '1px solid var(--border)',
     borderRadius: 6, padding: '0.3rem 0.65rem', cursor: 'pointer', fontSize: '0.82rem',
   },
   log: {
     flex: 1, overflowY: 'auto', padding: '0.5rem 1rem',
     fontFamily: 'monospace', fontSize: '0.78rem', lineHeight: 1.5,
   },
-  logLine: { padding: '0.08rem 0', borderBottom: '1px solid #0f172a', wordBreak: 'break-all' },
+  logLine: { padding: '0.08rem 0', borderBottom: '1px solid var(--border)', wordBreak: 'break-all' },
   footer: {
-    padding: '0.4rem 1rem', borderTop: '1px solid #1e293b',
-    fontSize: '0.72rem', color: '#475569',
+    padding: '0.4rem 1rem', borderTop: '1px solid var(--border)',
+    fontSize: '0.72rem', color: 'var(--muted-fg)',
   },
 }

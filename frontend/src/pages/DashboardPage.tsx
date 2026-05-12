@@ -315,11 +315,11 @@ export default function DashboardPage() {
   void clockTick
 
   function sourceStatusTone(status?: SourceIngestionStatus) {
-    if (!status?.last_event_timestamp) return { bg: '#3f1d1d', fg: '#fca5a5', text: 'keine Events' }
+    if (!status?.last_event_timestamp) return { bg: 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))', fg: 'var(--danger-fg)', text: 'keine Events' }
     const ageMs = Date.now() - dayjs(status.last_event_timestamp).valueOf()
-    if (ageMs > 24 * 3600_000) return { bg: '#3f1d1d', fg: '#fca5a5', text: '>24h alt' }
-    if (ageMs > 2 * 3600_000) return { bg: '#3f341d', fg: '#fde68a', text: 'verzögert' }
-    return { bg: '#173d2a', fg: '#86efac', text: 'aktuell' }
+    if (ageMs > 24 * 3600_000) return { bg: 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))', fg: 'var(--danger-fg)', text: '>24h alt' }
+    if (ageMs > 2 * 3600_000) return { bg: 'color-mix(in srgb, var(--warning-fg) 16%, var(--surface))', fg: 'var(--warning-fg)', text: 'verzögert' }
+    return { bg: 'color-mix(in srgb, var(--success-fg) 16%, var(--surface))', fg: 'var(--success-fg)', text: 'aktuell' }
   }
 
   return (
@@ -335,7 +335,7 @@ export default function DashboardPage() {
             <HelpTip content="Das Zeitfenster steuert, wie weit die Metriken in die Vergangenheit schauen. 'Alle' verwendet den kompletten verfuegbaren Datenbestand." ariaLabel="Zeitfenster erklaeren" />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-            <span style={{ color: '#64748b', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Raster</span>
+            <span style={{ color: 'var(--muted-fg)', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Raster</span>
             <select
               value={chartBucketMode}
               onChange={e => setChartBucketMode(e.target.value)}
@@ -346,7 +346,7 @@ export default function DashboardPage() {
             {chartBucketMode === 'auto' && (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <span style={{ color: '#64748b', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Auto</span>
+                  <span style={{ color: 'var(--muted-fg)', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Auto</span>
                   <div style={styles.autoProfileGroup} role="group" aria-label="Auto-Refresh-Profil">
                     {AUTO_REFRESH_PROFILES.map(profile => {
                       const active = autoRefreshProfile === profile.value
@@ -375,20 +375,20 @@ export default function DashboardPage() {
           <div style={styles.ingestRow}>
             <SourcePicker selected={selectedSources} onChange={handleSelectedSourcesChange} onUploadResult={handleUploadResult} customSources={customSources} onRemoveCustom={removeCustomSource} />
             <HelpTip content="Hier waehlst du konfigurierte Quellen, Standard-Logpfade oder hochgeladene Dateien aus. Die Auswahl definiert gleichzeitig den globalen Datenkontext fuer die Metriken." ariaLabel="Quellenauswahl erklaeren" />
-            {ingesting && <span style={{ fontSize: '0.82rem', color: '#fbbf24', whiteSpace: 'nowrap' }}>⏳ Analysiere…</span>}
+            {ingesting && <span style={{ fontSize: '0.82rem', color: 'var(--warning-fg)', whiteSpace: 'nowrap' }}>⏳ Analysiere…</span>}
           </div>
         </div>
       </div>
 
       {ingestError && (
-        <div style={{ ...styles.ingestInfo, background: '#450a0a', color: '#f87171' }}>
+        <div style={{ ...styles.ingestInfo, background: 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))', color: 'var(--danger-fg)' }}>
           {ingestError}
         </div>
       )}
 
       {uploadResult && (
-        <div style={{ ...styles.ingestInfo, background: isUploadError(uploadResult) ? '#450a0a' : '#0f2d1a', color: isUploadError(uploadResult) ? '#f87171' : '#86efac', position: 'relative' }}>
-          <button onClick={() => setUploadResult(null)} style={{ position: 'absolute', top: '0.4rem', right: '0.5rem', background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
+        <div style={{ ...styles.ingestInfo, background: isUploadError(uploadResult) ? 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))' : 'color-mix(in srgb, var(--success-fg) 16%, var(--surface))', color: isUploadError(uploadResult) ? 'var(--danger-fg)' : 'var(--success-fg)', position: 'relative' }}>
+          <button onClick={() => setUploadResult(null)} style={{ position: 'absolute', top: '0.4rem', right: '0.5rem', background: 'none', border: 'none', color: 'var(--muted-fg)', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
           {isUploadError(uploadResult) ? (
             <div>Upload-Fehler: {uploadResult.error}</div>
           ) : (
@@ -396,7 +396,7 @@ export default function DashboardPage() {
               <div style={{ fontWeight: 600, marginBottom: '0.4rem' }}>
                 📄 Importiert: {uploadResult.lines_ingested} Zeilen · {uploadResult.events_created} Events
               </div>
-              <div style={{ fontSize: '0.82rem', color: '#d1fae5' }}>
+              <div style={{ fontSize: '0.82rem', color: 'var(--fg)' }}>
                 Quelle: {uploadResult.source_name} ({uploadResult.source_id})
               </div>
             </>
@@ -408,7 +408,7 @@ export default function DashboardPage() {
         <div style={styles.statusWrap}>
           <div style={styles.statusTitle}>Ingest-Status (ausgewählte Quellen)</div>
           {(sourceStatus.isLoading && !sourceStatus.data) ? (
-            <div style={{ color: '#64748b', fontSize: '0.83rem' }}>Lade Status…</div>
+            <div style={{ color: 'var(--muted-fg)', fontSize: '0.83rem' }}>Lade Status…</div>
           ) : (
             <div style={styles.statusGrid}>
               {selectedSources
@@ -436,7 +436,7 @@ export default function DashboardPage() {
       )}
 
       {selectedSources.length === 0 ? (
-        <div style={{ color: '#475569', textAlign: 'center', padding: '3rem 1rem', fontSize: '0.9rem' }}>
+        <div style={{ color: 'var(--muted-fg)', textAlign: 'center', padding: '3rem 1rem', fontSize: '0.9rem' }}>
           Bitte eine oder mehrere Log-Quellen auswählen, um Metriken anzuzeigen.
         </div>
       ) : (
@@ -466,7 +466,7 @@ export default function DashboardPage() {
                 <span style={styles.panelMetaValue}>{formatAgeLabel(errs.dataUpdatedAt)}</span>
               </div>
               <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Severity:</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--muted-fg)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Severity:</span>
                 <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
                   {(['debug', 'info', 'warning', 'error', 'critical'] as const).map(sev => {
                     const isSelected = topErrorsSeverities.includes(sev)
@@ -492,9 +492,9 @@ export default function DashboardPage() {
                           fontSize: '0.75rem',
                           fontWeight: 500,
                           borderRadius: '0.3rem',
-                          border: `1.5px solid ${isSelected ? colors.text : '#475569'}`,
-                          background: isSelected ? colors.bg : '#0f172a',
-                          color: isSelected ? colors.text : '#64748b',
+                          border: `1.5px solid ${isSelected ? colors.text : 'var(--border)'}`,
+                          background: isSelected ? colors.bg : 'var(--surface)',
+                          color: isSelected ? colors.text : 'var(--muted-fg)',
                           cursor: 'pointer',
                           transition: 'all 0.15s ease',
                           textTransform: 'capitalize',
@@ -509,12 +509,12 @@ export default function DashboardPage() {
                 </div>
               </div>
               {topErrorsSeverities.length === 0 && (
-                <div style={{ color: '#fbbf24', fontSize: '0.8rem', marginBottom: '0.5rem', fontStyle: 'italic' }}>
+                <div style={{ color: 'var(--warning-fg)', fontSize: '0.8rem', marginBottom: '0.5rem', fontStyle: 'italic' }}>
                   ⚠ Keine Severity ausgewählt – es werden keine Fehler angezeigt.
                 </div>
               )}
               {topErrorsSeverities.length === 0 ? (
-                <div style={{ color: '#64748b', fontSize: '0.85rem' }}>–</div>
+                <div style={{ color: 'var(--muted-fg)', fontSize: '0.85rem' }}>–</div>
               ) : errs.data ? (
                 <ol style={styles.ol}>
                   {errs.data.items.slice(0, 8).map((errorItem: TopErrorItem, i: number) => (
@@ -523,7 +523,7 @@ export default function DashboardPage() {
                       <span style={styles.msg}>{(errorItem.key ?? errorItem.message ?? '').slice(0, 80)}</span>
                     </li>
                   ))}
-                  {!errs.data.items.length && <div style={{ color: '#64748b', fontSize: '0.85rem' }}>Keine Fehler-Events</div>}
+                  {!errs.data.items.length && <div style={{ color: 'var(--muted-fg)', fontSize: '0.85rem' }}>Keine Fehler-Events</div>}
                 </ol>
               ) : <Spinner />}
             </Panel>
@@ -537,7 +537,7 @@ export default function DashboardPage() {
                       <span style={styles.msg}>{serviceItem.service ?? '(unbekannt)'}</span>
                     </li>
                   ))}
-                  {!svcs.data.items.length && <div style={{ color: '#64748b', fontSize: '0.85rem' }}>Keine Service-Daten</div>}
+                  {!svcs.data.items.length && <div style={{ color: 'var(--muted-fg)', fontSize: '0.85rem' }}>Keine Service-Daten</div>}
                 </ol>
               ) : <Spinner />}
             </Panel>
@@ -573,19 +573,19 @@ function Panel({ title, help, children }: { title: string; help?: string; childr
 }
 
 function Spinner() {
-  return <div style={{ color: '#64748b', padding: '1rem' }}>Lade…</div>
+  return <div style={{ color: 'var(--muted-fg)', padding: '1rem' }}>Lade…</div>
 }
 
 function PanelError({ error }: { error: unknown }) {
   return (
-    <div style={{ color: '#f87171', padding: '1rem', fontSize: '0.85rem' }}>
+    <div style={{ color: 'var(--danger-fg)', padding: '1rem', fontSize: '0.85rem' }}>
       Fehler beim Laden: {getApiErrorMessage(error)}
     </div>
   )
 }
 
 function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
-  if (!points.length) return <div style={{ color: '#64748b' }}>Keine Daten</div>
+  if (!points.length) return <div style={{ color: 'var(--muted-fg)' }}>Keine Daten</div>
 
   function getChartHeight() {
     if (typeof window === 'undefined') return 200
@@ -686,19 +686,19 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
         <line
           x1={pad.left} y1={pad.top}
           x2={pad.left + innerW} y2={pad.top}
-          stroke="#334155" strokeDasharray="3 3" strokeWidth={1}
+          stroke="var(--border)" strokeDasharray="3 3" strokeWidth={1}
         />
         {/* grid line at 0 / baseline */}
         <line
           x1={pad.left} y1={pad.top + innerH}
           x2={pad.left + innerW} y2={pad.top + innerH}
-          stroke="#334155" strokeWidth={1}
+          stroke="var(--border)" strokeWidth={1}
         />
 
         {/* filled area under the line */}
         <polygon
           points={`${x(0)},${pad.top + innerH} ${polyline} ${x(points.length - 1)},${pad.top + innerH}`}
-          fill="#3b82f6"
+          fill="var(--accent)"
           fillOpacity={0.15}
         />
 
@@ -709,7 +709,7 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
             y1={pad.top}
             x2={hoverState.x}
             y2={pad.top + innerH}
-            stroke="#60a5fa"
+            stroke="var(--accent)"
             strokeDasharray="4 4"
             strokeWidth={1}
           />
@@ -719,7 +719,7 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
         <polyline
           points={polyline}
           fill="none"
-          stroke="#3b82f6"
+          stroke="var(--accent)"
           strokeWidth={3}
           strokeLinejoin="round"
           strokeLinecap="round"
@@ -727,7 +727,7 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
 
         {/* data-point dots (only when few points) */}
         {points.length <= 30 && points.map((p, i) => (
-          <circle key={i} cx={x(i)} cy={y(p.count)} r={3} fill="#3b82f6">
+          <circle key={i} cx={x(i)} cy={y(p.count)} r={3} fill="var(--accent)">
             <title>{`${dayjs(p.ts).format('DD.MM HH:mm')}: ${p.count}`}</title>
           </circle>
         ))}
@@ -738,8 +738,8 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
             cx={hoverState.x}
             cy={hoverState.y}
             r={5}
-            fill="#dbeafe"
-            stroke="#3b82f6"
+            fill="var(--surface)"
+            stroke="var(--accent)"
             strokeWidth={2}
           />
         )}
@@ -766,7 +766,7 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
             textAnchor="end"
             dominantBaseline="middle"
             fontSize={12}
-            fill="#64748b"
+            fill="var(--muted-fg)"
           >
             {formatCount(val)}
           </text>
@@ -780,7 +780,7 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
             y={H - 6}
             textAnchor={i === 0 ? 'start' : i === xLabels.length - 1 ? 'end' : 'middle'}
             fontSize={13}
-            fill="#64748b"
+            fill="var(--muted-fg)"
           >
             {label}
           </text>
@@ -796,12 +796,13 @@ const styles: Record<string, React.CSSProperties> = {
   h2: { margin: 0, fontSize: '1.5rem' },
   ingestRow: { display: 'flex', gap: '0.5rem', alignItems: 'center' },
   ingestBtn: {
-    background: '#3b82f6', color: '#fff', border: 'none',
+    background: 'var(--accent)', color: '#fff', border: 'none',
     borderRadius: 8, padding: '0.55rem 1.1rem', cursor: 'pointer', fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap',
   },
   ingestInfo: {
-    background: '#1e3a5f', borderRadius: 8, padding: '0.75rem 1rem',
-    marginBottom: '1.5rem', fontSize: '0.85rem', color: '#93c5fd',
+    background: 'var(--surface)', borderRadius: 8, padding: '0.75rem 1rem',
+    marginBottom: '1.5rem', fontSize: '0.85rem', color: 'var(--accent-fg)',
+    border: '1px solid var(--border)',
     display: 'flex', flexDirection: 'column', gap: '0.25rem',
   },
   chartTooltip: {
@@ -811,30 +812,30 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: 220,
     padding: '0.5rem 0.65rem',
     borderRadius: 10,
-    border: '1px solid rgba(59, 130, 246, 0.35)',
-    background: 'rgba(15, 23, 42, 0.98)',
+    border: '1px solid color-mix(in srgb, var(--accent) 35%, var(--border))',
+    background: 'color-mix(in srgb, var(--surface) 96%, transparent)',
     boxShadow: '0 14px 30px rgba(2, 6, 23, 0.42)',
     pointerEvents: 'none',
   },
   chartTooltipTime: {
-    color: '#cbd5e1',
+    color: 'var(--muted-fg)',
     fontSize: '0.72rem',
     marginBottom: '0.2rem',
   },
   chartTooltipValue: {
-    color: '#93c5fd',
+    color: 'var(--accent)',
     fontSize: '0.92rem',
     fontWeight: 700,
   },
   statusWrap: {
-    background: '#1e293b', borderRadius: 10, padding: '0.8rem 1rem', border: '1px solid #334155', marginBottom: '1rem',
+    background: 'var(--surface)', borderRadius: 10, padding: '0.8rem 1rem', border: '1px solid var(--border)', marginBottom: '1rem',
   },
-  statusTitle: { color: '#94a3b8', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.6rem' },
+  statusTitle: { color: 'var(--muted-fg)', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.6rem' },
   statusGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '0.6rem' },
-  statusCard: { background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: '0.65rem 0.75rem' },
-  statusName: { color: '#e2e8f0', fontSize: '0.86rem', fontWeight: 600, marginBottom: '0.35rem' },
+  statusCard: { background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '0.65rem 0.75rem' },
+  statusName: { color: 'var(--fg)', fontSize: '0.86rem', fontWeight: 600, marginBottom: '0.35rem' },
   statusBadge: { display: 'inline-block', borderRadius: 999, padding: '0.12rem 0.5rem', fontSize: '0.72rem', fontWeight: 700, marginBottom: '0.35rem' },
-  statusLine: { color: '#94a3b8', fontSize: '0.78rem', lineHeight: 1.45 },
+  statusLine: { color: 'var(--muted-fg)', fontSize: '0.78rem', lineHeight: 1.45 },
   sectionHeader: {
     display: 'flex',
     alignItems: 'center',
@@ -842,48 +843,48 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: '0.65rem',
   },
   sectionTitle: {
-    color: '#94a3b8',
+    color: 'var(--muted-fg)',
     fontSize: '0.78rem',
     fontWeight: 700,
     textTransform: 'uppercase',
     letterSpacing: '0.08em',
   },
   kpiRow: { display: 'flex', gap: '1rem', marginBottom: '1.5rem' },
-  kpi: { flex: 1, background: '#1e293b', borderRadius: 10, padding: '1.25rem 1.5rem', border: '1px solid #334155' },
-  kpiVal: { fontSize: '2rem', fontWeight: 700, color: '#93c5fd' },
-  kpiLabel: { color: '#64748b', fontSize: '0.85rem', marginTop: '0.25rem' },
+  kpi: { flex: 1, background: 'var(--surface)', borderRadius: 10, padding: '1.25rem 1.5rem', border: '1px solid var(--border)' },
+  kpiVal: { fontSize: '2rem', fontWeight: 700, color: 'var(--accent)' },
+  kpiLabel: { color: 'var(--muted-fg)', fontSize: '0.85rem', marginTop: '0.25rem' },
   kpiLabelRow: { display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '0.25rem' },
   grid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' },
-  panel: { background: '#1e293b', borderRadius: 10, padding: '1.25rem', border: '1px solid #334155' },
-  panelTitle: { margin: '0 0 1rem 0', fontSize: '0.95rem', color: '#94a3b8' },
+  panel: { background: 'var(--surface)', borderRadius: 10, padding: '1.25rem', border: '1px solid var(--border)' },
+  panelTitle: { margin: '0 0 1rem 0', fontSize: '0.95rem', color: 'var(--muted-fg)' },
   panelTitleRow: { display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '1rem' },
   panelMetaRow: { display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.65rem' },
-  panelMetaLabel: { color: '#64748b', fontSize: '0.76rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' },
-  panelMetaValue: { color: '#cbd5e1', fontSize: '0.8rem' },
+  panelMetaLabel: { color: 'var(--muted-fg)', fontSize: '0.76rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' },
+  panelMetaValue: { color: 'var(--fg)', fontSize: '0.8rem' },
   ol: { margin: 0, padding: '0 0 0 1.2rem' },
-  li: { display: 'flex', gap: '0.75rem', marginBottom: '0.4rem', fontSize: '0.82rem', color: '#f1f5f9' },
-  count: { background: '#1e3a5f', color: '#93c5fd', borderRadius: 4, padding: '0 0.4rem', flexShrink: 0 },
+  li: { display: 'flex', gap: '0.75rem', marginBottom: '0.4rem', fontSize: '0.82rem', color: 'var(--fg)' },
+  count: { background: 'var(--accent-soft)', color: 'var(--accent-fg)', borderRadius: 4, padding: '0 0.4rem', flexShrink: 0 },
   msg: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   bucketSelect: {
-    background: '#0f172a',
-    color: '#e2e8f0',
-    border: '1px solid #334155',
+    background: 'var(--surface)',
+    color: 'var(--fg)',
+    border: '1px solid var(--border)',
     borderRadius: 6,
     padding: '0.35rem 0.55rem',
     fontSize: '0.82rem',
   },
   autoProfileGroup: {
     display: 'inline-flex',
-    border: '1px solid #334155',
+    border: '1px solid var(--border)',
     borderRadius: 8,
     overflow: 'hidden',
-    background: '#0f172a',
+    background: 'var(--surface)',
   },
   autoProfileButton: {
     background: 'transparent',
-    color: '#94a3b8',
+    color: 'var(--muted-fg)',
     border: 'none',
-    borderRight: '1px solid #334155',
+    borderRight: '1px solid var(--border)',
     padding: '0.32rem 0.55rem',
     fontSize: '0.76rem',
     fontWeight: 700,
@@ -892,7 +893,7 @@ const styles: Record<string, React.CSSProperties> = {
     letterSpacing: '0.04em',
   },
   autoProfileButtonActive: {
-    background: '#1d4ed8',
+    background: 'var(--accent)',
     color: '#fff',
   },
 }

@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { useFeatureFlags } from '../ctx/FeatureFlagsContext'
+import { useTheme } from '../ctx/ThemeContext'
 import HelpTip from './HelpTip'
 import QuickTutorial from './QuickTutorial'
 
@@ -14,6 +15,7 @@ const NAV_BASE: { to: string; label: string; help: string }[] = [
 
 export default function Layout() {
   const flags = useFeatureFlags()
+  const { theme, toggleTheme } = useTheme()
   
   const navItems = NAV_BASE.filter(item => {
     if (item.to === '/ai') {
@@ -25,7 +27,7 @@ export default function Layout() {
   return (
     <div style={styles.root}>
       <aside style={styles.sidebar}>
-        <div style={styles.logo}>Log<span style={{ color: '#3b82f6' }}>Analyzer</span></div>
+        <div style={styles.logo}>Log<span style={{ color: 'var(--accent)' }}>Analyzer</span></div>
         <nav style={styles.nav}>
           {navItems.map(n => (
             <div key={n.to} style={styles.navRow}>
@@ -34,8 +36,8 @@ export default function Layout() {
                 end={n.to === '/'}
                 style={({ isActive }) => ({
                   ...styles.link,
-                  background: isActive ? '#1e3a5f' : 'transparent',
-                  color: isActive ? '#93c5fd' : '#94a3b8',
+                  background: isActive ? 'var(--nav-active-bg)' : 'transparent',
+                  color: isActive ? 'var(--nav-active-fg)' : 'var(--muted-fg)',
                 })}
               >
                 {n.label}
@@ -51,7 +53,12 @@ export default function Layout() {
             <span>i-Buttons erklaeren Bedienelemente direkt im Kontext.</span>
             <HelpTip content="Nutze die kleinen i-Schaltflaechen neben Bereichen, Filtern und Navigationseintraegen fuer kurze Erklaerungen." ariaLabel="Hinweis zu Hilfeschaltflaechen" />
           </div>
-          <QuickTutorial />
+          <div style={styles.toolbarActions}>
+            <button type="button" onClick={toggleTheme} style={styles.themeToggle}>
+              {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+            </button>
+            <QuickTutorial />
+          </div>
         </div>
         <Outlet />
       </main>
@@ -60,14 +67,14 @@ export default function Layout() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  root: { display: 'flex', minHeight: '100vh', background: '#0f172a', color: '#f1f5f9' },
+  root: { display: 'flex', minHeight: '100vh', background: 'var(--bg)', color: 'var(--fg)' },
   sidebar: {
-    width: 220, background: '#1e293b', display: 'flex', flexDirection: 'column',
+    width: 220, background: 'var(--surface)', display: 'flex', flexDirection: 'column',
     padding: '1.5rem 1rem', gap: '0.25rem', flexShrink: 0,
-    borderRight: '1px solid #334155',
+    borderRight: '1px solid var(--border)',
   },
   logo: {
-    fontSize: '1.3rem', fontWeight: 700, color: '#f1f5f9',
+    fontSize: '1.3rem', fontWeight: 700, color: 'var(--fg)',
     marginBottom: '2rem', paddingLeft: '0.5rem',
   },
   nav: { display: 'flex', flexDirection: 'column', gap: '0.15rem', flex: 1 },
@@ -90,7 +97,22 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: '0.5rem',
-    color: '#94a3b8',
+    color: 'var(--muted-fg)',
     fontSize: '0.82rem',
+  },
+  toolbarActions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  themeToggle: {
+    background: 'var(--surface-2)',
+    color: 'var(--fg)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    padding: '0.45rem 0.75rem',
+    cursor: 'pointer',
+    fontWeight: 600,
+    whiteSpace: 'nowrap',
   },
 }

@@ -285,39 +285,39 @@ export const pickerStyles: Record<string, React.CSSProperties> = {
   wrap: { position: 'relative', minWidth: 240, maxWidth: 360 },
   trigger: {
     display: 'flex', alignItems: 'center', width: '100%',
-    background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155',
+    background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)',
     borderRadius: 8, padding: '0.5rem 0.75rem', cursor: 'pointer', fontSize: '0.88rem',
   },
   dropdown: {
     position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 100,
-    background: '#1e293b', border: '1px solid #334155', borderRadius: 10,
+    background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
     boxShadow: '0 8px 32px #0006', padding: '0.5rem', minWidth: 320, maxHeight: 380,
     overflowY: 'auto',
   },
   helperNote: {
-    color: '#94a3b8',
+    color: 'var(--muted-fg)',
     fontSize: '0.76rem',
     lineHeight: 1.45,
     padding: '0.45rem 0.55rem 0.65rem',
-    borderBottom: '1px solid #334155',
+    borderBottom: '1px solid var(--border)',
     marginBottom: '0.35rem',
   },
   groupHeader: {
-    color: '#475569', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase',
+    color: 'var(--muted-fg)', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase',
     padding: '0.4rem 0.5rem 0.2rem',
   },
   option: {
     display: 'flex', alignItems: 'center', gap: '0.5rem',
     padding: '0.35rem 0.5rem', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem',
-    color: '#f1f5f9',
+    color: 'var(--fg)',
   },
   customRow: { display: 'flex', gap: '0.4rem', padding: '0.35rem 0.5rem' },
   customInput: {
-    flex: 1, background: '#0f172a', color: '#f1f5f9', border: '1px solid #334155',
+    flex: 1, background: 'var(--surface-2)', color: 'var(--fg)', border: '1px solid var(--border)',
     borderRadius: 6, padding: '0.35rem 0.6rem', fontSize: '0.83rem',
   },
   addBtn: {
-    background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6,
+    background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6,
     padding: '0.35rem 0.65rem', cursor: 'pointer', fontWeight: 700,
   },
 }

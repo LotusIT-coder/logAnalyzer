@@ -5,12 +5,15 @@
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import Layout from '../components/Layout'
+import { FeatureFlagsContext } from '../ctx/FeatureFlagsContext.shared'
 
-function renderLayout(initialPath = '/') {
+function renderLayout(initialPath = '/', ollamaAvailable = false) {
   return render(
-    <MemoryRouter initialEntries={[initialPath]}>
-      <Layout />
-    </MemoryRouter>
+    <FeatureFlagsContext.Provider value={{ ollama_available: ollamaAvailable }}>
+      <MemoryRouter initialEntries={[initialPath]}>
+        <Layout />
+      </MemoryRouter>
+    </FeatureFlagsContext.Provider>
   )
 }
 
@@ -28,7 +31,16 @@ describe('Layout', () => {
     expect(screen.getByRole('link', { name: 'Incidents' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Regeln' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Quellen' })).toBeInTheDocument()
+  })
+
+  test('renders AI Chat link when ollama is available', () => {
+    renderLayout('/', true)
     expect(screen.getByRole('link', { name: 'AI Chat' })).toBeInTheDocument()
+  })
+
+  test('hides AI Chat link when ollama is unavailable', () => {
+    renderLayout('/', false)
+    expect(screen.queryByRole('link', { name: 'AI Chat' })).not.toBeInTheDocument()
   })
 
   test('Dashboard link points to /', () => {
@@ -44,7 +56,7 @@ describe('Layout', () => {
   })
 
   test('AI Chat link points to /ai', () => {
-    renderLayout()
+    renderLayout('/', true)
     const link = screen.getByRole('link', { name: 'AI Chat' })
     expect(link).toHaveAttribute('href', '/ai')
   })

@@ -8,20 +8,20 @@ import HelpTip from '../components/HelpTip'
 function ReferencedLogs({ lines }: { lines: string[] }) {
   const [open, setOpen] = useState(false)
   return (
-    <div style={{ marginTop: '0.75rem', borderTop: '1px solid #334155', paddingTop: '0.5rem' }}>
+    <div style={{ marginTop: '0.75rem', borderTop: '1px solid var(--border)', paddingTop: '0.5rem' }}>
       <button
         onClick={() => setOpen(v => !v)}
-        style={{ background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', fontSize: '0.78rem', padding: 0 }}
+        style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: '0.78rem', padding: 0 }}
       >
         {open ? '▼' : '▶'} {lines.length} referenzierte Log-Zeile{lines.length !== 1 ? 'n' : ''}
       </button>
       {open && (
-        <div style={{ marginTop: '0.4rem', background: '#0f172a', borderRadius: 6, padding: '0.5rem 0.75rem', maxHeight: 220, overflowY: 'auto' }}>
+        <div style={{ marginTop: '0.4rem', background: 'var(--surface-2)', borderRadius: 6, padding: '0.5rem 0.75rem', maxHeight: 220, overflowY: 'auto' }}>
           {lines.map((l, i) => (
             <div key={i} style={{
               fontFamily: 'monospace', fontSize: '0.75rem', lineHeight: 1.5, wordBreak: 'break-all',
               color: /error|crit|fatal|emerg/i.test(l) ? '#f87171' : /warn/i.test(l) ? '#fbbf24' : '#94a3b8',
-              borderBottom: '1px solid #1e293b', paddingBottom: '0.1rem',
+              borderBottom: '1px solid var(--border)', paddingBottom: '0.1rem',
             }}>{l}</div>
           ))}
         </div>
@@ -59,12 +59,12 @@ function ContextBadge({ attachedContext }: { attachedContext: { title: string; s
       <span style={badgeStyles.label}>Kontext:</span>
       {hasFilter && <span style={badgeStyles.pill}>🕐 {rangeLabel}</span>}
       {selectedSources.map(s => (
-        <span key={s.id} style={{ ...badgeStyles.pill, background: '#1e3a5f', color: '#93c5fd' }}>
+        <span key={s.id} style={{ ...badgeStyles.pill, background: 'var(--accent-soft)', color: 'var(--accent-fg)' }}>
           {s.label}
         </span>
       ))}
       {attachedContext && (
-        <span style={{ ...badgeStyles.pill, background: '#082f49', color: '#bae6fd' }}>
+        <span style={{ ...badgeStyles.pill, background: 'color-mix(in srgb, var(--accent) 16%, var(--surface))', color: 'var(--accent-fg)' }}>
           Netzkontext: {attachedContext.title}
         </span>
       )}
@@ -73,10 +73,10 @@ function ContextBadge({ attachedContext }: { attachedContext: { title: string; s
 }
 
 const badgeStyles: Record<string, React.CSSProperties> = {
-  wrap: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.35rem', padding: '0.4rem 0.75rem', background: '#0f172a', borderRadius: 8, border: '1px solid #1e293b', marginBottom: '0.75rem', fontSize: '0.8rem' },
-  label: { color: '#475569', marginRight: '0.15rem', flexShrink: 0 },
-  pill: { background: '#1e293b', color: '#94a3b8', borderRadius: 12, padding: '0.15rem 0.55rem', border: '1px solid #334155' },
-  noFilter: { color: '#fbbf24', fontSize: '0.8rem' },
+  wrap: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.35rem', padding: '0.4rem 0.75rem', background: 'var(--surface-2)', borderRadius: 8, border: '1px solid var(--border)', marginBottom: '0.75rem', fontSize: '0.8rem' },
+  label: { color: 'var(--muted-fg)', marginRight: '0.15rem', flexShrink: 0 },
+  pill: { background: 'var(--surface)', color: 'var(--muted-fg)', borderRadius: 12, padding: '0.15rem 0.55rem', border: '1px solid var(--border)' },
+  noFilter: { color: 'var(--warning-fg)', fontSize: '0.8rem' },
 }
 
 export default function AIChatPage() {
@@ -182,8 +182,8 @@ const styles: Record<string, React.CSSProperties> = {
   titleRow: { display: 'flex', alignItems: 'center', gap: '0.5rem' },
   h2: { margin: 0, fontSize: '1.5rem' },
   modelWrap: { display: 'flex', alignItems: 'center', gap: '0.45rem' },
-  select: { background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.75rem', minWidth: 220 },
-  clearBtn: { background: 'none', border: '1px solid #334155', color: '#64748b', borderRadius: 6, padding: '0.35rem 0.65rem', cursor: 'pointer', fontSize: '0.78rem' },
+  select: { background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)', borderRadius: 6, padding: '0.4rem 0.75rem', minWidth: 220 },
+  clearBtn: { background: 'none', border: '1px solid var(--border)', color: 'var(--muted-fg)', borderRadius: 6, padding: '0.35rem 0.65rem', cursor: 'pointer', fontSize: '0.78rem' },
   contextPanel: {
     display: 'flex',
     justifyContent: 'space-between',
@@ -191,16 +191,16 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     padding: '0.8rem 0.95rem',
     borderRadius: 12,
-    border: '1px solid #164e63',
-    background: '#08212f',
+    border: '1px solid var(--accent)',
+    background: 'color-mix(in srgb, var(--accent) 10%, var(--surface))',
     marginBottom: '0.85rem',
   },
   contextTitleRow: { display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.25rem' },
-  contextBody: { color: '#cbd5e1', fontSize: '0.84rem', lineHeight: 1.5 },
+  contextBody: { color: 'var(--fg)', fontSize: '0.84rem', lineHeight: 1.5 },
   contextBtn: {
     background: 'none',
-    border: '1px solid #0891b2',
-    color: '#bae6fd',
+    border: '1px solid var(--accent)',
+    color: 'var(--accent-fg)',
     borderRadius: 8,
     padding: '0.45rem 0.75rem',
     cursor: 'pointer',
@@ -210,22 +210,22 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column',
     gap: '1rem', paddingRight: '0.5rem', marginBottom: '1rem',
   },
-  placeholder: { color: '#475569', textAlign: 'center', padding: '3rem 0', fontSize: '0.9rem' },
+  placeholder: { color: 'var(--muted-fg)', textAlign: 'center', padding: '3rem 0', fontSize: '0.9rem' },
   bubble: { borderRadius: 10, padding: '0.75rem 1rem', maxWidth: '80%' },
-  userBubble: { background: '#1e3a5f', alignSelf: 'flex-end' },
-  aiBubble: { background: '#1e293b', border: '1px solid #334155', alignSelf: 'flex-start' },
-  errorBubble: { borderColor: '#7f1d1d', background: '#1c0a0a' },
-  role: { fontSize: '0.72rem', fontWeight: 700, color: '#64748b', display: 'block', marginBottom: '0.35rem' },
+  userBubble: { background: 'var(--accent-soft)', alignSelf: 'flex-end' },
+  aiBubble: { background: 'var(--surface)', border: '1px solid var(--border)', alignSelf: 'flex-start' },
+  errorBubble: { borderColor: 'var(--danger-fg)', background: 'color-mix(in srgb, var(--danger-fg) 12%, var(--surface))' },
+  role: { fontSize: '0.72rem', fontWeight: 700, color: 'var(--muted-fg)', display: 'block', marginBottom: '0.35rem' },
   pre: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '0.88rem', fontFamily: 'inherit' },
   inputRow: { display: 'flex', gap: '0.75rem', alignItems: 'flex-end' },
   inputHelpWrap: { paddingBottom: '0.4rem' },
   textarea: {
-    flex: 1, background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155',
+    flex: 1, background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)',
     borderRadius: 8, padding: '0.65rem 0.85rem', fontSize: '0.9rem',
     resize: 'none', outline: 'none',
   },
   sendBtn: {
-    background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 8,
+    background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8,
     width: 48, height: 48, fontSize: '1.1rem', cursor: 'pointer', flexShrink: 0,
   },
 }

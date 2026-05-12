@@ -97,7 +97,7 @@ export default function IncidentsPage() {
       <GlobalSourceFilterNotice />
 
       {isLoading ? (
-        <div style={{ color: '#64748b', padding: '2rem' }}>Lade…</div>
+        <div style={{ color: 'var(--muted-fg)', padding: '2rem' }}>Lade…</div>
       ) : (
         <>
           <div style={styles.sectionHeader}>
@@ -145,7 +145,7 @@ export default function IncidentsPage() {
               </div>
             ))}
             {!items.length && (
-              <div style={{ padding: '2rem', color: '#64748b', textAlign: 'center' }}>Keine Incidents</div>
+              <div style={{ padding: '2rem', color: 'var(--muted-fg)', textAlign: 'center' }}>Keine Incidents</div>
             )}
           </div>
         </>
@@ -157,13 +157,13 @@ export default function IncidentsPage() {
 const styles: Record<string, React.CSSProperties> = {
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' },
   h2: { margin: 0, fontSize: '1.5rem' },
-  readOnlyNotice: { background: '#1f2937', color: '#cbd5e1', border: '1px solid #334155', borderRadius: 8, padding: '0.65rem 0.9rem', marginBottom: '1rem', fontSize: '0.86rem' },
-  searchInput: { background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.75rem', minWidth: 200 },
-  select: { background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.6rem' },
+  readOnlyNotice: { background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)', borderRadius: 8, padding: '0.65rem 0.9rem', marginBottom: '1rem', fontSize: '0.86rem' },
+  searchInput: { background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)', borderRadius: 6, padding: '0.4rem 0.75rem', minWidth: 200 },
+  select: { background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)', borderRadius: 6, padding: '0.4rem 0.6rem' },
   quickFilterBtn: {
     background: 'none',
-    color: '#94a3b8',
-    border: '1px solid #334155',
+    color: 'var(--muted-fg)',
+    border: '1px solid var(--border)',
     borderRadius: 6,
     padding: '0.4rem 0.75rem',
     cursor: 'pointer',
@@ -173,34 +173,34 @@ const styles: Record<string, React.CSSProperties> = {
     letterSpacing: '0.04em',
   },
   quickFilterBtnActive: {
-    background: '#1d4ed8',
+    background: 'var(--accent)',
     color: '#fff',
-    borderColor: '#1d4ed8',
+    borderColor: 'var(--accent)',
   },
   sectionHeader: { display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.65rem' },
-  sectionTitle: { color: '#94a3b8', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' },
+  sectionTitle: { color: 'var(--muted-fg)', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' },
   list: { display: 'flex', flexDirection: 'column', gap: '0.75rem' },
-  card: { background: '#1e293b', borderRadius: 10, padding: '1rem 1.25rem', border: '1px solid #334155' },
+  card: { background: 'var(--surface)', borderRadius: 10, padding: '1rem 1.25rem', border: '1px solid var(--border)' },
   cardTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' },
   title: { fontWeight: 600, fontSize: '0.95rem' },
   badge: { borderRadius: 4, padding: '0.15rem 0.6rem', fontSize: '0.75rem', fontWeight: 700, color: '#fff' },
-  meta: { display: 'flex', gap: '1.5rem', fontSize: '0.82rem', color: '#94a3b8', marginBottom: '0.75rem' },
+  meta: { display: 'flex', gap: '1.5rem', fontSize: '0.82rem', color: 'var(--muted-fg)', marginBottom: '0.75rem' },
   actions: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap' },
   statusBtn: {
-    background: 'none', border: '1px solid #334155', color: '#94a3b8',
+    background: 'none', border: '1px solid var(--border)', color: 'var(--muted-fg)',
     borderRadius: 6, padding: '0.25rem 0.65rem', cursor: 'pointer', fontSize: '0.78rem',
   },
   archiveBtn: {
-    background: '#10223f', border: '1px solid #1d4ed8', color: '#93c5fd',
+    background: 'var(--accent-soft)', border: '1px solid var(--accent)', color: 'var(--accent-fg)',
     borderRadius: 6, padding: '0.25rem 0.65rem', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700,
   },
   deleteBtn: {
-    background: 'none', border: '1px solid #7f1d1d', color: '#f87171',
+    background: 'none', border: '1px solid var(--danger-fg)', color: 'var(--danger-fg)',
     borderRadius: 6, padding: '0.25rem 0.65rem', cursor: 'pointer', fontSize: '0.78rem',
   },
   deleteBtnConfirm: {
-    background: '#7f1d1d', border: '1px solid #b91c1c', color: '#fff',
+    background: 'var(--danger-fg)', border: '1px solid var(--danger-fg)', color: '#fff',
     borderRadius: 6, padding: '0.25rem 0.65rem', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700,
   },
-  deleteHint: { color: '#fca5a5', fontSize: '0.78rem', alignSelf: 'center' },
+  deleteHint: { color: 'var(--danger-fg)', fontSize: '0.78rem', alignSelf: 'center' },
 }

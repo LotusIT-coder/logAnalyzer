@@ -1,3 +1,53 @@
 *, *::before, *::after { box-sizing: border-box; }
-body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #f1f5f9; }
+
+:root {
+	--bg: #0f172a;
+	--fg: #f1f5f9;
+	--muted-fg: #94a3b8;
+	--surface: #1e293b;
+	--surface-2: #172234;
+	--surface-3: #111827;
+	--border: #334155;
+	--accent: #3b82f6;
+	--accent-soft: #0f2d46;
+	--accent-fg: #bae6fd;
+	--danger-fg: #f87171;
+	--success-fg: #86efac;
+	--warning-fg: #fbbf24;
+	--table-head-bg: #0f172a;
+	--table-row-bg: #1e293b;
+	--table-row-alt-bg: #162032;
+	--nav-active-bg: #1e3a5f;
+	--nav-active-fg: #93c5fd;
+}
+
+:root[data-theme='light'] {
+	--bg: #f4f7fb;
+	--fg: #0f172a;
+	--muted-fg: #334155;
+	--surface: #ffffff;
+	--surface-2: #eef3f9;
+	--surface-3: #e2e8f0;
+	--border: #b7c4d6;
+	--accent: #2563eb;
+	--accent-soft: #dbeafe;
+	--accent-fg: #1e3a8a;
+	--danger-fg: #b91c1c;
+	--success-fg: #166534;
+	--warning-fg: #a16207;
+	--table-head-bg: #e2e8f0;
+	--table-row-bg: #ffffff;
+	--table-row-alt-bg: #f1f5f9;
+	--nav-active-bg: #dbeafe;
+	--nav-active-fg: #1d4ed8;
+}
+
+body {
+	margin: 0;
+	font-family: system-ui, -apple-system, sans-serif;
+	background: var(--bg);
+	color: var(--fg);
+	transition: background-color 0.2s ease, color 0.2s ease;
+}
+
 input, select, textarea, button { font-family: inherit; }

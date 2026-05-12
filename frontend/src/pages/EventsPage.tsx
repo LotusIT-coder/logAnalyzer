@@ -164,7 +164,7 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>{title}</span>
             <span style={{ ...modal.dot, background: allConnected ? '#22c55e' : anyConnected ? '#fbbf24' : '#ef4444' }} />
-            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--muted-fg)' }}>
               {allConnected ? 'alle verbunden' : anyConnected ? `${sources.filter(s => connected[s.id]).length}/${sources.length} verbunden` : 'getrennt'}
             </span>
           </div>
@@ -183,12 +183,12 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
             />
             <button onClick={() => setPaused(v => !v)} style={modal.ctrlBtn}>{paused ? 'Weiter' : 'Pause'}</button>
             <button onClick={() => setLines([])} style={modal.ctrlBtn}>Leeren</button>
-            <button onClick={onClose} style={{ ...modal.ctrlBtn, color: '#f87171' }}>x Schliessen</button>
+            <button onClick={onClose} style={{ ...modal.ctrlBtn, color: 'var(--danger-fg)' }}>x Schliessen</button>
           </div>
         </div>
 
         {showSourceTag && (
-          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', padding: '0.4rem 1rem', borderBottom: '1px solid #1e293b', fontSize: '0.72rem' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', padding: '0.4rem 1rem', borderBottom: '1px solid var(--border)', fontSize: '0.72rem' }}>
             {sources.map(s => (
               <span key={s.id} style={{ color: sourceColor[s.id], display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                 <span style={{ width: 8, height: 8, borderRadius: 2, background: sourceColor[s.id], display: 'inline-block' }} />
@@ -200,7 +200,7 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
         )}
 
         {errorList.length > 0 && (
-          <div style={{ color: '#f87171', padding: '0.5rem 1rem', fontSize: '0.82rem' }}>
+          <div style={{ color: 'var(--danger-fg)', padding: '0.5rem 1rem', fontSize: '0.82rem' }}>
             {errorList.map(([id, msg]) => {
               const s = sources.find(x => x.id === id)
               return <div key={id}>{s?.name ?? id}: {msg}</div>
@@ -231,7 +231,7 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
               {line.text}
             </div>
           ))}
-          {!displayed.length && <div style={{ color: '#475569', padding: '1rem' }}>{anyConnected ? 'Warte auf neue Zeilen...' : 'Keine Daten'}</div>}
+          {!displayed.length && <div style={{ color: 'var(--muted-fg)', padding: '1rem' }}>{anyConnected ? 'Warte auf neue Zeilen...' : 'Keine Daten'}</div>}
           <div ref={bottomRef} />
         </div>
 
@@ -479,8 +479,8 @@ export default function EventsPage() {
       {showGlobalFilterNotice && <GlobalSourceFilterNotice />}
 
       {uploadResult && (
-        <div style={{ padding: '0.5rem 1rem', marginBottom: '0.5rem', borderRadius: 8, background: isUploadError(uploadResult) ? '#450a0a' : '#0f2d1a', color: isUploadError(uploadResult) ? '#f87171' : '#86efac', fontSize: '0.85rem', position: 'relative' }}>
-          <button onClick={() => setUploadResult(null)} style={{ position: 'absolute', top: '0.4rem', right: '0.5rem', background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
+        <div style={{ padding: '0.5rem 1rem', marginBottom: '0.5rem', borderRadius: 8, background: isUploadError(uploadResult) ? 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))' : 'color-mix(in srgb, var(--success-fg) 16%, var(--surface))', color: isUploadError(uploadResult) ? 'var(--danger-fg)' : 'var(--success-fg)', fontSize: '0.85rem', position: 'relative', border: '1px solid var(--border)' }}>
+          <button onClick={() => setUploadResult(null)} style={{ position: 'absolute', top: '0.4rem', right: '0.5rem', background: 'none', border: 'none', color: 'var(--muted-fg)', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
           {isUploadError(uploadResult) ? uploadResult.error : `Import abgeschlossen: ${uploadResult.events_created ?? 0} Events importiert.`}
         </div>
       )}
@@ -602,12 +602,12 @@ export default function EventsPage() {
       )}
 
       {isLoading ? (
-        <div style={{ color: '#64748b', padding: '2rem' }}>Lade...</div>
+        <div style={{ color: 'var(--muted-fg)', padding: '2rem' }}>Lade...</div>
       ) : (
         <>
           <div style={styles.resultsMeta}>
             <span>{allEvents.length} Einträge geladen (neueste zuerst)</span>
-            {hasNextPage && <span style={{ color: '#64748b' }}>↓ Scrollen zum Laden von mehr</span>}
+            {hasNextPage && <span style={{ color: 'var(--muted-fg)' }}>↓ Scrollen zum Laden von mehr</span>}
             <HelpTip content="Die Liste ist standardmaessig absteigend nach Zeit sortiert. Scrolle nach unten um weitere Events zu laden. Ein Klick auf eine Zeile klappt die vollstaendigen Felder aus." ariaLabel="Eventliste erklaeren" />
           </div>
           <div ref={tableContainerRef} style={styles.tableContainer}>
@@ -623,11 +623,11 @@ export default function EventsPage() {
               {allEvents.map((event: EventResponse) => (
                 <div key={event.id}>
                   <div
-                    style={{ ...styles.row, cursor: 'pointer', background: expanded[event.id] ? '#162032' : undefined }}
+                    style={{ ...styles.row, cursor: 'pointer', background: expanded[event.id] ? 'var(--table-row-alt-bg)' : undefined }}
                     onClick={() => toggleExpand(event.id)}
                     title="Klicken zum Expandieren"
                   >
-                    <span style={{ width: 150, color: '#64748b', flexShrink: 0, fontSize: '0.78rem' }}>
+                    <span style={{ width: 150, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.78rem' }}>
                       {dayjs(event.timestamp).format('DD.MM.YY HH:mm:ss')}
                     </span>
                     <span style={{ width: 75, flexShrink: 0 }}>
@@ -636,14 +636,14 @@ export default function EventsPage() {
                       </span>
                     </span>
                     {showSourceColumn && (
-                      <span style={{ width: 140, color: '#7dd3fc', flexShrink: 0, fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={event.source_id ?? ''}>
+                      <span style={{ width: 140, color: 'var(--accent)', flexShrink: 0, fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={event.source_id ?? ''}>
                         {event.source_id ? (sourceNameById.get(event.source_id) ?? event.source_id.slice(0, 8)) : '-'}
                       </span>
                     )}
-                    <span style={{ width: 110, color: '#64748b', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span style={{ width: 110, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {event.host ?? '-'}
                     </span>
-                    <span style={{ width: 120, color: '#94a3b8', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span style={{ width: 120, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {event.service ?? '-'}
                     </span>
                     <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.85rem' }}>
@@ -669,10 +669,10 @@ export default function EventsPage() {
                 </div>
               ))}
               {!allEvents.length && (
-                <div style={{ padding: '2rem', color: '#64748b', textAlign: 'center' }}>Keine Events gefunden</div>
+                <div style={{ padding: '2rem', color: 'var(--muted-fg)', textAlign: 'center' }}>Keine Events gefunden</div>
               )}
               {isFetchingNextPage && (
-                <div style={{ padding: '1rem', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
+                <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--muted-fg)', fontSize: '0.85rem' }}>
                   Lade weitere Events...
                 </div>
               )}
@@ -687,57 +687,57 @@ export default function EventsPage() {
 const styles: Record<string, React.CSSProperties> = {
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' },
   h2: { margin: 0, fontSize: '1.5rem' },
-  refBtn: { background: 'none', border: '1px solid #334155', color: '#94a3b8', borderRadius: 6, padding: '0.35rem 0.75rem', cursor: 'pointer', opacity: 1 },
-  liveBtn: { background: '#1e3a5f', border: '1px solid #1d4ed8', color: '#93c5fd', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap' },
-  liveBtnDisabled: { background: '#0f172a', border: '1px solid #334155', color: '#64748b', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'not-allowed', fontWeight: 700, whiteSpace: 'nowrap' },
+  refBtn: { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--muted-fg)', borderRadius: 6, padding: '0.35rem 0.75rem', cursor: 'pointer', opacity: 1 },
+  liveBtn: { background: 'var(--nav-active-bg)', border: '1px solid var(--accent)', color: 'var(--nav-active-fg)', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap' },
+  liveBtnDisabled: { background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--muted-fg)', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'not-allowed', fontWeight: 700, whiteSpace: 'nowrap' },
   filters: { display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center' },
   contextBar: {
     display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '1rem',
-    background: '#111827', border: '1px solid #1f2937', borderRadius: 10, padding: '0.75rem 0.9rem',
+    background: 'var(--surface-3)', border: '1px solid var(--border)', borderRadius: 10, padding: '0.75rem 0.9rem',
   },
-  contextLabel: { color: '#94a3b8', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.08em' },
-  contextChip: { background: '#0f2d46', color: '#bae6fd', borderRadius: 999, padding: '0.2rem 0.65rem', fontSize: '0.82rem' },
-  resultsMeta: { display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', color: '#475569', marginBottom: '0.5rem' },
-  select: { background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.6rem' },
+  contextLabel: { color: 'var(--muted-fg)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.08em' },
+  contextChip: { background: 'var(--accent-soft)', color: 'var(--accent-fg)', borderRadius: 999, padding: '0.2rem 0.65rem', fontSize: '0.82rem' },
+  resultsMeta: { display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', color: 'var(--muted-fg)', marginBottom: '0.5rem' },
+  select: { background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)', borderRadius: 6, padding: '0.4rem 0.6rem' },
   severityDropdown: { position: 'relative' },
   severitySummary: {
-    background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6,
+    background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)', borderRadius: 6,
     padding: '0.4rem 0.6rem', listStyle: 'none', cursor: 'pointer', minWidth: 160,
   },
   severityMenu: {
     position: 'absolute', top: 'calc(100% + 0.3rem)', left: 0, zIndex: 30,
-    minWidth: 180, background: '#0f172a', border: '1px solid #334155', borderRadius: 8,
+    minWidth: 180, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
     padding: '0.45rem 0.55rem', boxShadow: '0 10px 24px rgba(2, 6, 23, 0.5)',
   },
   severityOption: {
-    display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#cbd5e1',
+    display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--fg)',
     fontSize: '0.84rem', padding: '0.18rem 0',
   },
   severityActionBtn: {
-    background: '#1e293b', color: '#93c5fd', border: '1px solid #334155', borderRadius: 6,
+    background: 'var(--surface-2)', color: 'var(--accent)', border: '1px solid var(--border)', borderRadius: 6,
     padding: '0.2rem 0.5rem', fontSize: '0.75rem', cursor: 'pointer',
   },
-  search: { flex: 1, minWidth: 120, background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155', borderRadius: 6, padding: '0.4rem 0.75rem' },
-  btn: { background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', whiteSpace: 'nowrap' },
-  resetBtn: { background: 'none', border: '1px solid #475569', color: '#64748b', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', whiteSpace: 'nowrap' },
+  search: { flex: 1, minWidth: 120, background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)', borderRadius: 6, padding: '0.4rem 0.75rem' },
+  btn: { background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', whiteSpace: 'nowrap' },
+  resetBtn: { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--muted-fg)', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', whiteSpace: 'nowrap' },
   tableContainer: {
     maxHeight: 'calc(100vh - 450px)',
     overflowY: 'auto' as const,
     borderRadius: 10,
-    border: '1px solid #334155',
-    background: '#1e293b',
+    border: '1px solid var(--border)',
+    background: 'var(--table-row-bg)',
   },
-  table: { background: '#1e293b', borderRadius: 10, border: '1px solid #334155', overflow: 'hidden' },
+  table: { background: 'var(--table-row-bg)', borderRadius: 10, border: '1px solid var(--border)', overflow: 'hidden' },
   theader: {
     display: 'flex', gap: '1rem', padding: '0.6rem 1rem',
-    background: '#0f172a', color: '#475569', fontSize: '0.73rem', fontWeight: 700, textTransform: 'uppercase',
+    background: 'var(--table-head-bg)', color: 'var(--muted-fg)', fontSize: '0.73rem', fontWeight: 700, textTransform: 'uppercase',
     position: 'sticky' as const,
     top: 0,
     zIndex: 10,
   },
   row: {
     display: 'flex', gap: '1rem', padding: '0.5rem 1rem',
-    borderTop: '1px solid #1e293b', alignItems: 'center',
+    borderTop: '1px solid var(--border)', alignItems: 'center',
   },
   badge: {
     display: 'inline-block', borderRadius: 4, padding: '0 0.4rem',
@@ -745,18 +745,18 @@ const styles: Record<string, React.CSSProperties> = {
   },
   pagination: { display: 'flex', gap: '0.75rem', marginTop: '1rem', justifyContent: 'flex-end' },
   detail: {
-    background: '#0f172a', borderTop: '1px solid #334155',
+    background: 'var(--surface-2)', borderTop: '1px solid var(--border)',
     padding: '0.75rem 1rem 0.75rem 2rem', fontSize: '0.82rem',
   },
   detailGrid: {
     display: 'grid', gridTemplateColumns: '100px 1fr',
     gap: '0.25rem 0.75rem',
   },
-  detailLabel: { color: '#475569', fontWeight: 700 },
-  detailVal: { color: '#94a3b8', fontFamily: 'monospace' },
+  detailLabel: { color: 'var(--muted-fg)', fontWeight: 700 },
+  detailVal: { color: 'var(--fg)', fontFamily: 'monospace' },
   detailPre: {
-    margin: '0.25rem 0 0', padding: '0.5rem', background: '#1e293b',
-    borderRadius: 6, color: '#d1fae5', fontFamily: 'monospace',
+    margin: '0.25rem 0 0', padding: '0.5rem', background: 'var(--surface)',
+    borderRadius: 6, color: 'var(--fg)', fontFamily: 'monospace',
     fontSize: '0.78rem', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
   },
 }
@@ -767,30 +767,30 @@ const modal: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
   box: {
-    background: '#0f172a', border: '1px solid #334155', borderRadius: 12,
+    background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12,
     width: '90vw', maxWidth: 1100, height: '80vh',
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
   },
   header: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    padding: '0.75rem 1rem', borderBottom: '1px solid #334155', flexWrap: 'wrap', gap: '0.5rem',
+    padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', gap: '0.5rem',
   },
   dot: { width: 8, height: 8, borderRadius: '50%', flexShrink: 0, display: 'inline-block' },
   filterInput: {
-    background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155',
+    background: 'var(--surface-2)', color: 'var(--fg)', border: '1px solid var(--border)',
     borderRadius: 6, padding: '0.3rem 0.65rem', fontSize: '0.82rem', width: 200,
   },
   ctrlBtn: {
-    background: '#1e293b', color: '#94a3b8', border: '1px solid #334155',
+    background: 'var(--surface-2)', color: 'var(--muted-fg)', border: '1px solid var(--border)',
     borderRadius: 6, padding: '0.3rem 0.65rem', cursor: 'pointer', fontSize: '0.82rem',
   },
   log: {
     flex: 1, overflowY: 'auto', padding: '0.5rem 1rem',
     fontFamily: 'monospace', fontSize: '0.78rem', lineHeight: 1.5,
   },
-  logLine: { padding: '0.08rem 0', borderBottom: '1px solid #0f172a', wordBreak: 'break-all' },
+  logLine: { padding: '0.08rem 0', borderBottom: '1px solid var(--border)', wordBreak: 'break-all' },
   footer: {
-    padding: '0.4rem 1rem', borderTop: '1px solid #1e293b',
-    fontSize: '0.72rem', color: '#475569',
+    padding: '0.4rem 1rem', borderTop: '1px solid var(--border)',
+    fontSize: '0.72rem', color: 'var(--muted-fg)',
   },
 }
