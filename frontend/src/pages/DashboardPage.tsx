@@ -23,6 +23,8 @@ import { useSourceFilter } from '../ctx/useSourceFilter'
 
 // ─── Time range presets ───────────────────────────────────────────────────────
 const TIME_PRESETS: { label: string; hours: number }[] = [
+  { label: '1 m',  hours: 1 / 60 },
+  { label: '15 m', hours: 0.25 },
   { label: '1 h',  hours: 1 },
   { label: '6 h',  hours: 6 },
   { label: '24 h', hours: 24 },
