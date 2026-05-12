@@ -1,0 +1,408 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.5 [39m[90m/home/helge/Dokumente/LotusIT/Projekte/logAnalyzer/frontend[39m
+
+ [31m❯[39m src/__tests__/EventsPage.test.tsx [2m([22m[2m3 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[33m 1291[2mms[22m[39m
+[31m     [31m×[31m hydrates filters from URL params[39m[33m 1135[2mms[22m[39m
+     [32m✓[39m renders contextual help for filters and result context[32m 81[2mms[22m[39m
+[31m     [31m×[31m passes multi-source drilldown params through to the event query[39m[32m 72[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m src/__tests__/EventsPage.test.tsx[2m > [22mEventsPage[2m > [22mhydrates filters from URL params
+[31m[1mTestingLibraryElementError[22m[39m: Unable to find an element with the text: Quelle: Syslog. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div>[39m
+      [36m<div[39m
+        [33mstyle[39m=[32m"display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mstyle[39m=[32m"display: flex; align-items: center; gap: 0.5rem;"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mstyle[39m=[32m"margin: 0px; font-size: 1.5rem;"[39m
+          [36m>[39m
+            [0mEvents[0m
+          [36m</h2>[39m
+          [36m<span[39m
+            [33mstyle[39m=[32m"position: relative; display: inline-flex; align-items: center; vertical-align: middle;"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Events erklaeren"[39m
+              [33mstyle[39m=[32m"width: 15px; height: 15px; border-radius: 999px; border: 1px solid rgba(148, 163, 184, 0.32); background: rgba(15, 23, 42, 0.45); color: rgb(148, 163, 184); font-size: 0.62rem; font-weight: 600; line-height: 1; cursor: help; padding: 0px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.82;"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [0mi[0m
+            [36m</button>[39m
+          [36m</span>[39m
+        [36m</div>[39m
+        [36m<button[39m
+          [33mstyle[39m=[32m"background: none; border: 1px solid rgb(51, 65, 85); color: rgb(148, 163, 184); border-radius: 6px; padding: 0.35rem 0.75rem; cursor: pointer; opacity: 1;"[39m
+        [36m>[39m
+          [0mAktualisieren[0m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mstyle[39m=[32m"display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center;"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mstyle[39m=[32m"position: relative; min-width: 240px; max-width: 360px;"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mstyle[39m=[32m"display: flex; align-items: center; width: 100%; background: rgb(30, 41, 59); color: rgb(241, 245, 249); border: 1px solid rgb(51, 65, 85); border-radius: 8px; padding: 0.5rem 0.75rem; cursor: pointer; font-size: 0.88rem;"[39m
+            [33mtitle[39m=[32m"Quellen wählen"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33mstyle[39m=[32m"flex: 1 1 0%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"[39m
+            [36m>[39m
+              [0mAlle konfigurierten Quellen[0m
+            [36m</span>[39m
+            [36m<span[39m
+              [33mstyle[39m=[32m"flex-shrink: 0; margin-left: 0.4rem;"[39m
+            [36m>[39m
+              [0m▼[0m
+            [36m</span>[39m
+          [36m</button>[39m
+        [36m</div>[39m
+        [36m<span[39m
+          [33mstyle[39m=[32m"position: relative; display: inline-flex; align-items: center; vertical-align: middle;"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33maria-label[39m=[32m"Quellenfilter erklaeren"[39m
+            [33mstyle[39m=[32m"width: 15px; height: 15px; border-radius: 999px; border: 1px solid rgba(148, 163, 184, 0.32); background: rgba(15, 23, 42, 0.45); color: rgb(148, 163, 184); font-size: 0.62rem; font-weight: 600; line-height: 1; cursor: help; padding: 0px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.82;"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mi[0m
+          [36m</button>[39m
+        [36m</span>[39m
+        [36m<button[39m
+          [33mstyle[39m=[32m"background: none; border: 1px solid rgb(51, 65, 85); color: rgb(148, 163, 184); border-radius: 6px; padding: 0.35rem 0.75rem; cursor: pointer; opacity: 1;"[39m
+        [36m>[39m
+          [0mRefresh[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mdisabled[39m=[32m""[39m
+          [33mstyle[39m=[32m"background: rgb(15, 23, 42); border: 1px solid rgb(51, 65, 85); color: rgb(100, 116, 139); border-radius: 6px; padding: 0.4rem 0.9rem; cursor: not-allowed; font-weight: 700; white-space: nowrap;"[39m
+          [33mtitle[39m=[32m"Mindestens eine Datei-Quelle auswaehlen"[39m
+        [36m>[39m
+          [0mLive-Ansicht[0m
+        [36m</button>[39m
+        [36m<span[39m
+          [33mstyle[39m=[32m"position: relative; display: inline-flex; align-items: center; vertical-align: middle;"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33maria-label[39m=[32m"Live-Ansicht erklaeren"[39m
+            [33mstyle[39m=[32m"width: 15px; height: 15px; border-radius: 999px; border: 1px solid rgba(148, 163, 184, 0.32); background: rgba(15, 23, 42, 0.45); color: rgb(148, 163, 184); font-size: 0.62rem; font-weight: 600; line-height: 1; cursor: help; padding: 0px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.82;"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mi[0m
+          [36m</button>[39m
+        [36m</span>[39m
+        [36m<div[39m
+          [33mstyle[39m=[32m"display: flex; gap: 0.25rem; align-items: center;"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mstyle[39m=[32m"padding: 0.25rem 0.6rem; font-size: 0.8rem; border-radius: 0.375rem; border: 1px rgb(51, 65, 85); cursor: pointer; background: rgb(30, 41, 59); color: rgb(148, 163, 184);"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m1 m[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mstyle[39m=[32m"padding: 0.25rem 0.6rem; font-size: 0.8rem; border-radius: 0.375rem; border: 1px rgb(51, 65, 85); cursor: pointer; background: rgb(30, 41, 59); color: rgb(148, 163, 184);"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m15 m[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mstyle[39m=[32m"padding: 0.25rem 0.6rem; font-size: 0.8rem; border-radius: 0.375rem; border: 1px rgb(51, 65, 85); cursor: pointer; background: rgb(30, 41, 59); color: rgb(148, 163, 184);"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m1 h[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mstyle[39m=[32m"padding: 0.25rem 0.6rem; font-size: 0.8rem; border-radius: 0.375rem; border: 1px rgb(51, 65, 85); cursor: pointer; background: rgb(30, 41, 59); color: rgb(148, 163, 184);"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m6 h[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mstyle[39m=[32m"padding: 0.25rem 0.6rem; font-size: 0.8rem; border-radius: 0.375rem; border: 1px rgb(51, 65, 85); cursor: pointer; background: rgb(30, 41, 59); color: rgb(148, 163, 184);"[39m
+         ...
+
+Ignored nodes: comments, script, style
+[36m<html>[39m
+  [36m<head />[39m
+  [36m<body>[39m
+    [36m<div>[39m
+      [36m<div>[39m
+        [36m<div[39m
+          [33mstyle[39m=[32m"display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mstyle[39m=[32m"display: flex; align-items: center; gap: 0.5rem;"[39m
+          [36m>[39m
+            [36m<h2[39m
+              [33mstyle[39m=[32m"margin: 0px; font-size: 1.5rem;"[39m
+            [36m>[39m
+              [0mEvents[0m
+            [36m</h2>[39m
+            [36m<span[39m
+              [33mstyle[39m=[32m"position: relative; display: inline-flex; align-items: center; vertical-align: middle;"[39m
+            [36m>[39m
+              [36m<button[39m
+                [33maria-label[39m=[32m"Events erklaeren"[39m
+                [33mstyle[39m=[32m"width: 15px; height: 15px; border-radius: 999px; border: 1px solid rgba(148, 163, 184, 0.32); background: rgba(15, 23, 42, 0.45); color: rgb(148, 163, 184); font-size: 0.62rem; font-weight: 600; line-height: 1; cursor: help; padding: 0px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.82;"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0mi[0m
+              [36m</button>[39m
+            [36m</span>[39m
+          [36m</div>[39m
+          [36m<button[39m
+            [33mstyle[39m=[32m"background: none; border: 1px solid rgb(51, 65, 85); color: rgb(148, 163, 184); border-radius: 6px; padding: 0.35rem 0.75rem; cursor: pointer; opacity: 1;"[39m
+          [36m>[39m
+            [0mAktualisieren[0m
+          [36m</button>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mstyle[39m=[32m"display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center;"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mstyle[39m=[32m"position: relative; min-width: 240px; max-width: 360px;"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33mstyle[39m=[32m"display: flex; align-items: center; width: 100%; background: rgb(30, 41, 59); color: rgb(241, 245, 249); border: 1px solid rgb(51, 65, 85); border-radius: 8px; padding: 0.5rem 0.75rem; cursor: pointer; font-size: 0.88rem;"[39m
+              [33mtitle[39m=[32m"Quellen wählen"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mstyle[39m=[32m"flex: 1 1 0%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"[39m
+              [36m>[39m
+                [0mAlle konfigurierten Quellen[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mstyle[39m=[32m"flex-shrink: 0; margin-left: 0.4rem;"[39m
+              [36m>[39m
+                [0m▼[0m
+              [36m</span>[39m
+            [36m</button>[39m
+          [36m</div>[39m
+          [36m<span[39m
+            [33mstyle[39m=[32m"position: relative; display: inline-flex; align-items: center; vertical-align: middle;"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Quellenfilter erklaeren"[39m
+              [33mstyle[39m=[32m"width: 15px; height: 15px; border-radius: 999px; border: 1px solid rgba(148, 163, 184, 0.32); background: rgba(15, 23, 42, 0.45); color: rgb(148, 163, 184); font-size: 0.62rem; font-weight: 600; line-height: 1; cursor: help; padding: 0px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.82;"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [0mi[0m
+            [36m</button>[39m
+          [36m</span>[39m
+          [36m<button[39m
+            [33mstyle[39m=[32m"background: none; border: 1px solid rgb(51, 65, 85); color: rgb(148, 163, 184); border-radius: 6px; padding: 0.35rem 0.75rem; cursor: pointer; opacity: 1;"[39m
+          [36m>[39m
+            [0mRefresh[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mdisabled[39m=[32m""[39m
+            [33mstyle[39m=[32m"background: rgb(15, 23, 42); border: 1px solid rgb(51, 65, 85); color: rgb(100, 116, 139); border-radius: 6px; padding: 0.4rem 0.9rem; cursor: not-allowed; font-weight: 700; white-space: nowrap;"[39m
+            [33mtitle[39m=[32m"Mindestens eine Datei-Quelle auswaehlen"[39m
+          [36m>[39m
+            [0mLive-Ansicht[0m
+          [36m</button>[39m
+          [36m<span[39m
+            [33mstyle[39m=[32m"position: relative; display: inline-flex; align-items: center; vertical-align: middle;"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Live-Ansicht erklaeren"[39m
+              [33mstyle[39m=[32m"width: 15px; height: 15px; border-radius: 999px; border: 1px solid rgba(148, 163, 184, 0.32); background: rgba(15, 23, 42, 0.45); color: rgb(148, 163, 184); font-size: 0.62rem; font-weight: 600; line-height: 1; cursor: help; padding: 0px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.82;"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [0mi[0m
+            [36m</button>[39m
+          [36m</span>[39m
+          [36m<div[39m
+            [33mstyle[39m=[32m"display: flex; gap: 0.25rem; align-items: center;"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33mstyle[39m=[32m"padding: 0.25rem 0.6rem; font-size: 0.8rem; border-radius: 0.375rem; border: 1px rgb(51, 65, 85); cursor: pointer; background: rgb(30, 41, 59); color: rgb(148, 163, 184);"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [0m1 m[0m
+            [36m</button>[39m
+            [36m<button[39m
+              [33mstyle[39m=[32m"padding: 0.25rem 0.6rem; font-size: 0.8rem; border-radius: 0.375rem; border: 1px rgb(51, 65, 85); cursor: pointer; background: rgb(30, 41, 59); color: rgb(148, 163, 184);"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [0m15 m[0m
+            [36m</button>[39m
+            [36m<button[39m
+              [33mstyle[39m=[32m"padding: 0.25rem 0.6rem; font-size: 0.8rem; border-radius: 0.375rem; border: 1px rgb(51, 65, 85); cursor: pointer; background: rgb(30, 41, 59); color: rgb(148, 163, 184);"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [0m1 h[0m
+            [36m</button>[39m
+            [36m<button[39m
+              [33mstyle[39m=[32m"padding: 0.25rem 0.6rem; font-size: 0.8rem; border-radius: 0.375rem; border: 1px rgb(51, 65, 85); cursor: pointer; background: rgb(30, 41, 59); color: rgb(148, 163, 184);"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [0m6 h[0m
+          ...
+[90m [2m❯[22m Proxy.waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:[2m163:27[22m[39m
+[36m [2m❯[22m src/__tests__/EventsPage.test.tsx:[2m62:11[22m[39m
+    [90m 60|[39m     [34mexpect[39m(screen[33m.[39m[34mgetByDisplayValue[39m([32m'db01'[39m))[33m.[39m[34mtoBeInTheDocument[39m()
+    [90m 61|[39m     expect(screen.getByLabelText('Aktiver Kontext')).toBeInTheDocument…
+    [90m 62|[39m     [35mawait[39m [34mwaitFor[39m(() [33m=>[39m {
+    [90m   |[39m           [31m^[39m
+    [90m 63|[39m       [34mexpect[39m(screen[33m.[39m[34mgetByText[39m([32m'Quelle: Syslog'[39m))[33m.[39m[34mtoBeInTheDocument[39m()
+    [90m 64|[39m     })
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m src/__tests__/EventsPage.test.tsx[2m > [22mEventsPage[2m > [22mpasses multi-source drilldown params through to the event query
+[31m[1mTestingLibraryElementError[22m[39m: Unable to find an element with the text: Quellen: 2. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div>[39m
+      [36m<div[39m
+        [33mstyle[39m=[32m"display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mstyle[39m=[32m"display: flex; align-items: center; gap: 0.5rem;"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mstyle[39m=[32m"margin: 0px; font-size: 1.5rem;"[39m
+          [36m>[39m
+            [0mEvents[0m
+          [36m</h2>[39m
+          [36m<span[39m
+            [33mstyle[39m=[32m"position: relative; display: inline-flex; align-items: center; vertical-align: middle;"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Events erklaeren"[39m
+              [33mstyle[39m=[32m"width: 15px; height: 15px; border-radius: 999px; border: 1px solid rgba(148, 163, 184, 0.32); background: rgba(15, 23, 42, 0.45); color: rgb(148, 163, 184); font-size: 0.62rem; font-weight: 600; line-height: 1; cursor: help; padding: 0px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.82;"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [0mi[0m
+            [36m</button>[39m
+          [36m</span>[39m
+        [36m</div>[39m
+        [36m<button[39m
+          [33mdisabled[39m=[32m""[39m
+          [33mstyle[39m=[32m"background: none; border: 1px solid rgb(51, 65, 85); color: rgb(148, 163, 184); border-radius: 6px; padding: 0.35rem 0.75rem; cursor: pointer; opacity: 1;"[39m
+        [36m>[39m
+          [0mAktualisiere...[0m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mstyle[39m=[32m"display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center;"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mstyle[39m=[32m"position: relative; min-width: 240px; max-width: 360px;"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mstyle[39m=[32m"display: flex; align-items: center; width: 100%; background: rgb(30, 41, 59); color: rgb(241, 245, 249); border: 1px solid rgb(51, 65, 85); border-radius: 8px; padding: 0.5rem 0.75rem; cursor: pointer; font-size: 0.88rem;"[39m
+            [33mtitle[39m=[32m"Quellen wählen"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33mstyle[39m=[32m"flex: 1 1 0%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"[39m
+            [36m>[39m
+              [0mAlle konfigurierten Quellen[0m
+            [36m</span>[39m
+            [36m<span[39m
+              [33mstyle[39m=[32m"flex-shrink: 0; margin-left: 0.4rem;"[39m
+            [36m>[39m
+              [0m▼[0m
+            [36m</span>[39m
+          [36m</button>[39m
+        [36m</div>[39m
+        [36m<span[39m
+          [33mstyle[39m=[32m"position: relative; display: inline-flex; align-items: center; vertical-align: middle;"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33maria-label[39m=[32m"Quellenfilter erklaeren"[39m
+            [33mstyle[39m=[32m"width: 15px; height: 15px; border-radius: 999px; border: 1px solid rgba(148, 163, 184, 0.32); background: rgba(15, 23, 42, 0.45); color: rgb(148, 163, 184); font-size: 0.62rem; font-weight: 600; line-height: 1; cursor: help; padding: 0px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.82;"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mi[0m
+          [36m</button>[39m
+        [36m</span>[39m
+        [36m<button[39m
+          [33mdisabled[39m=[32m""[39m
+          [33mstyle[39m=[32m"background: none; border: 1px solid rgb(51, 65, 85); color: rgb(148, 163, 184); border-radius: 6px; padding: 0.35rem 0.75rem; cursor: pointer; opacity: 1;"[39m
+        [36m>[39m
+          [0mRefresh...[0m
+        [36m</button>[39m
+        [36m<button[39m
+          [33mdisabled[39m=[32m""[39m
+          [33mstyle[39m=[32m"background: rgb(15, 23, 42); border: 1px solid rgb(51, 65, 85); color: rgb(100, 116, 139); border-radius: 6px; padding: 0.4rem 0.9rem; cursor: not-allowed; font-weight: 700; white-space: nowrap;"[39m
+          [33mtitle[39m=[32m"Mindestens eine Datei-Quelle auswaehlen"[39m
+        [36m>[39m
+          [0mLive-Ansicht[0m
+        [36m</button>[39m
+        [36m<span[39m
+          [33mstyle[39m=[32m"position: relative; display: inline-flex; align-items: center; vertical-align: middle;"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33maria-label[39m=[32m"Live-Ansicht erklaeren"[39m
+            [33mstyle[39m=[32m"width: 15px; height: 15px; border-radius: 999px; border: 1px solid rgba(148, 163, 184, 0.32); background: rgba(15, 23, 42, 0.45); color: rgb(148, 163, 184); font-size: 0.62rem; font-weight: 600; line-height: 1; cursor: help; padding: 0px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.82;"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mi[0m
+          [36m</button>[39m
+        [36m</span>[39m
+        [36m<div[39m
+          [33mstyle[39m=[32m"display: flex; gap: 0.25rem; align-items: center;"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mstyle[39m=[32m"padding: 0.25rem 0.6rem; font-size: 0.8rem; border-radius: 0.375rem; border: 1px rgb(51, 65, 85); cursor: pointer; background: rgb(30, 41, 59); color: rgb(148, 163, 184);"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m1 m[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mstyle[39m=[32m"padding: 0.25rem 0.6rem; font-size: 0.8rem; border-radius: 0.375rem; border: 1px rgb(51, 65, 85); cursor: pointer; background: rgb(30, 41, 59); color: rgb(148, 163, 184);"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m15 m[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mstyle[39m=[32m"padding: 0.25rem 0.6rem; font-size: 0.8rem; border-radius: 0.375rem; border: 1px rgb(51, 65, 85); cursor: pointer; background: rgb(30, 41, 59); color: rgb(148, 163, 184);"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m1 h[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mstyle[39m=[32m"padding: 0.25rem 0.6rem; font-size: 0.8rem; border-radius: 0.375rem; border: 1px rgb(51, 65, 85); cursor: pointer; background: rgb(30, 41, 59); color: rgb(148, 163, 184);"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m6 h[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mstyle[39m=[32m"padding: 0.25rem 0.6rem; font-size: 0.8rem; border-radius: 0.375rem; border: 1px rgb(51, 65, 85);...
+[90m [2m❯[22m Object.getElementError node_modules/@testing-library/dom/dist/config.js:[2m37:19[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m76:38[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m52:17[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m95:19[22m[39m
+[36m [2m❯[22m src/__tests__/EventsPage.test.tsx:[2m100:19[22m[39m
+    [90m 98|[39m
+    [90m 99|[39m     expect(screen.getByLabelText('Aktiver Kontext')).toBeInTheDocument…
+    [90m100|[39m     [34mexpect[39m(screen[33m.[39m[34mgetByText[39m([32m'Quellen: 2'[39m))[33m.[39m[34mtoBeInTheDocument[39m()
+    [90m   |[39m                   [31m^[39m
+    [90m101|[39m     [34mexpect[39m(screen[33m.[39m[34mgetByText[39m([32m'Pfade: 2'[39m))[33m.[39m[34mtoBeInTheDocument[39m()
+    [90m102|[39m     [34mexpect[39m(screen[33m.[39m[34mgetByText[39m([32m'Host: app01'[39m))[33m.[39m[34mtoBeInTheDocument[39m()
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m1 passed[39m[22m[90m (3)[39m
+[2m   Start at [22m 17:27:15
+[2m   Duration [22m 2.13s[2m (transform 106ms, setup 89ms, import 168ms, tests 1.29s, environment 463ms)[22m
+

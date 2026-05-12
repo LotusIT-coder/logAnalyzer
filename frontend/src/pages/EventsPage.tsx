@@ -7,6 +7,7 @@ import { getApiBase } from '../lib/api'
 import HelpTip from '../components/HelpTip'
 import GlobalSourceFilterNotice from '../components/GlobalSourceFilterNotice'
 import { SourcePicker, type UploadResultState, isUploadError } from '../components/SourcePicker'
+import { TimeRangePicker } from '../components/TimeRangePicker'
 import { type SourceOption } from '../ctx/SourceFilterContext.shared'
 import { useSourceFilter } from '../ctx/useSourceFilter'
 
@@ -62,12 +63,14 @@ function buildContextItems(params: {
     const srcName = params.sources.find(s => s.id === sourceIds[0])?.name ?? sourceIds[0]
     items.push(`Quelle: ${srcName}`)
   } else if (sourceIds.length > 1) {
+    items.push(`Quellen: ${sourceIds.length}`)
     const names = sourceIds.map(id => params.sources.find(s => s.id === id)?.name ?? id)
     items.push(`Mehrfachauswahl: ${names.join(', ')}`)
   }
   if (sourcePaths.length === 1) {
     items.push(`Pfad: ${sourcePaths[0].split('/').pop() ?? sourcePaths[0]}`)
   } else if (sourcePaths.length > 1) {
+    items.push(`Pfade: ${sourcePaths.length}`)
     const pathNames = sourcePaths.map(p => p.split('/').pop() ?? p)
     items.push(`Mehrfachauswahl: ${pathNames.join(', ')}`)
   }
@@ -301,6 +304,41 @@ export default function EventsPage() {
 
   const selectedSeveritiesCsv = selectedSeverities.join(',')
 
+  // Apply global rangeHours when no explicit from/to is set.
+  // Memoized to keep query keys stable across re-renders.
+  const rangeHours = globalFilter.rangeHours
+  const effectiveWindow = useMemo(() => {
+    if (fromTime || toTime) {
+      return {
+        from: fromTime || undefined,
+        to: toTime || undefined,
+      }
+    }
+
+    if (rangeHours <= 0) {
+      return { from: undefined, to: undefined }
+    }
+
+    const now = Date.now()
+    return {
+      from: new Date(now - rangeHours * 3600_000).toISOString(),
+      to: new Date(now).toISOString(),
+    }
+  }, [fromTime, toTime, rangeHours, refreshTick])
+  const effectiveFrom = effectiveWindow.from
+  const effectiveTo = effectiveWindow.to
+
+  function handleRangeHoursChange(nextRangeHours: number) {
+    setGlobalFilter({
+      sourceIds: globalFilter.sourceIds,
+      sourcePaths: globalFilter.sourcePaths,
+      rangeHours: nextRangeHours,
+    })
+    // Clear any explicit from/to so the preset takes effect immediately.
+    setFromTime('')
+    setToTime('')
+  }
+
   useEffect(() => {
     // Keep Events dropdown aligned with global dashboard/source context.
     if (globalSingleSourceId) {
@@ -320,29 +358,23 @@ export default function EventsPage() {
       }
       return
     }
-
-    if (sourceId || sourceIdsCsv || sourcePathsCsv) {
-      setSourceId('')
-      setSourceIdsCsv('')
-      setSourcePathsCsv('')
-    }
   }, [globalSingleSourceId, globalSingleSourcePath, sourceId, sourceIdsCsv, sourcePathsCsv])
 
   // Infinite query: loads events page by page
   const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage, isFetching } = useInfiniteQuery({
-    queryKey: ['events', sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, fromTime, toTime, selectedSeveritiesCsv, host, service, search, refreshTick],
+    queryKey: ['events', sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, effectiveFrom, effectiveTo, selectedSeveritiesCsv, host, service, search, refreshTick],
     queryFn: ({ pageParam }: { pageParam?: string }) => getEvents({
-      limit: 100,
+      limit: 50,
       cursor: pageParam,
-      from: fromTime || undefined,
-      to: toTime || undefined,
-      source_id: sourceId || undefined,
-      source_ids: effectiveSourceIdsCsv || undefined,
-      source_paths: effectiveSourcePathsCsv || undefined,
-      severity: selectedSeveritiesCsv || undefined,
-      host: host || undefined,
-      service: service || undefined,
-      q: search || undefined,
+      ...(effectiveFrom ? { from: effectiveFrom } : {}),
+      ...(effectiveTo ? { to: effectiveTo } : {}),
+      ...(sourceId ? { source_id: sourceId } : {}),
+      ...(effectiveSourceIdsCsv ? { source_ids: effectiveSourceIdsCsv } : {}),
+      ...(effectiveSourcePathsCsv ? { source_paths: effectiveSourcePathsCsv } : {}),
+      ...(selectedSeveritiesCsv ? { severity: selectedSeveritiesCsv } : {}),
+      ...(host ? { host } : {}),
+      ...(service ? { service } : {}),
+      ...(search ? { q: search } : {}),
     }),
     initialPageParam: undefined,
     getNextPageParam: (lastPage) => lastPage.next_cursor,
@@ -416,13 +448,13 @@ export default function EventsPage() {
     setRefreshTick(v => v + 1)
   }
 
-  const hasFilters = sourceId || sourceIdsCsv || sourcePathsCsv || fromTime || toTime || selectedSeveritiesCsv || host || service || search
+  const hasFilters = sourceId || sourceIdsCsv || sourcePathsCsv || effectiveFrom || effectiveTo || selectedSeveritiesCsv || host || service || search
   const contextItems = buildContextItems({
     sourceId,
     sourceIdsCsv: effectiveSourceIdsCsv,
     sourcePathsCsv: effectiveSourcePathsCsv,
-    fromTime,
-    toTime,
+    fromTime: effectiveFrom ?? '',
+    toTime: effectiveTo ?? '',
     severityCsv: selectedSeveritiesCsv,
     host,
     service,
@@ -480,6 +512,9 @@ export default function EventsPage() {
           {liveTailSources.length > 1 ? `Live-Ansicht (${liveTailSources.length})` : 'Live-Ansicht'}
         </button>
         <HelpTip content="Die Live-Ansicht streamt neue Zeilen aller gewaehlten Datei-Quellen direkt in ein Tail-Fenster. Damit pruefst du schnell, ob gerade frische Daten ankommen." ariaLabel="Live-Ansicht erklaeren" />
+
+        <TimeRangePicker value={rangeHours} onChange={handleRangeHoursChange} />
+        <HelpTip content="Das Zeitfenster gilt fuer Eventliste und Dashboard gleichzeitig. Aenderungen werden zwischen den Reitern synchronisiert." ariaLabel="Zeitfenster erklaeren" />
 
         <details style={styles.severityDropdown}>
           <summary style={styles.severitySummary}>

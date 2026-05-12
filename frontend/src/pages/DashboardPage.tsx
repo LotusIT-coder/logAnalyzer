@@ -18,20 +18,12 @@ import dayjs from 'dayjs'
 import { getApiErrorMessage } from '../lib/errors'
 import HelpTip from '../components/HelpTip'
 import { SourcePicker, type UploadResultState, isUploadError } from '../components/SourcePicker'
+import { TimeRangePicker, TIME_PRESETS } from '../components/TimeRangePicker'
 import { type SourceOption } from '../ctx/SourceFilterContext.shared'
 import { useSourceFilter } from '../ctx/useSourceFilter'
 
 // ─── Time range presets ───────────────────────────────────────────────────────
-const TIME_PRESETS: { label: string; hours: number }[] = [
-  { label: '1 m',  hours: 1 / 60 },
-  { label: '15 m', hours: 0.25 },
-  { label: '1 h',  hours: 1 },
-  { label: '6 h',  hours: 6 },
-  { label: '24 h', hours: 24 },
-  { label: '7 d',  hours: 168 },
-  { label: '30 d', hours: 720 },
-  { label: 'Alle', hours: 0 },
-]
+// (TIME_PRESETS comes from the shared TimeRangePicker module.)
 
 const CHART_BUCKETS: { value: string; label: string }[] = [
   { value: 'auto', label: 'Auto' },
@@ -124,7 +116,9 @@ function buildTimeRange(rangeHours: number): TimeRange | undefined {
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const { filter, setFilter: setGlobalSourceFilter, selectedSources, setSelectedSources, customSources, setCustomSources } = useSourceFilter()
-  const [rangeHours, setRangeHours] = useState(filter.rangeHours) // restored from context on re-mount
+  // Single source of truth: global filter.rangeHours. Changes from any tab
+  // propagate via context so this page stays in sync.
+  const rangeHours = filter.rangeHours
   const [chartBucketMode, setChartBucketMode] = useState('auto')
   const [autoRefreshProfile, setAutoRefreshProfile] = useState<AutoRefreshProfile>(() => {
     if (typeof window === 'undefined') return 'balanced'
@@ -195,7 +189,6 @@ export default function DashboardPage() {
   }
 
   function handleRangeHoursChange(nextRangeHours: number) {
-    setRangeHours(nextRangeHours)
     syncGlobalFilter(selectedSources, nextRangeHours)
   }
 
@@ -338,19 +331,7 @@ export default function DashboardPage() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
-            {TIME_PRESETS.map(p => (
-              <button
-                key={p.hours}
-                onClick={() => handleRangeHoursChange(p.hours)}
-                style={{
-                  padding: '0.25rem 0.6rem', fontSize: '0.8rem', borderRadius: '0.375rem',
-                  border: '1px solid', cursor: 'pointer',
-                  background: rangeHours === p.hours ? '#3b82f6' : '#1e293b',
-                  color: rangeHours === p.hours ? '#fff' : '#94a3b8',
-                  borderColor: rangeHours === p.hours ? '#3b82f6' : '#334155',
-                }}
-              >{p.label}</button>
-            ))}
+            <TimeRangePicker value={rangeHours} onChange={handleRangeHoursChange} />
             <HelpTip content="Das Zeitfenster steuert, wie weit die Metriken in die Vergangenheit schauen. 'Alle' verwendet den kompletten verfuegbaren Datenbestand." ariaLabel="Zeitfenster erklaeren" />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
