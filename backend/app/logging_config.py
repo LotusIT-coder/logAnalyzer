@@ -47,6 +47,24 @@ def configure_logging(json_logs: bool = True, log_dir: str | None = None) -> Non
         cache_logger_on_first_use=True,
     )
 
+    # Filter uvicorn's per-request access log: keep only 4xx/5xx; suppress
+    # successful 2xx/3xx (our RequestLoggingMiddleware already records them
+    # structured). Keeps client/server errors visible.
+    class _AccessLogErrorOnlyFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            args = record.args
+            try:
+                # Uvicorn access format args: (client_addr, method, full_path, http_version, status_code)
+                if isinstance(args, tuple) and len(args) >= 5:
+                    status = int(args[4])
+                    return status >= 400
+            except (ValueError, TypeError, IndexError):
+                pass
+            return True
+
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.addFilter(_AccessLogErrorOnlyFilter())
+
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Attaches trace_id to each request and logs method/path/status."""
