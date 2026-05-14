@@ -122,6 +122,24 @@ class TestSpecializedSourceIngestion:
         assert event.severity == "error"
         assert event.timestamp.isoformat().startswith("2026-05-06T10:01:00")
 
+    async def test_journald_source_decodes_byte_array_message(self, db_session, tmp_path):
+        """Test that _map_journald_entry decodes MESSAGE as byte array."""
+        from app.ingestion.file_reader import _map_journald_entry
+
+        text = "soc_analyst_started model=llama3"
+        entry = {
+            "MESSAGE": list(text.encode("utf-8")),
+            "PRIORITY": "6",
+            "_HOSTNAME": "srv-ai-01",
+            "SYSLOG_IDENTIFIER": "bash",
+            "__REALTIME_TIMESTAMP": "1746676860000000",
+        }
+
+        mapped = _map_journald_entry(entry)
+        
+        assert mapped["message"] == text
+        assert "soc_analyst_started" in mapped["message"]
+
     async def test_file_source_regex_path_tracks_rotated_filenames(self, db_session, tmp_path):
         log_dir = tmp_path / "logs"
         log_dir.mkdir()
@@ -212,7 +230,7 @@ class TestSpecializedSourceIngestion:
         stats = await ingest_source(db_session, source)
 
         assert stats["skipped"] is True
-        assert "file access failed" in stats["reason"]
+        assert "Permission denied" in stats["reason"] or "no read permission" in stats["reason"]
         result = await db_session.execute(select(Event).where(Event.source_id == source.id))
         assert list(result.scalars().all()) == []
 

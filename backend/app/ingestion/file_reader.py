@@ -108,7 +108,12 @@ def _map_journald_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
     severity = _JOURNALD_PRIORITY_MAP.get(priority, "info")
     message = entry.get("MESSAGE")
     if isinstance(message, list):
-        message = " ".join(str(part) for part in message)
+        # journald can emit MESSAGE as a byte-array in JSON output.
+        # Decode it so downstream full-text search can match real content.
+        if all(isinstance(part, int) and 0 <= part <= 255 for part in message):
+            message = bytes(message).decode("utf-8", errors="replace")
+        else:
+            message = " ".join(str(part) for part in message)
     if not isinstance(message, str) or not message.strip():
         message = str(entry.get("MESSAGE", "")) or "journal entry"
 

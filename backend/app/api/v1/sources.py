@@ -6,12 +6,12 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.db.session import get_session_factory
-from app.domain.models import Event, RawLog, Source
+from app.domain.models import Event, Source
 from app.schemas.source import (
     SourceCreateRequest,
     SourceIngestionStatusListResponse,
@@ -36,47 +36,36 @@ async def source_status(
     if source_ids:
         ids = [value.strip() for value in source_ids.split(",") if value.strip()]
 
-    raw_max = (
-        select(
-            RawLog.source_id.label("source_id"),
-            func.max(RawLog.ingested_at).label("last_ingested_at"),
-        )
-        .group_by(RawLog.source_id)
-        .subquery()
-    )
-    evt_max = (
-        select(
-            Event.source_id.label("source_id"),
-            func.max(Event.timestamp).label("last_event_timestamp"),
-            func.max(Event.created_at).label("last_event_created_at"),
-        )
-        .group_by(Event.source_id)
-        .subquery()
+    if ids is not None:
+        if not ids:
+            return SourceIngestionStatusListResponse(items=[])
+
+    # Correlated subquery keeps the plan index-friendly even for very large
+    # per-source partitions (e.g. syslog/journald with >100M rows).
+    last_event_ts = (
+        select(Event.timestamp)
+        .where(Event.source_id == Source.id)
+        .order_by(Event.timestamp.desc())
+        .limit(1)
+        .scalar_subquery()
     )
 
     stmt = (
         select(
             Source.id,
-            raw_max.c.last_ingested_at,
-            evt_max.c.last_event_timestamp,
-            evt_max.c.last_event_created_at,
+            last_event_ts.label("last_event_timestamp"),
         )
-        .outerjoin(raw_max, raw_max.c.source_id == Source.id)
-        .outerjoin(evt_max, evt_max.c.source_id == Source.id)
         .order_by(Source.created_at)
     )
     if ids is not None:
-        if not ids:
-            return SourceIngestionStatusListResponse(items=[])
         stmt = stmt.where(Source.id.in_(ids))
 
     result = await session.execute(stmt)
     items = [
         SourceIngestionStatusResponse(
             source_id=str(row.id),
-            last_ingested_at=row.last_ingested_at,
+            last_ingested_at=row.last_event_timestamp,
             last_event_timestamp=row.last_event_timestamp,
-            last_event_created_at=row.last_event_created_at,
         )
         for row in result
     ]

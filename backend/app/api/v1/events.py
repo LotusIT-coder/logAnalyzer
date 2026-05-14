@@ -117,9 +117,9 @@ async def list_events(
         if severity_values:
             stmt = stmt.where(Event.severity.in_(severity_values))
     if service:
-        stmt = stmt.where(Event.service == service)
+        stmt = stmt.where(Event.service.ilike(f"%{service}%"))
     if host:
-        stmt = stmt.where(Event.host == host)
+        stmt = stmt.where(Event.host.ilike(f"%{host}%"))
     if q:
         stmt = stmt.where(Event.message.ilike(f"%{q}%"))
     if cursor:

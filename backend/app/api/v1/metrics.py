@@ -128,21 +128,25 @@ async def top_errors(
             severity_levels = ["error", "critical"]
 
     stmt = (
-        select(Event.message, func.count().label("count"))
+        select(
+            Event.message,
+            func.count().label("count"),
+            func.max(Event.timestamp).label("latest")
+        )
         .where(
             Event.timestamp >= from_dt,
             Event.timestamp <= to_dt,
             Event.severity.in_(severity_levels),
         )
         .group_by(Event.message)
-        .order_by(text("count DESC"))
+        .order_by(text("latest DESC"))
         .limit(20)
     )
     if resolved_source_ids is not None:
         stmt = stmt.where(Event.source_id.in_(resolved_source_ids))
 
     result = await session.execute(stmt)
-    items = [TopErrorItem(key=row.message, count=row.count) for row in result]
+    items = [TopErrorItem(key=row.message, count=row.count, latest=row.latest) for row in result]
     return TopErrorsResponse(items=items)
 
 

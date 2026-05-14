@@ -4,8 +4,10 @@ import { useState, useRef, useEffect } from 'react'
 import { useAIChat } from '../ctx/useAIChat'
 import { useSourceFilter } from '../ctx/useSourceFilter'
 import HelpTip from '../components/HelpTip'
+import { useI18n } from '../ctx/I18nContext'
 
 function ReferencedLogs({ lines }: { lines: string[] }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   return (
     <div style={{ marginTop: '0.75rem', borderTop: '1px solid var(--border)', paddingTop: '0.5rem' }}>
@@ -13,7 +15,7 @@ function ReferencedLogs({ lines }: { lines: string[] }) {
         onClick={() => setOpen(v => !v)}
         style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: '0.78rem', padding: 0 }}
       >
-        {open ? '▼' : '▶'} {lines.length} referenzierte Log-Zeile{lines.length !== 1 ? 'n' : ''}
+        {open ? '▼' : '▶'} {t('ai.referencesCount', { count: lines.length })}
       </button>
       {open && (
         <div style={{ marginTop: '0.4rem', background: 'var(--surface-2)', borderRadius: 6, padding: '0.5rem 0.75rem', maxHeight: 220, overflowY: 'auto' }}>
@@ -31,24 +33,25 @@ function ReferencedLogs({ lines }: { lines: string[] }) {
 }
 
 function ContextBadge({ attachedContext }: { attachedContext: { title: string; summary: string } | null }) {
+  const { t } = useI18n()
   const { filter } = useSourceFilter()
   const { selectedSources } = useSourceFilter()
 
   const hasFilter = filter.sourceIds.length > 0 || filter.sourcePaths.length > 0
 
   const rangeLabel = filter.rangeHours === 0
-    ? 'Alle Einträge'
-    : filter.rangeHours <= 1 ? 'Letzte Stunde'
-    : filter.rangeHours <= 6 ? `Letzte ${filter.rangeHours} Stunden`
-    : filter.rangeHours <= 24 ? 'Letzte 24 Stunden'
-    : filter.rangeHours <= 168 ? 'Letzte 7 Tage'
-    : 'Letzte 30 Tage'
+    ? t('ai.range.all')
+    : filter.rangeHours <= 1 ? t('ai.range.lastHour')
+    : filter.rangeHours <= 6 ? t('ai.range.lastHours', { count: filter.rangeHours })
+    : filter.rangeHours <= 24 ? t('ai.range.last24h')
+    : filter.rangeHours <= 168 ? t('ai.range.last7d')
+    : t('ai.range.last30d')
 
   if (!hasFilter && !attachedContext) {
     return (
       <div style={badgeStyles.wrap}>
         <span style={badgeStyles.noFilter}>
-          ⚠ Kein Quellfilter gesetzt – bitte im Dashboard eine Quelle auswählen
+          ⚠ {t('ai.noFilter')}
         </span>
       </div>
     )
@@ -80,6 +83,7 @@ const badgeStyles: Record<string, React.CSSProperties> = {
 }
 
 export default function AIChatPage() {
+  const { t } = useI18n()
   const { data: models = [] } = useQuery({ queryKey: ['ai-models'], queryFn: getAIModels })
   const { messages, model, setModel, pendingCount, send, clearMessages, attachedContext, clearAttachedContext } = useAIChat()
   const [draft, setDraft] = useState({ text: '', appliedPrompt: '' })
@@ -108,7 +112,7 @@ export default function AIChatPage() {
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           {messages.length > 0 && (
-            <button onClick={clearMessages} style={styles.clearBtn} title="Verlauf löschen">✕ Verlauf</button>
+            <button onClick={clearMessages} style={styles.clearBtn} title={t('ai.clearHistory')}>✕ {t('ai.history')}</button>
           )}
           <div style={styles.modelWrap}>
             <select value={selectedModel} onChange={e => setModel(e.target.value)} style={styles.select}>
@@ -130,21 +134,21 @@ export default function AIChatPage() {
             </div>
             <div style={styles.contextBody}>{attachedContext.summary}</div>
           </div>
-          <button type="button" onClick={clearAttachedContext} style={styles.contextBtn}>Kontext entfernen</button>
+          <button type="button" onClick={clearAttachedContext} style={styles.contextBtn}>{t('ai.removeContext')}</button>
         </div>
       )}
 
       <div style={styles.messages}>
         {messages.length === 0 && (
           <div style={styles.placeholder}>
-            Stelle eine Frage zu deinen Log-Daten oder analysiere einen Fehler.
+            {t('ai.placeholder')}
           </div>
         )}
         {messages.map((m, i) => (
           <div key={i} style={{ ...styles.bubble, ...(m.role === 'user' ? styles.userBubble : styles.aiBubble), ...(m.error ? styles.errorBubble : {}) }}>
             <span style={styles.role}>{m.role === 'user' ? 'Du' : model}</span>
             {m.pending
-              ? <span style={{ color: '#64748b' }}>Denkt nach…</span>
+              ? <span style={{ color: '#64748b' }}>{t('ai.thinking')}</span>
               : <pre style={styles.pre}>{m.content}</pre>
             }
             {m.references && m.references.length > 0 && (
@@ -163,7 +167,7 @@ export default function AIChatPage() {
           value={input}
           onChange={e => setDraft({ text: e.target.value, appliedPrompt: attachedPrompt })}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }}
-          placeholder="Nachricht eingeben… (Enter zum Senden, Shift+Enter für Zeilenumbruch)"
+          placeholder={t('ai.inputPlaceholder')}
           rows={3}
           style={styles.textarea}
           disabled={pendingCount > 0}

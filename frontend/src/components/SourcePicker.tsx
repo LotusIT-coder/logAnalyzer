@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { deleteSource, getSources, uploadImport, type SourceResponse, type UploadImportResponse } from '../lib/requests'
 import { type SourceOption } from '../ctx/SourceFilterContext.shared'
 import { getApiErrorMessage } from '../lib/errors'
+import { useI18n } from '../ctx/I18nContext'
 
 // ─── Preset log paths ────────────────────────────────────────────────────────
 export const PRESET_PATHS = [
@@ -56,6 +57,7 @@ export function SourcePicker({
   customSources: SourceOption[]
   onRemoveCustom: (id: string) => void
 }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [customInput, setCustomInput] = useState('')
   const [uploading, setUploading] = useState(false)
@@ -121,10 +123,10 @@ export function SourcePicker({
   }
 
   const label = selected.length === 0
-    ? 'Alle konfigurierten Quellen'
+    ? t('sourcePicker.allConfigured')
     : selected.length === 1
       ? selected[0].label
-      : `${selected.length} Quellen gewählt`
+      : t('sourcePicker.selectedCount', { count: selected.length })
 
   return (
     <div ref={ref} style={pickerStyles.wrap}>
@@ -132,7 +134,7 @@ export function SourcePicker({
         type="button"
         onClick={() => setOpen(v => !v)}
         style={pickerStyles.trigger}
-        title="Quellen wählen"
+        title={t('sourcePicker.choose')}
       >
         <span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {label}
@@ -143,19 +145,19 @@ export function SourcePicker({
       {open && (
         <div style={pickerStyles.dropdown}>
           <div style={pickerStyles.helperNote}>
-            Konfigurierte Quellen sind dauerhaft in der App hinterlegt. Standard- und eigene Pfade erweitern den aktuellen Analysekontext nur fuer deine laufende Arbeit.
+            {t('sourcePicker.helper')}
           </div>
           {/* Clear selection */}
           <div
             style={{ ...pickerStyles.option, color: '#64748b', borderBottom: '1px solid #334155', paddingBottom: '0.5rem', marginBottom: '0.25rem' }}
             onClick={() => onChange([])}
           >
-            ✕ Auswahl zurücksetzen (alle aktivierten)
+            ✕ {t('sourcePicker.clearSelection')}
           </div>
 
           {/* Configured sources */}
           {configuredOptions.length > 0 && (
-            <div style={pickerStyles.groupHeader}>Konfigurierte Quellen</div>
+            <div style={pickerStyles.groupHeader}>{t('sourcePicker.group.configured')}</div>
           )}
           {configuredOptions.map(opt => {
             const rawId = opt.id.replace('source:', '')
@@ -174,7 +176,7 @@ export function SourcePicker({
                 </label>
                 {isPending ? (
                   <div style={{ display: 'flex', gap: '0.2rem', alignItems: 'center', flexShrink: 0 }}>
-                    <span style={{ fontSize: '0.72rem', color: '#fca5a5' }}>Löschen?</span>
+                    <span style={{ fontSize: '0.72rem', color: '#fca5a5' }}>{t('sourcePicker.deleteConfirm')}</span>
                     <button
                       onClick={async e => {
                         e.stopPropagation()
@@ -184,16 +186,16 @@ export function SourcePicker({
                         onChange(selected.filter(s => !optionMatches(s, opt)))
                       }}
                       style={{ background: 'none', border: '1px solid #ef4444', color: '#ef4444', cursor: 'pointer', fontSize: '0.72rem', borderRadius: 4, padding: '1px 5px' }}
-                    >Ja</button>
+                    >{t('sourcePicker.yes')}</button>
                     <button
                       onClick={e => { e.stopPropagation(); setPendingDeleteId(null) }}
                       style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '0.72rem', padding: '1px 3px' }}
-                    >Abbrechen</button>
+                    >{t('sourcePicker.cancel')}</button>
                   </div>
                 ) : (
                   <button
                     onClick={e => { e.stopPropagation(); setPendingDeleteId(rawId) }}
-                    title="Quelle löschen"
+                    title={t('sourcePicker.delete')}
                     style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.85rem', padding: '0 0.15rem', flexShrink: 0, opacity: 0.6 }}
                   >🗑</button>
                 )}
@@ -202,7 +204,7 @@ export function SourcePicker({
           })}
 
           {/* Presets */}
-          <div style={pickerStyles.groupHeader}>Standard-Log-Dateien</div>
+          <div style={pickerStyles.groupHeader}>{t('sourcePicker.group.presets')}</div>
           {presetOptions.map(opt => (
             <OptionRow key={opt.id} opt={opt} checked={selected.some(s => optionMatches(s, opt))} onToggle={toggle} />
           ))}
@@ -210,10 +212,10 @@ export function SourcePicker({
           {/* Custom / uploaded sources */}
           {customSources.length > 0 && (
             <>
-              <div style={pickerStyles.groupHeader}>Eigene / Hochgeladene Quellen</div>
+              <div style={pickerStyles.groupHeader}>{t('sourcePicker.group.custom')}</div>
               {customSources.map(opt => (
                 <div key={opt.id} style={{ ...pickerStyles.option, justifyContent: 'space-between' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, cursor: 'pointer' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, cursor: 'pointer', minWidth: 0 }}>
                     <input
                       type="checkbox"
                       checked={selected.some(s => optionMatches(s, opt))}
@@ -224,7 +226,7 @@ export function SourcePicker({
                   </label>
                   <button
                     onClick={e => { e.stopPropagation(); onRemoveCustom(opt.id) }}
-                    title="Entfernen"
+                    title={t('sourcePicker.remove')}
                     style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.9rem', padding: '0 0.2rem', flexShrink: 0 }}
                   >✕</button>
                 </div>
@@ -233,7 +235,7 @@ export function SourcePicker({
           )}
 
           {/* Add custom path */}
-          <div style={pickerStyles.groupHeader}>Eigener Pfad hinzufügen</div>
+          <div style={pickerStyles.groupHeader}>{t('sourcePicker.group.customPath')}</div>
           <div style={pickerStyles.customRow}>
             <input
               value={customInput}
@@ -247,7 +249,7 @@ export function SourcePicker({
 
           {/* File upload */}
           <div style={{ borderTop: '1px solid #334155', marginTop: '0.5rem', paddingTop: '0.5rem' }}>
-            <div style={pickerStyles.groupHeader}>Datei hochladen</div>
+            <div style={pickerStyles.groupHeader}>{t('sourcePicker.group.upload')}</div>
             <div style={{ padding: '0.35rem 0.5rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
               <input ref={fileRef} type="file" accept=".log,.txt,.csv,text/*" style={{ display: 'none' }}
                 onChange={async e => {
@@ -259,7 +261,7 @@ export function SourcePicker({
                     await onUploadResult(r)
                     setOpen(false)
                   } catch (error: unknown) {
-                    await onUploadResult({ error: getApiErrorMessage(error, 'Upload fehlgeschlagen') })
+                    await onUploadResult({ error: getApiErrorMessage(error, 'Upload failed') })
                   } finally {
                     setUploading(false)
                     if (fileRef.current) fileRef.current.value = ''
@@ -271,7 +273,7 @@ export function SourcePicker({
                 disabled={uploading}
                 style={{ ...pickerStyles.addBtn, width: '100%', padding: '0.4rem' }}
               >
-                {uploading ? 'Importiere…' : '📂 Datei wählen & importieren'}
+                {uploading ? t('sourcePicker.uploading') : `📂 ${t('sourcePicker.upload')}`}
               </button>
             </div>
           </div>
@@ -293,6 +295,7 @@ export const pickerStyles: Record<string, React.CSSProperties> = {
     background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
     boxShadow: '0 8px 32px #0006', padding: '0.5rem', minWidth: 320, maxHeight: 380,
     overflowY: 'auto',
+    overflowX: 'hidden',
   },
   helperNote: {
     color: 'var(--muted-fg)',
@@ -310,6 +313,7 @@ export const pickerStyles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', gap: '0.5rem',
     padding: '0.35rem 0.5rem', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem',
     color: 'var(--fg)',
+    minWidth: 0,
   },
   customRow: { display: 'flex', gap: '0.4rem', padding: '0.35rem 0.5rem' },
   customInput: {

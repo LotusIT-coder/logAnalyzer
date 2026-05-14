@@ -74,6 +74,56 @@ _LOG_INTENT_RE = __import__("re").compile(
 )
 
 
+def _detect_user_language(message: str) -> str:
+    """Best-effort language detection for strict reply-language enforcement."""
+    text = (message or "").strip().lower()
+    if not text:
+        return "same"
+
+    german_markers = (
+        " der ", " die ", " das ", " und ", " ist ", " nicht ", " mit ", " fuer ",
+        " über ", " ueber ", " bitte ", " warum ", " wieso ", " weshalb ", " dass ",
+        " muss ", " soll ", " kann ", " logs", " fehler", " eintrag", " eintraege",
+    )
+    english_markers = (
+        " the ", " and ", " is ", " are ", " not ", " with ", " please ", " why ",
+        " how ", " can ", " should ", " must ", " logs", " error", " entries",
+    )
+
+    padded = f" {text} "
+    de_hits = sum(1 for marker in german_markers if marker in padded)
+    en_hits = sum(1 for marker in english_markers if marker in padded)
+
+    if any(ch in text for ch in ("ä", "ö", "ü", "ß")):
+        de_hits += 2
+
+    if de_hits > en_hits and de_hits >= 1:
+        return "de"
+    if en_hits > de_hits and en_hits >= 1:
+        return "en"
+    return "same"
+
+
+def _language_guardrail_message(message: str) -> str:
+    lang = _detect_user_language(message)
+    if lang == "de":
+        return (
+            "CRITICAL LANGUAGE RULE: The user's message is in German. "
+            "You MUST respond in German only. Do NOT answer in Chinese, English, "
+            "or any other language, except for short literal log quotes."
+        )
+    if lang == "en":
+        return (
+            "CRITICAL LANGUAGE RULE: The user's message is in English. "
+            "You MUST respond in English only. Do NOT answer in Chinese, German, "
+            "or any other language, except for short literal log quotes."
+        )
+    return (
+        "CRITICAL LANGUAGE RULE: Respond in the same language as the user's last "
+        "message. Do NOT switch languages unless the user explicitly asks for it."
+    )
+
+
 def _build_scope_message(
     source_ids: list[str],
     source_paths: list[str],
@@ -209,6 +259,7 @@ async def _run_tool_chat(
     # decides to skip tool calls.
     baseline = await _build_baseline_snapshot(ctx)
     messages.append({"role": "system", "content": baseline})
+    messages.append({"role": "system", "content": _language_guardrail_message(message)})
 
     messages.append({"role": "user", "content": message})
 

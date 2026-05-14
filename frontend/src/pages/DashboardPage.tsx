@@ -1,11 +1,15 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import {
+  getEvents,
   getErrorRate,
+  getSocAnalystStatus,
   getSourceIngestionStatus,
   getTimeseries,
   getTopErrors,
   getTopServices,
   runIngestion,
+  setSocAnalystStatus,
+  type EventResponse,
   type MetricsFilter,
   type SourceIngestionStatus,
   type TimeRange,
@@ -13,10 +17,11 @@ import {
   type TopErrorItem,
   type TopServiceItem,
 } from '../lib/requests'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import dayjs from 'dayjs'
 import { getApiErrorMessage } from '../lib/errors'
 import HelpTip from '../components/HelpTip'
+import { FormattedMessage } from '../components/FormattedMessage'
 import { SourcePicker, type UploadResultState, isUploadError } from '../components/SourcePicker'
 import { TimeRangePicker, TIME_PRESETS } from '../components/TimeRangePicker'
 import { type SourceOption } from '../ctx/SourceFilterContext.shared'
@@ -113,6 +118,36 @@ function buildTimeRange(rangeHours: number): TimeRange | undefined {
   }
 }
 
+function toDateTimeLocalInput(iso?: string) {
+  if (!iso) return ''
+  const parsed = dayjs(iso)
+  return parsed.isValid() ? parsed.format('YYYY-MM-DDTHH:mm') : ''
+}
+
+function toIsoFromDateTimeLocal(value: string) {
+  if (!value) return undefined
+  const parsed = dayjs(value)
+  return parsed.isValid() ? parsed.toISOString() : undefined
+}
+
+function formatMetaValue(value: unknown) {
+  if (value === null) return 'null'
+  if (value === undefined) return 'undefined'
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+interface TopErrorDetailTarget {
+  query: string
+  label: string
+  count: number
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const { filter, setFilter: setGlobalSourceFilter, selectedSources, setSelectedSources, customSources, setCustomSources } = useSourceFilter()
@@ -135,8 +170,11 @@ export default function DashboardPage() {
   const autoRefreshTargetEvents = resolveAutoRefreshTargetEvents(autoRefreshProfile)
   const [ingesting, setIngesting] = useState(false)
   const [ingestError, setIngestError] = useState<string | null>(null)
+  const [socToggleBusy, setSocToggleBusy] = useState(false)
+  const [socToggleError, setSocToggleError] = useState<string | null>(null)
   const [uploadResult, setUploadResult] = useState<UploadResultState | null>(null)
   const [topErrorsSeverities, setTopErrorsSeverities] = useState<string[]>(['error', 'critical'])
+  const [topErrorDetail, setTopErrorDetail] = useState<TopErrorDetailTarget | null>(null)
 
   useEffect(() => {
     window.localStorage.setItem(AUTO_REFRESH_PROFILE_KEY, autoRefreshProfile)
@@ -206,6 +244,7 @@ export default function DashboardPage() {
   const metricsFilter: MetricsFilter | undefined = selectedSources.length > 0
     ? { sourceIds: selectedSourceIds, sourcePaths: selectedSourcePaths, severities: topErrorsSeverities }
     : undefined
+  const activeTimeRange = buildTimeRange(rangeHours)
 
   const sourceKey = `${selectedSourceIds.join('|')}::${selectedSourcePaths.join('|')}`
 
@@ -260,7 +299,7 @@ export default function DashboardPage() {
 
   const errs = useQuery({
     queryKey: ['top-errors', rangeHours, sourceKey, topErrorsSeverities.join(',')],
-    queryFn: () => getTopErrors(buildTimeRange(rangeHours), metricsFilter),
+    queryFn: () => getTopErrors(activeTimeRange, metricsFilter),
     enabled: selectedSources.length > 0 && topErrorsSeverities.length > 0,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
@@ -269,7 +308,7 @@ export default function DashboardPage() {
   })
   const svcs = useQuery({
     queryKey: ['top-services', rangeHours, sourceKey],
-    queryFn: () => getTopServices(buildTimeRange(rangeHours), metricsFilter),
+    queryFn: () => getTopServices(activeTimeRange, metricsFilter),
     enabled: selectedSources.length > 0,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
@@ -285,7 +324,49 @@ export default function DashboardPage() {
     placeholderData: keepPreviousData,
   })
 
+  const socAnalyst = useQuery({
+    queryKey: ['soc-analyst-status'],
+    queryFn: getSocAnalystStatus,
+    staleTime: 5_000,
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: true,
+  })
+
   function refetchAll() { ts.refetch(); errs.refetch(); svcs.refetch(); rate.refetch(); sourceStatus.refetch() }
+
+  async function toggleSocAnalystMonitoring() {
+    const currentlyEnabled = !!socAnalyst.data?.enabled
+    setSocToggleBusy(true)
+    setSocToggleError(null)
+
+    const payload = {
+      enabled: !currentlyEnabled,
+      sourceIds: selectedSourceIds,
+      sourcePaths: selectedSourcePaths,
+    }
+
+    try {
+      await setSocAnalystStatus(payload)
+      await socAnalyst.refetch()
+    } catch (error: unknown) {
+      // Some setups briefly return 502 via proxy even though backend is reachable.
+      const statusCode = (error as { response?: { status?: number } })?.response?.status
+      if (statusCode === 502) {
+        try {
+          await new Promise(resolve => window.setTimeout(resolve, 450))
+          await setSocAnalystStatus(payload)
+          await socAnalyst.refetch()
+          setSocToggleBusy(false)
+          return
+        } catch {
+          // Fall through to unified error handling below.
+        }
+      }
+      setSocToggleError(getApiErrorMessage(error, 'KI-Ueberwachung konnte nicht aktualisiert werden.'))
+    } finally {
+      setSocToggleBusy(false)
+    }
+  }
 
   function handleUploadResult(result: UploadResultState) {
     setUploadResult(result)
@@ -372,6 +453,49 @@ export default function DashboardPage() {
               </>
             )}
           </div>
+          <div style={styles.socToggleWrap}>
+            <span style={{ color: 'var(--muted-fg)', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              KI-Ueberwachung
+            </span>
+            <span
+              style={{
+                ...styles.socStatusPill,
+                background: socAnalyst.data?.running
+                  ? 'color-mix(in srgb, var(--success-fg) 18%, var(--surface))'
+                  : 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))',
+                color: socAnalyst.data?.running ? 'var(--success-fg)' : 'var(--danger-fg)',
+              }}
+              title={socAnalyst.data?.enabled
+                ? (socAnalyst.data?.source_ids?.length
+                  ? `Aktiv fuer ${socAnalyst.data.source_ids.length} Quelle(n)`
+                  : 'Aktiv fuer alle verfuegbaren Logs')
+                : 'Deaktiviert'}
+            >
+              {socAnalyst.isLoading
+                ? 'Status: lade...'
+                : socAnalyst.data?.running
+                  ? 'Status: aktiv'
+                  : socAnalyst.data?.enabled
+                    ? 'Status: startet'
+                    : 'Status: inaktiv'}
+            </span>
+            <button
+              type="button"
+              onClick={toggleSocAnalystMonitoring}
+              disabled={socToggleBusy || socAnalyst.isLoading}
+              style={socAnalyst.data?.enabled ? styles.socDisableBtn : styles.socEnableBtn}
+              title={socAnalyst.data?.enabled
+                ? 'KI-Ueberwachung deaktivieren'
+                : 'KI-Ueberwachung fuer die aktuelle Quellenauswahl aktivieren'}
+            >
+              {socToggleBusy
+                ? 'Aktualisiere...'
+                : socAnalyst.data?.enabled
+                  ? 'Deaktivieren'
+                  : 'Aktivieren'}
+            </button>
+            <HelpTip content="Schaltet die permanente SOC-KI-Ueberwachung ein oder aus. Beim Aktivieren wird die aktuelle Quellenauswahl als Filter gespeichert und bleibt auch nach Neustarts aktiv." ariaLabel="KI-Ueberwachung erklaeren" />
+          </div>
           <div style={styles.ingestRow}>
             <SourcePicker selected={selectedSources} onChange={handleSelectedSourcesChange} onUploadResult={handleUploadResult} customSources={customSources} onRemoveCustom={removeCustomSource} />
             <HelpTip content="Hier waehlst du konfigurierte Quellen, Standard-Logpfade oder hochgeladene Dateien aus. Die Auswahl definiert gleichzeitig den globalen Datenkontext fuer die Metriken." ariaLabel="Quellenauswahl erklaeren" />
@@ -379,6 +503,12 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {socToggleError && (
+        <div style={{ ...styles.ingestInfo, background: 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))', color: 'var(--danger-fg)' }}>
+          {socToggleError}
+        </div>
+      )}
 
       {ingestError && (
         <div style={{ ...styles.ingestInfo, background: 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))', color: 'var(--danger-fg)' }}>
@@ -519,8 +649,23 @@ export default function DashboardPage() {
                 <ol style={styles.ol}>
                   {errs.data.items.slice(0, 8).map((errorItem: TopErrorItem, i: number) => (
                     <li key={i} style={styles.li}>
-                      <span style={styles.count}>{errorItem.count}</span>
-                      <span style={styles.msg}>{(errorItem.key ?? errorItem.message ?? '').slice(0, 80)}</span>
+                      <button
+                        type="button"
+                        style={styles.topEntryButton}
+                        onClick={() => {
+                          const fullText = (errorItem.key ?? errorItem.message ?? '').trim()
+                          if (!fullText) return
+                          setTopErrorDetail({
+                            query: fullText,
+                            label: fullText.slice(0, 120),
+                            count: errorItem.count,
+                          })
+                        }}
+                        title="Details zu diesem Fehlertyp öffnen"
+                      >
+                        <span style={styles.count}>{errorItem.count}</span>
+                        <span style={styles.msg}>{(errorItem.key ?? errorItem.message ?? '').slice(0, 80)}</span>
+                      </button>
                     </li>
                   ))}
                   {!errs.data.items.length && <div style={{ color: 'var(--muted-fg)', fontSize: '0.85rem' }}>Keine Fehler-Events</div>}
@@ -544,6 +689,243 @@ export default function DashboardPage() {
           </div>
         </>
       )}
+
+      {topErrorDetail && (
+        <TopErrorDetailModal
+          target={topErrorDetail}
+          sourceIds={selectedSourceIds}
+          sourcePaths={selectedSourcePaths}
+          initialFrom={activeTimeRange?.from}
+          initialTo={activeTimeRange?.to}
+          onClose={() => setTopErrorDetail(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function TopErrorDetailModal({
+  target,
+  sourceIds,
+  sourcePaths,
+  initialFrom,
+  initialTo,
+  onClose,
+}: {
+  target: TopErrorDetailTarget
+  sourceIds: string[]
+  sourcePaths: string[]
+  initialFrom?: string
+  initialTo?: string
+  onClose: () => void
+}) {
+  const [fromInput, setFromInput] = useState(() => toDateTimeLocalInput(initialFrom))
+  const [toInput, setToInput] = useState(() => toDateTimeLocalInput(initialTo))
+  const [appliedFromInput, setAppliedFromInput] = useState(() => toDateTimeLocalInput(initialFrom))
+  const [appliedToInput, setAppliedToInput] = useState(() => toDateTimeLocalInput(initialTo))
+  const [localSearch, setLocalSearch] = useState('')
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const listRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const nextFrom = toDateTimeLocalInput(initialFrom)
+    const nextTo = toDateTimeLocalInput(initialTo)
+    setFromInput(nextFrom)
+    setToInput(nextTo)
+    setAppliedFromInput(nextFrom)
+    setAppliedToInput(nextTo)
+    setLocalSearch('')
+    setExpanded({})
+  }, [target.query, initialFrom, initialTo])
+
+  const fromIso = toIsoFromDateTimeLocal(appliedFromInput)
+  const toIso = toIsoFromDateTimeLocal(appliedToInput)
+
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+    isFetching,
+  } = useInfiniteQuery({
+    queryKey: ['top-error-detail', target.query, sourceIds.join('|'), sourcePaths.join('|'), fromIso, toIso],
+    queryFn: ({ pageParam }: { pageParam?: string }) => getEvents({
+      limit: 100,
+      cursor: pageParam,
+      q: target.query,
+      ...(fromIso ? { from: fromIso } : {}),
+      ...(toIso ? { to: toIso } : {}),
+      ...(sourceIds.length ? { source_ids: sourceIds.join(',') } : {}),
+      ...(sourcePaths.length ? { source_paths: sourcePaths.join(',') } : {}),
+    }),
+    initialPageParam: undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
+    staleTime: 20_000,
+  })
+
+  const allEvents = data?.pages.flatMap(page => page.items) ?? []
+  const normalizedLocalSearch = localSearch.trim().toLowerCase()
+  const filteredEvents = normalizedLocalSearch
+    ? allEvents.filter(event => {
+      const searchable = [
+        event.message,
+        event.id,
+        event.source_id,
+        event.severity,
+        event.host,
+        event.service,
+        event.timestamp,
+      ]
+      for (const chunk of searchable) {
+        if (String(chunk ?? '').toLowerCase().includes(normalizedLocalSearch)) return true
+      }
+      return false
+    })
+    : allEvents
+
+  useEffect(() => {
+    const container = listRef.current
+    if (!container || !hasNextPage || isFetchingNextPage) return
+
+    const onScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container
+      if (scrollTop + clientHeight >= scrollHeight * 0.8) {
+        fetchNextPage()
+      }
+    }
+
+    container.addEventListener('scroll', onScroll)
+    return () => container.removeEventListener('scroll', onScroll)
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+
+  function applyDateFilter() {
+    setAppliedFromInput(fromInput)
+    setAppliedToInput(toInput)
+  }
+
+  function resetDateFilter() {
+    setFromInput('')
+    setToInput('')
+    setAppliedFromInput('')
+    setAppliedToInput('')
+  }
+
+  function toggleExpand(eventId: string) {
+    setExpanded(prev => ({ ...prev, [eventId]: !prev[eventId] }))
+  }
+
+  return (
+    <div style={styles.detailModalOverlay} onClick={onClose}>
+      <div style={styles.detailModalBox} onClick={e => e.stopPropagation()}>
+        <div style={styles.detailModalHeader}>
+          <div style={{ minWidth: 0 }}>
+            <div style={styles.detailModalTitle}>Details: Top Fehlermeldung</div>
+            <div style={styles.detailModalSubtitle} title={target.query}>
+              Typ: {target.label}
+            </div>
+          </div>
+          <button type="button" onClick={onClose} style={styles.detailModalCloseBtn}>x Schließen</button>
+        </div>
+
+        <div style={styles.detailModalFilterRow}>
+          <span style={styles.detailFilterLabel}>Von</span>
+          <input
+            type="datetime-local"
+            value={fromInput}
+            onChange={e => setFromInput(e.target.value)}
+            style={styles.detailFilterInput}
+          />
+          <span style={styles.detailFilterLabel}>Bis</span>
+          <input
+            type="datetime-local"
+            value={toInput}
+            onChange={e => setToInput(e.target.value)}
+            style={styles.detailFilterInput}
+          />
+          <button type="button" onClick={applyDateFilter} style={styles.detailFilterBtn}>Zeitraum suchen</button>
+          <button type="button" onClick={resetDateFilter} style={styles.detailResetBtn}>Zurücksetzen</button>
+          <input
+            type="text"
+            value={localSearch}
+            onChange={e => setLocalSearch(e.target.value)}
+            placeholder="In geladenen Treffern suchen..."
+            style={{ ...styles.detailFilterInput, minWidth: 240 }}
+          />
+          {localSearch && (
+            <button type="button" onClick={() => setLocalSearch('')} style={styles.detailResetBtn}>Suche löschen</button>
+          )}
+          <span style={styles.detailMetaText}>
+            {filteredEvents.length}/{allEvents.length} Einträge{hasNextPage ? ' (mehr verfügbar)' : ''}
+          </span>
+        </div>
+
+        <div ref={listRef} style={styles.detailEventList}>
+          {isLoading ? (
+            <div style={{ color: 'var(--muted-fg)', padding: '1.25rem' }}>Lade Einträge…</div>
+          ) : isError ? (
+            <div style={{ color: 'var(--danger-fg)', padding: '1.25rem' }}>
+              Fehler beim Laden: {getApiErrorMessage(error)}
+            </div>
+          ) : (
+            <>
+              {filteredEvents.map((event: EventResponse) => {
+                const metadata = Object.entries(event).filter(([key]) => key !== 'message')
+                const isOpen = !!expanded[event.id]
+                return (
+                  <div key={event.id} style={styles.detailEventCard}>
+                    <button
+                      type="button"
+                      style={styles.detailEventHeader}
+                      onClick={() => toggleExpand(event.id)}
+                      title="Metadaten ein-/ausklappen"
+                    >
+                      <span style={styles.detailEventTs}>{dayjs(event.timestamp).format('DD.MM.YYYY HH:mm:ss')}</span>
+                      <span style={{ ...styles.detailEventSeverity, background: (event.severity === 'critical' ? '#ef4444' : event.severity === 'error' ? '#f97316' : event.severity === 'warning' ? '#eab308' : event.severity === 'info' ? '#22c55e' : '#6366f1') }}>
+                        {event.severity}
+                      </span>
+                      <span style={styles.detailEventSource}>{event.source_id ?? '-'}</span>
+                      <span style={styles.detailEventHost}>{event.host ?? '-'}</span>
+                      <span style={styles.detailEventService}>{event.service ?? '-'}</span>
+                    </button>
+
+                    <div style={{ padding: '0.6rem 0.75rem 0.8rem 0.75rem' }}>
+                      <FormattedMessage message={event.message} />
+                    </div>
+
+                    {isOpen && (
+                      <div style={styles.detailMetadataWrap}>
+                        {metadata.map(([key, value]) => (
+                          <div key={`${event.id}-${key}`} style={styles.detailMetadataRow}>
+                            <span style={styles.detailMetadataKey}>{key}</span>
+                            <span style={styles.detailMetadataVal}>{formatMetaValue(value)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+              {!filteredEvents.length && (
+                <div style={{ color: 'var(--muted-fg)', padding: '1.25rem' }}>
+                  {allEvents.length > 0 ? 'Keine Treffer für die lokale Suche' : 'Keine passenden Einträge gefunden'}
+                </div>
+              )}
+              {isFetchingNextPage && (
+                <div style={{ color: 'var(--muted-fg)', padding: '0.75rem 1.25rem' }}>Lade weitere Einträge…</div>
+              )}
+              {!isFetchingNextPage && isFetching && (
+                <div style={{ color: 'var(--muted-fg)', padding: '0.75rem 1.25rem' }}>Aktualisiere…</div>
+              )}
+              {!hasNextPage && filteredEvents.length > 0 && (
+                <div style={{ color: 'var(--muted-fg)', padding: '0.75rem 1.25rem' }}>Ende der Trefferliste</div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -795,6 +1177,37 @@ const styles: Record<string, React.CSSProperties> = {
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', gap: '1rem', flexWrap: 'wrap' },
   h2: { margin: 0, fontSize: '1.5rem' },
   ingestRow: { display: 'flex', gap: '0.5rem', alignItems: 'center' },
+  socToggleWrap: { display: 'flex', gap: '0.45rem', alignItems: 'center', flexWrap: 'wrap' },
+  socStatusPill: {
+    border: '1px solid var(--border)',
+    borderRadius: 999,
+    padding: '0.2rem 0.55rem',
+    fontSize: '0.74rem',
+    fontWeight: 700,
+    whiteSpace: 'nowrap',
+  },
+  socEnableBtn: {
+    background: 'color-mix(in srgb, var(--success-fg) 18%, var(--surface))',
+    color: 'var(--success-fg)',
+    border: '1px solid color-mix(in srgb, var(--success-fg) 52%, var(--border))',
+    borderRadius: 6,
+    padding: '0.35rem 0.65rem',
+    fontSize: '0.78rem',
+    fontWeight: 700,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  },
+  socDisableBtn: {
+    background: 'color-mix(in srgb, var(--danger-fg) 14%, var(--surface))',
+    color: 'var(--danger-fg)',
+    border: '1px solid color-mix(in srgb, var(--danger-fg) 52%, var(--border))',
+    borderRadius: 6,
+    padding: '0.35rem 0.65rem',
+    fontSize: '0.78rem',
+    fontWeight: 700,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  },
   ingestBtn: {
     background: 'var(--accent)', color: '#fff', border: 'none',
     borderRadius: 8, padding: '0.55rem 1.1rem', cursor: 'pointer', fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap',
@@ -862,9 +1275,176 @@ const styles: Record<string, React.CSSProperties> = {
   panelMetaLabel: { color: 'var(--muted-fg)', fontSize: '0.76rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' },
   panelMetaValue: { color: 'var(--fg)', fontSize: '0.8rem' },
   ol: { margin: 0, padding: '0 0 0 1.2rem' },
-  li: { display: 'flex', gap: '0.75rem', marginBottom: '0.4rem', fontSize: '0.82rem', color: 'var(--fg)' },
+  li: { display: 'flex', marginBottom: '0.4rem', fontSize: '0.82rem', color: 'var(--fg)' },
   count: { background: 'var(--accent-soft)', color: 'var(--accent-fg)', borderRadius: 4, padding: '0 0.4rem', flexShrink: 0 },
   msg: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  topEntryButton: {
+    width: '100%',
+    border: '1px solid transparent',
+    background: 'transparent',
+    color: 'inherit',
+    display: 'flex',
+    gap: '0.75rem',
+    alignItems: 'center',
+    textAlign: 'left',
+    cursor: 'pointer',
+    padding: '0.25rem 0.3rem',
+    borderRadius: 6,
+  },
+  detailModalOverlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(2, 6, 23, 0.64)',
+    zIndex: 2600,
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: '1.25rem',
+  },
+  detailModalBox: {
+    width: 'min(1280px, 96vw)',
+    maxHeight: '92vh',
+    background: 'var(--surface)',
+    border: '1px solid var(--border)',
+    borderRadius: 12,
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  detailModalHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '1rem',
+    padding: '0.9rem 1rem',
+    borderBottom: '1px solid var(--border)',
+  },
+  detailModalTitle: { color: 'var(--fg)', fontSize: '0.95rem', fontWeight: 700 },
+  detailModalSubtitle: {
+    color: 'var(--muted-fg)',
+    fontSize: '0.8rem',
+    marginTop: '0.2rem',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    maxWidth: '76vw',
+  },
+  detailModalCloseBtn: {
+    background: 'var(--surface-2)',
+    border: '1px solid var(--border)',
+    color: 'var(--muted-fg)',
+    borderRadius: 6,
+    padding: '0.4rem 0.7rem',
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  detailModalFilterRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    flexWrap: 'wrap',
+    padding: '0.8rem 1rem',
+    borderBottom: '1px solid var(--border)',
+  },
+  detailFilterLabel: {
+    color: 'var(--muted-fg)',
+    fontSize: '0.76rem',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
+  },
+  detailFilterInput: {
+    background: 'var(--surface-2)',
+    color: 'var(--fg)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    padding: '0.35rem 0.45rem',
+    fontSize: '0.82rem',
+  },
+  detailFilterBtn: {
+    background: 'var(--accent)',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 6,
+    padding: '0.38rem 0.65rem',
+    fontSize: '0.8rem',
+    cursor: 'pointer',
+  },
+  detailResetBtn: {
+    background: 'var(--surface-2)',
+    color: 'var(--muted-fg)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    padding: '0.38rem 0.65rem',
+    fontSize: '0.8rem',
+    cursor: 'pointer',
+  },
+  detailMetaText: { color: 'var(--muted-fg)', fontSize: '0.78rem', marginLeft: 'auto' },
+  detailEventList: {
+    overflowY: 'auto',
+    padding: '0.9rem',
+    background: 'var(--surface-2)',
+  },
+  detailEventCard: {
+    background: 'var(--surface)',
+    border: '1px solid var(--border)',
+    borderRadius: 10,
+    marginBottom: '0.7rem',
+    overflow: 'hidden',
+  },
+  detailEventHeader: {
+    width: '100%',
+    border: 'none',
+    background: 'var(--surface)',
+    color: 'inherit',
+    cursor: 'pointer',
+    display: 'grid',
+    gridTemplateColumns: '180px 90px 1fr 140px 140px',
+    gap: '0.55rem',
+    alignItems: 'center',
+    padding: '0.7rem 0.75rem 0 0.75rem',
+    textAlign: 'left',
+  },
+  detailEventTs: { color: 'var(--muted-fg)', fontSize: '0.78rem' },
+  detailEventSeverity: {
+    color: '#fff',
+    fontSize: '0.72rem',
+    fontWeight: 700,
+    borderRadius: 6,
+    padding: '0.14rem 0.5rem',
+    textTransform: 'uppercase',
+    width: 'fit-content',
+  },
+  detailEventSource: { color: 'var(--accent)', fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  detailEventHost: { color: 'var(--muted-fg)', fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  detailEventService: { color: 'var(--muted-fg)', fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  detailMetadataWrap: {
+    borderTop: '1px solid var(--border)',
+    marginTop: '0.2rem',
+    padding: '0.6rem 0.75rem 0.75rem 0.75rem',
+    display: 'grid',
+    gap: '0.35rem',
+  },
+  detailMetadataRow: {
+    display: 'grid',
+    gridTemplateColumns: '170px 1fr',
+    gap: '0.45rem',
+    alignItems: 'start',
+  },
+  detailMetadataKey: {
+    color: 'var(--muted-fg)',
+    fontSize: '0.74rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+    fontWeight: 700,
+  },
+  detailMetadataVal: {
+    color: 'var(--fg)',
+    fontSize: '0.8rem',
+    fontFamily: 'monospace',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+  },
   bucketSelect: {
     background: 'var(--surface)',
     color: 'var(--fg)',

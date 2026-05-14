@@ -1,6 +1,8 @@
 // Shared time-range preset picker. Used by Dashboard and Events.
 // `rangeHours === 0` means "all data, no time filter".
 
+import { useI18n } from '../ctx/I18nContext'
+
 export const TIME_PRESETS: { label: string; hours: number }[] = [
   { label: '1 m', hours: 1 / 60 },
   { label: '15 m', hours: 0.25 },
@@ -9,7 +11,7 @@ export const TIME_PRESETS: { label: string; hours: number }[] = [
   { label: '24 h', hours: 24 },
   { label: '7 d', hours: 168 },
   { label: '30 d', hours: 720 },
-  { label: 'Alle', hours: 0 },
+  { label: 'time.all', hours: 0 },
 ]
 
 interface Props {
@@ -18,6 +20,7 @@ interface Props {
 }
 
 export function TimeRangePicker({ value, onChange }: Props) {
+  const { t } = useI18n()
   return (
     <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
       {TIME_PRESETS.map(p => {
@@ -38,7 +41,7 @@ export function TimeRangePicker({ value, onChange }: Props) {
               borderColor: active ? 'var(--accent)' : 'var(--border)',
             }}
           >
-            {p.label}
+            {p.label.startsWith('time.') ? t(p.label) : p.label}
           </button>
         )
       })}

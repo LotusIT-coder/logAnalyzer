@@ -10,6 +10,7 @@ import { SourcePicker, type UploadResultState, isUploadError } from '../componen
 import { TimeRangePicker } from '../components/TimeRangePicker'
 import { type SourceOption } from '../ctx/SourceFilterContext.shared'
 import { useSourceFilter } from '../ctx/useSourceFilter'
+import { AnsiText, FormattedMessage } from '../components/FormattedMessage'
 
 const SEV_COLOR: Record<string, string> = {
   critical: '#ef4444',
@@ -95,6 +96,16 @@ interface TailLine {
 
 const SOURCE_COLORS = ['#7dd3fc', '#fbbf24', '#a78bfa', '#34d399', '#fb7185', '#60a5fa', '#f97316', '#c084fc']
 
+const ANSI_LEGEND_ROWS: Array<{ sample: string; code: string; meaning: string }> = [
+  { sample: 'var(--ansi-fg-31)', code: '31 / 91', meaning: 'Error, kritisch, fehlgeschlagen' },
+  { sample: 'var(--ansi-fg-32)', code: '32 / 92', meaning: 'Info, erfolgreich, ingested' },
+  { sample: 'var(--ansi-fg-33)', code: '33 / 93', meaning: 'Warnung, Hinweis, degradiert' },
+  { sample: 'var(--ansi-fg-34)', code: '34 / 94', meaning: 'Host, Pfad, ID, Quelle' },
+  { sample: 'var(--ansi-fg-35)', code: '35 / 95', meaning: 'Counter, Metriken, Mengen' },
+  { sample: 'var(--ansi-fg-36)', code: '36 / 96', meaning: 'Ablauf, Status, Marker' },
+  { sample: 'var(--ansi-fg-90)', code: '90', meaning: 'Gedimmt / sekundar' },
+]
+
 function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClose: () => void }) {
   const [lines, setLines] = useState<TailLine[]>([])
   const [connected, setConnected] = useState<Record<string, boolean>>({})
@@ -153,7 +164,9 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
 
   const allConnected = sources.every(s => connected[s.id])
   const anyConnected = sources.some(s => connected[s.id])
-  const errorList = Object.entries(errors).filter(([id]) => sources.find(s => s.id === id))
+  const errorList = Object.entries(errors)
+    .filter(([id]) => sources.find(s => s.id === id))
+    .reverse() // Show newest errors at the top
   const showSourceTag = sources.length > 1
   const title = sources.length === 1 ? `Live-Tail: ${sources[0].name}` : `Live-Tail: ${sources.length} Quellen`
 
@@ -243,6 +256,43 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
   )
 }
 
+function ColorLegendModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div style={modal.overlay} onClick={onClose}>
+      <div style={legendModal.box} onClick={e => e.stopPropagation()}>
+        <div style={legendModal.header}>
+          <div>
+            <div style={legendModal.title}>ANSI-Farben in Log-Nachrichten</div>
+            <div style={legendModal.subtitle}>Die Farben kommen direkt aus den Log-Sequenzen wie [31m, [32m, [36m und [0m.</div>
+          </div>
+          <button onClick={onClose} style={legendModal.closeBtn}>x Schliessen</button>
+        </div>
+
+        <div style={legendModal.content}>
+          <div style={legendModal.tableHeader}>
+            <span style={{ width: 80 }}>Farbe</span>
+            <span style={{ width: 110 }}>ANSI Code</span>
+            <span style={{ flex: 1 }}>Bedeutung</span>
+          </div>
+          {ANSI_LEGEND_ROWS.map(row => (
+            <div key={row.code} style={legendModal.tableRow}>
+              <span style={{ width: 80, display: 'flex', alignItems: 'center' }}>
+                <span style={{ ...legendModal.swatch, background: row.sample }} />
+              </span>
+              <span style={{ width: 110, color: 'var(--fg)', fontFamily: 'monospace' }}>{row.code}</span>
+              <span style={{ flex: 1, color: 'var(--muted-fg)' }}>{row.meaning}</span>
+            </div>
+          ))}
+
+          <div style={legendModal.note}>
+            Hinweis: Der Severity-Badge links ist eine separate UI-Farbe und nicht Teil der ANSI-Sequenz im Nachrichtentext.
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function EventsPage() {
   const { filter: globalFilter, setFilter: setGlobalFilter, selectedSources, setSelectedSources, customSources, setCustomSources } = useSourceFilter()
   const [searchParams] = useSearchParams()
@@ -260,6 +310,7 @@ export default function EventsPage() {
   const [refreshTick, setRefreshTick] = useState(0)
   const [tailSources, setTailSources] = useState<SourceResponse[] | null>(null)
   const [uploadResult, setUploadResult] = useState<UploadResultState | null>(null)
+  const [showColorLegend, setShowColorLegend] = useState(false)
   const tableContainerRef = useRef<HTMLDivElement>(null)
 
   const { data: sources = [] } = useQuery({ queryKey: ['sources'], queryFn: getSources })
@@ -359,6 +410,12 @@ export default function EventsPage() {
       return
     }
   }, [globalSingleSourceId, globalSingleSourcePath, sourceId, sourceIdsCsv, sourcePathsCsv])
+
+  useEffect(() => {
+    const openLegend = () => setShowColorLegend(true)
+    window.addEventListener('events:open-color-legend', openLegend)
+    return () => window.removeEventListener('events:open-color-legend', openLegend)
+  }, [])
 
   // Infinite query: loads events page by page
   const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage, isFetching } = useInfiniteQuery({
@@ -465,6 +522,7 @@ export default function EventsPage() {
   return (
     <div>
       {tailSources && <LiveTailModal sources={tailSources} onClose={() => setTailSources(null)} />}
+      {showColorLegend && <ColorLegendModal onClose={() => setShowColorLegend(false)} />}
 
       <div style={styles.header}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -646,8 +704,8 @@ export default function EventsPage() {
                     <span style={{ width: 120, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {event.service ?? '-'}
                     </span>
-                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.85rem' }}>
-                      {event.message}
+                    <span style={{ flex: 1, overflow: 'hidden', fontSize: '0.84rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', lineHeight: '1.4' }}>
+                      <AnsiText message={event.message} inline />
                     </span>
                   </div>
                   {expanded[event.id] && (
@@ -662,7 +720,9 @@ export default function EventsPage() {
                       </div>
                       <div style={{ marginTop: '0.5rem' }}>
                         <span style={styles.detailLabel}>Nachricht:</span>
-                        <pre style={styles.detailPre}>{event.message}</pre>
+                        <div style={{ marginTop: '0.25rem' }}>
+                          <FormattedMessage message={event.message} />
+                        </div>
                       </div>
                     </div>
                   )}
@@ -792,5 +852,78 @@ const modal: Record<string, React.CSSProperties> = {
   footer: {
     padding: '0.4rem 1rem', borderTop: '1px solid var(--border)',
     fontSize: '0.72rem', color: 'var(--muted-fg)',
+  },
+}
+
+const legendModal: Record<string, React.CSSProperties> = {
+  box: {
+    background: 'var(--surface)',
+    border: '1px solid var(--border)',
+    borderRadius: 12,
+    width: 'min(760px, 92vw)',
+    maxHeight: '80vh',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  header: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: '1rem',
+    padding: '0.9rem 1rem',
+    borderBottom: '1px solid var(--border)',
+  },
+  title: { fontWeight: 800, fontSize: '1rem', color: 'var(--fg)' },
+  subtitle: { marginTop: '0.3rem', color: 'var(--muted-fg)', fontSize: '0.84rem', lineHeight: 1.4 },
+  closeBtn: {
+    background: 'var(--surface-2)',
+    color: 'var(--muted-fg)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    padding: '0.3rem 0.65rem',
+    cursor: 'pointer',
+    fontSize: '0.82rem',
+    whiteSpace: 'nowrap',
+  },
+  content: {
+    padding: '0.75rem 1rem 1rem',
+    overflowY: 'auto',
+  },
+  tableHeader: {
+    display: 'flex',
+    gap: '0.6rem',
+    color: 'var(--muted-fg)',
+    fontSize: '0.74rem',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
+    padding: '0.25rem 0.4rem',
+    borderBottom: '1px solid var(--border)',
+  },
+  tableRow: {
+    display: 'flex',
+    gap: '0.6rem',
+    alignItems: 'center',
+    padding: '0.5rem 0.4rem',
+    borderBottom: '1px solid color-mix(in srgb, var(--border) 55%, transparent)',
+    fontSize: '0.84rem',
+  },
+  swatch: {
+    width: 22,
+    height: 12,
+    borderRadius: 999,
+    border: '1px solid color-mix(in srgb, var(--fg) 22%, transparent)',
+    display: 'inline-block',
+  },
+  note: {
+    marginTop: '0.9rem',
+    padding: '0.65rem 0.75rem',
+    borderRadius: 8,
+    border: '1px solid var(--border)',
+    background: 'var(--surface-2)',
+    color: 'var(--muted-fg)',
+    fontSize: '0.8rem',
+    lineHeight: 1.45,
   },
 }

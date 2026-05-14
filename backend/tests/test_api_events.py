@@ -117,6 +117,28 @@ class TestEventsAPI:
         assert len(items) == 1
         assert "OOM" in items[0]["message"]
 
+    async def test_filter_by_service_is_partial_and_case_insensitive(self, client: AsyncClient, db_session: AsyncSession):
+        src = await _seed_source(db_session)
+        await _seed_event(db_session, src.id, service="log-analyzer-backend", message="startup")
+        await _seed_event(db_session, src.id, service="sshd", message="login")
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/events?service=ANALYZER")
+        items = resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["service"] == "log-analyzer-backend"
+
+    async def test_filter_by_host_is_partial_and_case_insensitive(self, client: AsyncClient, db_session: AsyncSession):
+        src = await _seed_source(db_session)
+        await _seed_event(db_session, src.id, host="Rechenknecht", message="m1")
+        await _seed_event(db_session, src.id, host="db-node-1", message="m2")
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/events?host=KNECHT")
+        items = resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["host"] == "Rechenknecht"
+
     async def test_limit_parameter(self, client: AsyncClient, db_session: AsyncSession):
         src = await _seed_source(db_session)
         for i in range(10):

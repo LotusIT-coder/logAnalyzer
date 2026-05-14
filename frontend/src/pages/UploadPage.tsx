@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { analyzeUpload, getAIModels, uploadImport, type AIModelResponse } from '../lib/requests'
 import { useRef, useState } from 'react'
 import { getApiErrorMessage } from '../lib/errors'
+import { useI18n } from '../ctx/I18nContext'
 
 interface AnalysisResult {
   lines_parsed: number
@@ -19,6 +20,7 @@ interface ImportResult {
 }
 
 export default function UploadPage() {
+  const { t } = useI18n()
   const { data: models = [] } = useQuery({ queryKey: ['ai-models'], queryFn: getAIModels })
 
   const [model, setModel] = useState('')
@@ -68,14 +70,13 @@ export default function UploadPage() {
     <div style={styles.root}>
       <h2 style={styles.h2}>Log-Datei analysieren</h2>
       <p style={styles.sub}>
-        Lade eine beliebige Log-Datei hoch – sie wird geparst und von Ollama analysiert.
-        Bis zu 500 Zeilen werden ausgewertet (max. 10 MB).
+        {t('upload.description')}
       </p>
 
       <div style={styles.card}>
         <div style={styles.row}>
           <div style={styles.field}>
-            <label style={styles.label}>Modell</label>
+            <label style={styles.label}>{t('upload.model')}</label>
             <select
               value={model || effectiveModel}
               onChange={e => setModel(e.target.value)}
@@ -87,7 +88,7 @@ export default function UploadPage() {
             </select>
           </div>
           <div style={{ ...styles.field, flex: 1 }}>
-            <label style={styles.label}>Log-Datei</label>
+            <label style={styles.label}>{t('upload.logFile')}</label>
             <div style={styles.fileRow}>
               <input
                 ref={fileRef}
@@ -97,10 +98,10 @@ export default function UploadPage() {
                 onChange={e => setFile(e.target.files?.[0] ?? null)}
               />
               <button onClick={() => fileRef.current?.click()} style={styles.pickBtn}>
-                Datei wählen…
+                {t('upload.pickFile')}
               </button>
               <span style={styles.fileName}>
-                {file ? `${file.name} (${(file.size / 1024).toFixed(1)} KB)` : 'Keine Datei gewählt'}
+                {file ? `${file.name} (${(file.size / 1024).toFixed(1)} KB)` : t('upload.noFile')}
               </span>
             </div>
           </div>
@@ -108,12 +109,12 @@ export default function UploadPage() {
 
         <div style={styles.field}>
           <label style={styles.label}>
-            Eigener Prompt (optional – leer lassen für automatische Analyse)
+            {t('upload.customPrompt')}
           </label>
           <textarea
             value={customPrompt}
             onChange={e => setCustomPrompt(e.target.value)}
-            placeholder={'z.B. "Welche Prozesse stürzen am häufigsten ab?"'}
+            placeholder={t('upload.customPromptPlaceholder')}
             rows={3}
             style={styles.textarea}
           />
@@ -125,14 +126,14 @@ export default function UploadPage() {
             disabled={!file || loading || !effectiveModel}
             style={styles.analyzeBtn}
           >
-            {loading ? '⏳ Analysiere…' : '🔍 Analysieren'}
+            {loading ? t('upload.analyzing') : t('upload.analyze')}
           </button>
           <button
             onClick={handleImport}
             disabled={!file || loading}
             style={styles.importBtn}
           >
-            {loading ? '⏳ Importiere…' : 'In Quelle importieren'}
+            {loading ? t('upload.importing') : t('upload.importToSource')}
           </button>
         </div>
       </div>
@@ -144,22 +145,22 @@ export default function UploadPage() {
       {result && (
         <div style={styles.resultCard}>
           <div style={styles.resultMeta}>
-            <span>📄 {result.lines_parsed} Zeilen geparst</span>
-            <span>🧩 {result.events_found} strukturierte Events</span>
+            <span>📄 {t('upload.linesParsed', { count: result.lines_parsed })}</span>
+            <span>🧩 {t('upload.structuredEvents', { count: result.events_found })}</span>
             <span>🤖 {result.model}</span>
           </div>
-          <h3 style={styles.resultTitle}>Analyse</h3>
+          <h3 style={styles.resultTitle}>{t('upload.analysis')}</h3>
           <pre style={styles.resultText}>{result.analysis}</pre>
         </div>
       )}
 
       {importResult && (
         <div style={styles.resultCard}>
-          <h3 style={styles.resultTitle}>Import abgeschlossen</h3>
+          <h3 style={styles.resultTitle}>{t('upload.importDone')}</h3>
           <div style={styles.resultMeta}>
-            <span>Quelle: {importResult.source_name}</span>
-            <span>{importResult.lines_ingested} Zeilen ingestiert</span>
-            <span>{importResult.events_created} Events erstellt</span>
+            <span>{t('upload.source')}: {importResult.source_name}</span>
+            <span>{t('upload.linesIngested', { count: importResult.lines_ingested })}</span>
+            <span>{t('upload.eventsCreated', { count: importResult.events_created })}</span>
           </div>
           <div style={styles.fileName}>{importResult.stored_path}</div>
         </div>

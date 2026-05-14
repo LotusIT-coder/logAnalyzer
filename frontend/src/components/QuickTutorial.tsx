@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useI18n } from '../ctx/I18nContext'
 
 const TOUR_STORAGE_KEY = 'lotus-analyzer-onboarding-v1'
 
@@ -36,6 +37,7 @@ const STEPS = [
 ]
 
 export default function QuickTutorial() {
+  const { t } = useI18n()
   const [welcomeOpen, setWelcomeOpen] = useState(() => {
     if (typeof window === 'undefined') return false
     try {
@@ -80,33 +82,33 @@ export default function QuickTutorial() {
   return (
     <div style={styles.root}>
       <button type="button" onClick={() => startTour(0)} style={styles.trigger}>
-        Schnell-Tour
+        {t('quickTour.trigger')}
       </button>
       {welcomeOpen && (
         <div style={styles.welcomeCard}>
-          <div style={styles.welcomeEyebrow}>Erstbesuch</div>
-          <div style={styles.welcomeTitle}>Kurz durch den LotusAnalyzer fuehren lassen?</div>
+          <div style={styles.welcomeEyebrow}>{t('quickTour.firstVisit')}</div>
+          <div style={styles.welcomeTitle}>{t('quickTour.welcomeTitle')}</div>
           <div style={styles.welcomeBody}>
-            Die Tour erklaert in wenigen Schritten, wie Quellen, Events, Netzwerk, Regeln und AI zusammenarbeiten.
+            {t('quickTour.welcomeBody')}
           </div>
           <div style={styles.welcomeActions}>
-            <button type="button" onClick={() => startTour(0)} style={styles.primaryBtn}>Tour starten</button>
-            <button type="button" onClick={dismissWelcome} style={styles.secondaryBtn}>Spaeter</button>
+            <button type="button" onClick={() => startTour(0)} style={styles.primaryBtn}>{t('quickTour.start')}</button>
+            <button type="button" onClick={dismissWelcome} style={styles.secondaryBtn}>{t('quickTour.later')}</button>
           </div>
         </div>
       )}
       {open && (
-        <div style={styles.overlay} role="dialog" aria-modal="true" aria-label="Schnell-Tutorial">
+        <div style={styles.overlay} role="dialog" aria-modal="true" aria-label={t('quickTour.dialogLabel')}>
           <div style={styles.modal}>
             <div style={styles.header}>
               <div>
                 <div style={styles.eyebrow}>LotusAnalyzer</div>
-                <h3 style={styles.title}>Gefuehrter Einstieg</h3>
+                <h3 style={styles.title}>{t('quickTour.heading')}</h3>
               </div>
-              <button type="button" onClick={closeTour} style={styles.closeBtn}>Schliessen</button>
+              <button type="button" onClick={closeTour} style={styles.closeBtn}>{t('quickTour.close')}</button>
             </div>
             <div style={styles.progressRow}>
-              <div style={styles.progressText}>Schritt {stepIndex + 1} von {STEPS.length}</div>
+              <div style={styles.progressText}>{t('quickTour.stepLabel', { current: stepIndex + 1, total: STEPS.length })}</div>
               <div style={styles.progressDots}>
                 {STEPS.map((step, index) => (
                   <button
@@ -128,12 +130,12 @@ export default function QuickTutorial() {
               <div style={styles.cardBody}>{activeStep.body}</div>
             </div>
             <div style={styles.hintBand}>
-              Waehrend der Tour findest du die dezenten i-Elemente neben Filtern, Tabellen und Statusangaben. Dort steckt die kontextnahe Erklaerung ohne Seitenwechsel.
+              {t('quickTour.hintBand')}
             </div>
             <div style={styles.footer}>
-              <button type="button" onClick={() => setStepIndex(index => Math.max(0, index - 1))} disabled={isFirstStep} style={styles.secondaryBtn}>Zurueck</button>
+              <button type="button" onClick={() => setStepIndex(index => Math.max(0, index - 1))} disabled={isFirstStep} style={styles.secondaryBtn}>{t('quickTour.back')}</button>
               <div style={styles.footerActions}>
-                {!isLastStep && <button type="button" onClick={closeTour} style={styles.ghostBtn}>Ueberspringen</button>}
+                {!isLastStep && <button type="button" onClick={closeTour} style={styles.ghostBtn}>{t('quickTour.skip')}</button>}
                 <button
                   type="button"
                   onClick={() => {
@@ -142,7 +144,7 @@ export default function QuickTutorial() {
                   }}
                   style={styles.primaryBtn}
                 >
-                  {isLastStep ? 'Fertig' : 'Weiter'}
+                  {isLastStep ? t('quickTour.done') : t('quickTour.next')}
                 </button>
               </div>
             </div>

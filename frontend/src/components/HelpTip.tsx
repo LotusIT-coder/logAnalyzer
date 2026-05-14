@@ -1,12 +1,14 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { useI18n } from '../ctx/I18nContext'
 
 export default function HelpTip({
   content,
-  ariaLabel = 'Mehr Informationen',
+  ariaLabel,
 }: {
   content: string
   ariaLabel?: string
 }) {
+  const { t } = useI18n()
   const tooltipId = useId()
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLSpanElement | null>(null)
@@ -47,7 +49,7 @@ export default function HelpTip({
     >
       <button
         type="button"
-        aria-label={ariaLabel}
+        aria-label={ariaLabel ?? t('help.moreInfo')}
         aria-describedby={open ? tooltipId : undefined}
         onClick={() => setOpen(value => !value)}
         onBlur={() => setOpen(false)}

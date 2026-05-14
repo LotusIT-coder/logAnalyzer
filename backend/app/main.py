@@ -16,6 +16,8 @@ from app.errors import http_exception_handler, unhandled_exception_handler
 from app.ingestion.watcher import WatcherService
 from app.logging_config import RequestLoggingMiddleware, configure_logging
 from app.services.rule_scheduler import RuleSchedulerService
+from app.services.soc_analyst import SOCAnalystService
+from app.services.soc_analyst_runtime import load_soc_analyst_runtime_state
 
 
 async def check_ollama_available(settings) -> bool:
@@ -55,11 +57,41 @@ async def lifespan(app: FastAPI):
     await rule_scheduler.start()
     logger.info("rule_scheduler_started", interval=settings.rule_scheduler_interval_seconds)
 
+    runtime_state = load_soc_analyst_runtime_state(settings.soc_analyst_enabled)
+    runtime_source_ids = list(dict.fromkeys(runtime_state.get("source_ids") or []))
+    app.state.soc_analyst_enabled = bool(runtime_state.get("enabled", settings.soc_analyst_enabled))
+    app.state.soc_analyst_source_ids = runtime_source_ids
+
+    # Start SOC analyst (optional – can be toggled at runtime via API)
+    soc_analyst: SOCAnalystService | None = None
+    if app.state.soc_analyst_enabled:
+        soc_analyst = SOCAnalystService(
+            model=settings.soc_analyst_model,
+            interval_seconds=settings.soc_analyst_interval_seconds,
+            confidence_threshold=settings.soc_analyst_confidence_threshold,
+            window_events=settings.soc_analyst_window_events,
+            source_ids=runtime_source_ids,
+        )
+        app.state.soc_analyst = soc_analyst
+        await soc_analyst.start()
+        logger.info(
+            "soc_analyst_started",
+            model=settings.soc_analyst_model,
+            interval=settings.soc_analyst_interval_seconds,
+            source_ids=runtime_source_ids,
+        )
+    else:
+        app.state.soc_analyst = None
+        logger.info("soc_analyst_disabled")
+
     yield
 
     logger.info("app_shutdown")
     await watcher.stop()
     await rule_scheduler.stop()
+    running_soc = getattr(app.state, "soc_analyst", None)
+    if running_soc is not None:
+        await running_soc.stop()
     await engine.dispose()
 
 

@@ -1,4 +1,5 @@
 import { useSourceFilter } from '../ctx/useSourceFilter'
+import { useI18n } from '../ctx/I18nContext'
 
 export default function GlobalSourceFilterNotice({
   marginBottom = '0.75rem',
@@ -8,6 +9,7 @@ export default function GlobalSourceFilterNotice({
   showClear?: boolean
 }) {
   const { filter, hasFilter, clearFilter } = useSourceFilter()
+  const { t } = useI18n()
 
   if (!hasFilter) return null
 
@@ -23,7 +25,7 @@ export default function GlobalSourceFilterNotice({
       flexWrap: 'wrap',
     }}>
       <span>
-        Quellenfilter aktiv:{' '}
+        {t('globalFilter.active')}{' '}
         {labels.map((name, i) => (
           <span key={i} style={{
             background: 'color-mix(in srgb, var(--accent) 20%, var(--surface))', borderRadius: 4, padding: '0.1rem 0.4rem',
@@ -39,7 +41,7 @@ export default function GlobalSourceFilterNotice({
             borderRadius: 6, padding: '0.18rem 0.55rem', cursor: 'pointer', fontSize: '0.75rem',
           }}
         >
-          Filter zurücksetzen
+          {t('globalFilter.reset')}
         </button>
       )}
     </div>

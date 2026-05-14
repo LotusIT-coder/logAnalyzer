@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { vi } from 'vitest'
 
@@ -100,5 +100,13 @@ describe('EventsPage', () => {
     expect(screen.getByText('Quellen: 2')).toBeInTheDocument()
     expect(screen.getByText('Pfade: 2')).toBeInTheDocument()
     expect(screen.getByText('Host: app01')).toBeInTheDocument()
+  })
+
+  test('opens ANSI color legend modal via top-toolbar event', async () => {
+    renderPage('/events')
+    fireEvent(window, new Event('events:open-color-legend'))
+
+    expect(screen.getByText('ANSI-Farben in Log-Nachrichten')).toBeInTheDocument()
+    expect(screen.getByText('31 / 91')).toBeInTheDocument()
   })
 })

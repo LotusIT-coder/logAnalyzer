@@ -173,6 +173,7 @@ class TimeseriesResponse(BaseModel):
 class TopErrorItem(BaseModel):
     key: str
     count: int
+    latest: datetime
 
 
 class TopErrorsResponse(BaseModel):

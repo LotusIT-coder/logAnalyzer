@@ -4,6 +4,7 @@ import { AIChatProvider } from './ctx/AIChatContext'
 import { SourceFilterProvider } from './ctx/SourceFilterContext'
 import { FeatureFlagsProvider } from './ctx/FeatureFlagsContext'
 import { ThemeProvider } from './ctx/ThemeContext'
+import { I18nProvider } from './ctx/I18nContext'
 import Layout from './components/Layout'
 import DashboardPage from './pages/DashboardPage'
 import EventsPage from './pages/EventsPage'
@@ -38,17 +39,19 @@ export function AppRoutes() {
 export default function App() {
   return (
     <QueryClientProvider client={qc}>
-      <ThemeProvider>
-        <FeatureFlagsProvider>
-          <SourceFilterProvider>
-            <AIChatProvider>
-              <BrowserRouter>
-                <AppRoutes />
-              </BrowserRouter>
-            </AIChatProvider>
-          </SourceFilterProvider>
-        </FeatureFlagsProvider>
-      </ThemeProvider>
+      <I18nProvider>
+        <ThemeProvider>
+          <FeatureFlagsProvider>
+            <SourceFilterProvider>
+              <AIChatProvider>
+                <BrowserRouter>
+                  <AppRoutes />
+                </BrowserRouter>
+              </AIChatProvider>
+            </SourceFilterProvider>
+          </FeatureFlagsProvider>
+        </ThemeProvider>
+      </I18nProvider>
     </QueryClientProvider>
   )
 }

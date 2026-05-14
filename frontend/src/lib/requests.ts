@@ -106,6 +106,13 @@ export interface HealthResponse extends JsonObject {
   ollama_available?: boolean
 }
 
+export interface SOCAnalystStatusResponse {
+  enabled: boolean
+  running: boolean
+  source_ids: string[]
+  tick_count: number
+}
+
 export interface TimeseriesPoint {
   ts: string
   count: number
@@ -120,6 +127,7 @@ export interface TopErrorItem {
   message?: string
   count: number
   key?: string
+  latest: string // ISO-Datum als string
 }
 
 export interface TopErrorsResponse {
@@ -350,4 +358,22 @@ export async function getModelProfiles() {
 export async function getHealth(): Promise<HealthResponse> {
   const r = await api.get('/health')
   return r.data as HealthResponse
+}
+
+export async function getSocAnalystStatus(): Promise<SOCAnalystStatusResponse> {
+  const r = await api.get('/system/soc-analyst')
+  return r.data as SOCAnalystStatusResponse
+}
+
+export async function setSocAnalystStatus(params: {
+  enabled: boolean
+  sourceIds?: string[]
+  sourcePaths?: string[]
+}): Promise<SOCAnalystStatusResponse> {
+  const r = await api.put('/system/soc-analyst', {
+    enabled: params.enabled,
+    source_ids: params.sourceIds ?? [],
+    source_paths: params.sourcePaths ?? [],
+  })
+  return r.data as SOCAnalystStatusResponse
 }
