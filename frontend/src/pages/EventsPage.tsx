@@ -111,6 +111,7 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
   const [connected, setConnected] = useState<Record<string, boolean>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [paused, setPaused] = useState(false)
+  const [alertFocusMode, setAlertFocusMode] = useState(true)
   const [filter, setFilter] = useState('')
   const [sourceFilter, setSourceFilter] = useState<string>('')
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -170,6 +171,18 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
   const showSourceTag = sources.length > 1
   const title = sources.length === 1 ? `Live-Tail: ${sources[0].name}` : `Live-Tail: ${sources.length} Quellen`
 
+  function getLineColor(text: string) {
+    const isError = /error|crit|fatal|emerg/i.test(text)
+    const isWarning = /warn/i.test(text)
+    const isDebug = /debug/i.test(text)
+
+    if (isError) return 'var(--danger-fg)'
+    if (isWarning) return 'var(--warning-fg)'
+    if (alertFocusMode) return 'var(--fg)'
+    if (isDebug) return 'var(--ansi-fg-35)'
+    return 'var(--fg)'
+  }
+
   return (
     <div style={modal.overlay} onClick={onClose}>
       <div style={modal.box} onClick={e => e.stopPropagation()}>
@@ -194,6 +207,13 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
               placeholder="Zeilen filtern..."
               style={modal.filterInput}
             />
+            <button
+              onClick={() => setAlertFocusMode(v => !v)}
+              style={alertFocusMode ? modal.ctrlBtnActive : modal.ctrlBtn}
+              title="Hebt nur Warnung/Fehler farbig hervor und zeigt den Rest neutral"
+            >
+              {alertFocusMode ? 'Warn/Error Fokus: AN' : 'Warn/Error Fokus: AUS'}
+            </button>
             <button onClick={() => setPaused(v => !v)} style={modal.ctrlBtn}>{paused ? 'Weiter' : 'Pause'}</button>
             <button onClick={() => setLines([])} style={modal.ctrlBtn}>Leeren</button>
             <button onClick={onClose} style={{ ...modal.ctrlBtn, color: 'var(--danger-fg)' }}>x Schliessen</button>
@@ -227,13 +247,7 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
               key={line.seq}
               style={{
                 ...modal.logLine,
-                color: /error|crit|fatal|emerg/i.test(line.text)
-                  ? '#f87171'
-                  : /warn/i.test(line.text)
-                    ? '#fbbf24'
-                    : /debug/i.test(line.text)
-                      ? '#6366f1'
-                      : '#d1fae5',
+                color: getLineColor(line.text),
               }}
             >
               {showSourceTag && (
@@ -314,7 +328,7 @@ export default function EventsPage() {
   const tableContainerRef = useRef<HTMLDivElement>(null)
 
   const { data: sources = [] } = useQuery({ queryKey: ['sources'], queryFn: getSources })
-  // Live-Tail works for all selected file sources (1..n) – configured directly,
+  // Live-Tail works for selected file and journald sources (1..n) – configured directly,
   // presets/custom paths are resolved against configured sources by path.
   const liveTailSources: SourceResponse[] = (() => {
     const result: SourceResponse[] = []
@@ -326,7 +340,7 @@ export default function EventsPage() {
       } else if (sel.path) {
         match = sources.find(s => s.config?.path === sel.path)
       }
-      if (match && match.type === 'file' && !seen.has(match.id)) {
+      if (match && (match.type === 'file' || match.type === 'journald') && !seen.has(match.id)) {
         seen.add(match.id)
         result.push(match)
       }
@@ -569,7 +583,7 @@ export default function EventsPage() {
         >
           {liveTailSources.length > 1 ? `Live-Ansicht (${liveTailSources.length})` : 'Live-Ansicht'}
         </button>
-        <HelpTip content="Die Live-Ansicht streamt neue Zeilen aller gewaehlten Datei-Quellen direkt in ein Tail-Fenster. Damit pruefst du schnell, ob gerade frische Daten ankommen." ariaLabel="Live-Ansicht erklaeren" />
+        <HelpTip content="Die Live-Ansicht streamt neue Zeilen aller gewaehlten Datei- und Journald-Quellen direkt in ein Tail-Fenster. Damit pruefst du schnell, ob gerade frische Daten ankommen." ariaLabel="Live-Ansicht erklaeren" />
 
         <TimeRangePicker value={rangeHours} onChange={handleRangeHoursChange} />
         <HelpTip content="Das Zeitfenster gilt fuer Eventliste und Dashboard gleichzeitig. Aenderungen werden zwischen den Reitern synchronisiert." ariaLabel="Zeitfenster erklaeren" />
@@ -842,6 +856,10 @@ const modal: Record<string, React.CSSProperties> = {
   },
   ctrlBtn: {
     background: 'var(--surface-2)', color: 'var(--muted-fg)', border: '1px solid var(--border)',
+    borderRadius: 6, padding: '0.3rem 0.65rem', cursor: 'pointer', fontSize: '0.82rem',
+  },
+  ctrlBtnActive: {
+    background: 'var(--accent-soft)', color: 'var(--accent-fg)', border: '1px solid var(--accent)',
     borderRadius: 6, padding: '0.3rem 0.65rem', cursor: 'pointer', fontSize: '0.82rem',
   },
   log: {

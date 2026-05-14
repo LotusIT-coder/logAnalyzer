@@ -4,14 +4,16 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.model_validation import is_ollama_model_available
 from app.api.source_filters import resolve_source_ids
 from app.dependencies import get_db
 
 from app.config import get_settings
+from app.domain.models import Incident
 from app.services.soc_analyst import SOCAnalystService
 from app.services.soc_analyst_runtime import save_soc_analyst_runtime_state
 
@@ -24,6 +26,13 @@ class SOCAnalystToggleRequest(BaseModel):
     enabled: bool
     source_ids: list[str] | None = None
     source_paths: list[str] | None = None
+
+
+class SOCDemoAlertRequest(BaseModel):
+    count: int = 1
+    title: str = "AI SOC DEMO: Verdaechtiges Aktivitaetsmuster erkannt"
+    severity: str = "critical"
+    summary: str = "Mehrere fehlgeschlagene Anmeldungen und Muster wie Brute-Force wurden als verdachtig eingestuft."
 
 
 def _build_soc_status_payload(request: Request) -> dict:
@@ -84,6 +93,17 @@ async def set_soc_analyst_status(
     normalized_source_ids = list(dict.fromkeys(resolved_source_ids or []))
 
     if body.enabled:
+        model_ok, installed_models = await is_ollama_model_available(settings.soc_analyst_model)
+        if not model_ok:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "message": "Configured SOC_ANALYST_MODEL is not installed in Ollama.",
+                    "configured_model": settings.soc_analyst_model,
+                    "installed_models": installed_models,
+                },
+            )
+
         if current_service is not None:
             await current_service.stop()
             current_service = None
@@ -108,3 +128,35 @@ async def set_soc_analyst_status(
 
     save_soc_analyst_runtime_state(bool(body.enabled), normalized_source_ids)
     return _build_soc_status_payload(request)
+
+
+@router.post("/system/soc-analyst/demo-alert")
+async def create_soc_demo_alert(
+    body: SOCDemoAlertRequest,
+    session: AsyncSession = Depends(get_db),
+):
+    count = max(1, min(int(body.count), 10))
+    now = datetime.now(timezone.utc)
+    created_ids: list[str] = []
+
+    for index in range(count):
+        incident = Incident(
+            title=f"{body.title} #{index + 1}" if count > 1 else body.title,
+            status="open",
+            severity=body.severity,
+            first_seen=now,
+            last_seen=now,
+            event_count=1,
+            rule_id=None,
+            summary=body.summary,
+            tags_json=["ai_soc", "demo_soc", "pattern:demo"],
+        )
+        session.add(incident)
+        await session.flush()
+        created_ids.append(str(incident.id))
+
+    await session.commit()
+    return {
+        "created": len(created_ids),
+        "incident_ids": created_ids,
+    }

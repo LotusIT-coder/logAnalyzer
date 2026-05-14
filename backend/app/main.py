@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.ai.model_validation import is_ollama_model_available
 from app.api.v1.router import router as v1_router
 from app.config import get_settings
 from app.db.session import get_engine
@@ -65,21 +66,31 @@ async def lifespan(app: FastAPI):
     # Start SOC analyst (optional – can be toggled at runtime via API)
     soc_analyst: SOCAnalystService | None = None
     if app.state.soc_analyst_enabled:
-        soc_analyst = SOCAnalystService(
-            model=settings.soc_analyst_model,
-            interval_seconds=settings.soc_analyst_interval_seconds,
-            confidence_threshold=settings.soc_analyst_confidence_threshold,
-            window_events=settings.soc_analyst_window_events,
-            source_ids=runtime_source_ids,
-        )
-        app.state.soc_analyst = soc_analyst
-        await soc_analyst.start()
-        logger.info(
-            "soc_analyst_started",
-            model=settings.soc_analyst_model,
-            interval=settings.soc_analyst_interval_seconds,
-            source_ids=runtime_source_ids,
-        )
+        model_ok, installed_models = await is_ollama_model_available(settings.soc_analyst_model)
+        if not model_ok:
+            app.state.soc_analyst_enabled = False
+            app.state.soc_analyst = None
+            logger.warning(
+                "soc_analyst_model_unavailable",
+                configured_model=settings.soc_analyst_model,
+                installed_models=installed_models,
+            )
+        else:
+            soc_analyst = SOCAnalystService(
+                model=settings.soc_analyst_model,
+                interval_seconds=settings.soc_analyst_interval_seconds,
+                confidence_threshold=settings.soc_analyst_confidence_threshold,
+                window_events=settings.soc_analyst_window_events,
+                source_ids=runtime_source_ids,
+            )
+            app.state.soc_analyst = soc_analyst
+            await soc_analyst.start()
+            logger.info(
+                "soc_analyst_started",
+                model=settings.soc_analyst_model,
+                interval=settings.soc_analyst_interval_seconds,
+                source_ids=runtime_source_ids,
+            )
     else:
         app.state.soc_analyst = None
         logger.info("soc_analyst_disabled")

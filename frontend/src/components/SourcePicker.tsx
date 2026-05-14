@@ -291,7 +291,7 @@ export const pickerStyles: Record<string, React.CSSProperties> = {
     borderRadius: 8, padding: '0.5rem 0.75rem', cursor: 'pointer', fontSize: '0.88rem',
   },
   dropdown: {
-    position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 100,
+    position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 100,
     background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
     boxShadow: '0 8px 32px #0006', padding: '0.5rem', minWidth: 320, maxHeight: 380,
     overflowY: 'auto',

@@ -149,14 +149,29 @@ async def tail_source(
         source = await source_service.get_source(session, source_id)
         if source is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found.")
-        if source.type != "file":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Live-tail only supported for file sources.")
-        resolved_path, resolve_err = source_service.resolve_source_path(source)
-    # Session is now closed — the generator below is purely file-based.
-    if resolve_err or not resolved_path:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=resolve_err or "File not found.")
-    if not os.access(resolved_path, os.R_OK):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"File not readable: {resolved_path}")
+        if source.type == "file":
+            resolved_path, resolve_err = source_service.resolve_source_path(source)
+        elif source.type == "journald":
+            resolved_path, resolve_err = "", None
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Live-tail only supported for file and journald sources.")
+    # Session is now closed — the generators below are stream-only.
+    if source.type == "file":
+        if resolve_err or not resolved_path:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=resolve_err or "File not found.")
+        if not os.access(resolved_path, os.R_OK):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"File not readable: {resolved_path}")
+
+    def _build_journald_tail_command() -> list[str]:
+        cfg = source.config_json or {}
+        command = ["journalctl", "--no-pager", "--output=short-iso"]
+        if cfg.get("boot_only", True):
+            command.append("-b")
+        unit = cfg.get("unit")
+        if isinstance(unit, str) and unit.strip():
+            command.extend(["-u", unit.strip()])
+        command.extend(["-n", str(lines), "-f"])
+        return command
 
     async def _generator():
         active_path = resolved_path
@@ -202,8 +217,45 @@ async def tail_source(
                 break
             await asyncio.sleep(1)
 
+    async def _journald_generator():
+        command = _build_journald_tail_command()
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        try:
+            if process.stdout is None:
+                yield "data: [Fehler: journalctl stdout nicht verfuegbar]\n\n"
+                return
+
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    line = await asyncio.wait_for(process.stdout.readline(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+
+                if not line:
+                    if process.returncode is not None:
+                        break
+                    continue
+
+                escaped = line.decode("utf-8", errors="replace").rstrip("\n").replace("\n", " ")
+                if escaped:
+                    yield f"data: {escaped}\n\n"
+        finally:
+            if process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    process.kill()
+
     return StreamingResponse(
-        _generator(),
+        _generator() if source.type == "file" else _journald_generator(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
