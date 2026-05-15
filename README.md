@@ -90,6 +90,56 @@ Ein Mapping auf MITRE ATT&CK macht Detections für Security-Teams sofort einordb
 | Impossible Travel | T1078 |
 | Unusual Service Restarts | T1569 |
 
+## Elastic Showcase (Was Du Unbedingt Zeigen Solltest)
+
+### 1) Event Ingestion sichtbar machen
+
+Für Demos und Bewertung sollte klar erkennbar sein, welche Quellen in Elastic landen:
+
+- Filebeat
+- Winlogbeat
+- Syslog
+- Elastic Agent
+
+Empfehlung fuer den Demo-Fluss:
+
+1. Quelle erzeugt Event
+2. Event landet im LogAnalyzer (PostgreSQL + Outbox)
+3. Outbox-Indexer schreibt nach Elasticsearch
+4. Event ist in Elasticsearch (und optional Kibana) sichtbar
+
+### 2) Detection Correlation zeigen (sehr wichtig)
+
+Nicht nur Einzel-Events, sondern Ketten und Sequenzen zeigen:
+
+- Multiple failed logins
+- Geo anomalies
+- Privilege escalation sequence
+- Suspicious PowerShell chain
+
+### 3) Kibana/Dashboard Integration mit Screenshots
+
+Das bringt in Reviews einen starken Pluspunkt. Empfohlene Bildserie:
+
+1. Discover-Ansicht mit gefilterten Security-Events
+2. Dashboard mit Zeitreihe + Top Hosts/Services
+3. Drilldown von Dashboard zu konkreten Event-Dokumenten
+
+### 4) MITRE Mapping als Kette darstellen
+
+Besonders stark ist die direkte Kette:
+
+Elastic Event -> Detection Rule -> MITRE Technique
+
+Beispielhafte Mapping-Ketten:
+
+| Elastic Event Pattern | Detection Rule | MITRE Technique |
+| --- | --- | --- |
+| Repeated auth failure (`event.code:4625`) | Multiple failed logins | T1110 (Brute Force) |
+| Login from unusual country/ASN | Geo anomaly login rule | T1078 (Valid Accounts) |
+| New admin group membership + sudo activity | Privilege escalation sequence | T1548 (Abuse Elevation Control Mechanism) |
+| Encoded/hidden PowerShell command chain | Suspicious PowerShell chain | T1059.001 (PowerShell) |
+
 ## Technische Tiefe
 
 Die Plattform setzt nicht nur auf KI, sondern auf eine Kombination aus klassischen und analytischen Verfahren:
@@ -684,6 +734,56 @@ These example detections show what LogAnalyzer can surface in practice:
 | API Abuse | T1190 |
 | Impossible Travel | T1078 |
 | Unusual Service Restarts | T1569 |
+
+## Elastic Showcase (What You Should Definitely Present)
+
+### 1) Event ingestion visibility
+
+For demos and evaluations, clearly show which sources end up in Elastic:
+
+- Filebeat
+- Winlogbeat
+- Syslog
+- Elastic Agent
+
+Recommended demo flow:
+
+1. Source emits an event
+2. Event is persisted in LogAnalyzer (PostgreSQL + outbox)
+3. Outbox indexer writes to Elasticsearch
+4. Event is visible in Elasticsearch (and optionally Kibana)
+
+### 2) Detection correlation (critical)
+
+Show chains and sequences, not only single events:
+
+- Multiple failed logins
+- Geo anomalies
+- Privilege escalation sequence
+- Suspicious PowerShell chain
+
+### 3) Kibana/dashboard integration with screenshots
+
+This is a major plus in technical reviews. Recommended screenshot set:
+
+1. Discover view with filtered security events
+2. Dashboard with time series + top hosts/services
+3. Drilldown from dashboard to concrete event documents
+
+### 4) MITRE mapping as an end-to-end chain
+
+The strongest framing is the direct chain:
+
+Elastic Event -> Detection Rule -> MITRE Technique
+
+Example mapping chains:
+
+| Elastic Event Pattern | Detection Rule | MITRE Technique |
+| --- | --- | --- |
+| Repeated auth failure (`event.code:4625`) | Multiple failed logins | T1110 (Brute Force) |
+| Login from unusual country/ASN | Geo anomaly login rule | T1078 (Valid Accounts) |
+| New admin group membership + sudo activity | Privilege escalation sequence | T1548 (Abuse Elevation Control Mechanism) |
+| Encoded/hidden PowerShell command chain | Suspicious PowerShell chain | T1059.001 (PowerShell) |
 
 ## Technical Depth
 
