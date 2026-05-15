@@ -99,17 +99,22 @@ Die Plattform setzt nicht nur auf KI, sondern auf eine Kombination aus klassisch
 
 ## Demo-Screenshots
 
-Die wichtigsten Ansichten aus der laufenden Anwendung:
+Die wichtigsten Ansichten aus der laufenden Anwendung im kompakten Überblick:
 
-![Dashboard](docs/screenshots/dashboard.png)
-
-![Events](docs/screenshots/events.png)
-
-![Incidents](docs/screenshots/incidents.png)
-
-![AI Chat](docs/screenshots/ai-chat.png)
-
-![Sources](docs/screenshots/sources.png)
+<table>
+   <tr>
+      <td align="center"><img src="docs/screenshots/dashboard.png" alt="Dashboard" width="260"><br><strong>Dashboard</strong></td>
+      <td align="center"><img src="docs/screenshots/events.png" alt="Events" width="260"><br><strong>Events</strong></td>
+   </tr>
+   <tr>
+      <td align="center"><img src="docs/screenshots/incidents.png" alt="Incidents" width="260"><br><strong>Incidents</strong></td>
+      <td align="center"><img src="docs/screenshots/ai-chat.png" alt="AI Chat" width="260"><br><strong>AI Chat</strong></td>
+   </tr>
+   <tr>
+      <td align="center"><img src="docs/screenshots/sources.png" alt="Sources" width="260"><br><strong>Sources</strong></td>
+      <td></td>
+   </tr>
+</table>
 
 ## Beispiel-Logs
 
@@ -595,17 +600,22 @@ The platform does not rely on AI alone. It combines classical security analytics
 
 ## Demo Screenshots
 
-Key views from the running application:
+Key views from the running application in a compact gallery:
 
-![Dashboard](docs/screenshots/dashboard.png)
-
-![Events](docs/screenshots/events.png)
-
-![Incidents](docs/screenshots/incidents.png)
-
-![AI Chat](docs/screenshots/ai-chat.png)
-
-![Sources](docs/screenshots/sources.png)
+<table>
+   <tr>
+      <td align="center"><img src="docs/screenshots/dashboard.png" alt="Dashboard" width="260"><br><strong>Dashboard</strong></td>
+      <td align="center"><img src="docs/screenshots/events.png" alt="Events" width="260"><br><strong>Events</strong></td>
+   </tr>
+   <tr>
+      <td align="center"><img src="docs/screenshots/incidents.png" alt="Incidents" width="260"><br><strong>Incidents</strong></td>
+      <td align="center"><img src="docs/screenshots/ai-chat.png" alt="AI Chat" width="260"><br><strong>AI Chat</strong></td>
+   </tr>
+   <tr>
+      <td align="center"><img src="docs/screenshots/sources.png" alt="Sources" width="260"><br><strong>Sources</strong></td>
+      <td></td>
+   </tr>
+</table>
 
 ## Demo Data
 
