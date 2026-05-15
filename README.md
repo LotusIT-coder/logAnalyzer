@@ -97,6 +97,24 @@ Die Plattform setzt nicht nur auf KI, sondern auf eine Kombination aus klassisch
 - Heuristics für Priorisierung und Triage
 - Scoring zur Einordnung von Signalstärke und Relevanz
 
+## Example Investigation Workflow
+
+1. SSH- und VPN-Logs ingestieren
+2. Events normalisieren
+3. Fehlgeschlagene Logins korrelieren
+4. Verdächtige Zugriffsmuster erkennen
+5. Incidents generieren
+6. Incidents mit KI-gestütztem Scoring priorisieren
+7. Korrelierte Belege im Dashboard prüfen
+
+## Security & Privacy
+
+- Lokale Verarbeitung der Daten
+- Kein Cloud-Zwang
+- Datenschutzorientierte Architektur
+- Offline-freundlich nutzbar
+- Air-gap-nah einsetzbar
+
 ## Demo-Screenshots
 
 Die wichtigsten Ansichten aus der laufenden Anwendung im kompakten Überblick:
@@ -146,7 +164,7 @@ Die wichtigsten Ansichten aus der laufenden Anwendung im kompakten Überblick:
 - Sigma Rule Support
 - Wazuh Integration
 - Syslog Collector
-- Docker Deployment
+- Docker / Compose Deployment (geplant)
 - Threat Intelligence Feeds
 - IOC Matching
 
@@ -435,6 +453,8 @@ journalctl --user -u loganalyzer-frontend.service -f
 
 ### Mit Skripten (Manuell)
 
+Für das lokale One-Command-Setup reicht in der Regel `./scripts/dev-up.sh`.
+
 ```bash
 # Alles starten
 ./scripts/dev-up.sh
@@ -448,6 +468,10 @@ journalctl --user -u loganalyzer-frontend.service -f
 # Diagnostik
 ./scripts/diag-instance.sh
 ```
+
+### Docker / Compose
+
+Ein Docker-/Compose-Setup ist als nächster Modernisierungsschritt auf der Roadmap. Der aktuelle lokale Workflow ist bereits mit `./scripts/dev-up.sh` als One-Command-Setup automatisiert.
 
 ---
 
@@ -598,6 +622,34 @@ The platform does not rely on AI alone. It combines classical security analytics
 - Heuristics for prioritization and triage
 - Scoring to estimate signal strength and relevance
 
+## Example Investigation Workflow
+
+1. Ingest SSH and VPN logs
+2. Normalize events
+3. Correlate failed logins
+4. Detect suspicious access patterns
+5. Generate incidents
+6. Prioritize incidents using AI-assisted scoring
+7. Review correlated evidence in the dashboard
+
+## Security & Privacy
+
+- Local data processing
+- No cloud dependency
+- Privacy-first architecture
+- Offline-friendly operation
+- Suitable for air-gap-adjacent environments
+
+## Deployment
+
+For a local one-command setup, the current workflow is already automated with:
+
+```bash
+./scripts/dev-up.sh
+```
+
+Docker / Compose support is planned as the next modernization step.
+
 ## Demo Screenshots
 
 Key views from the running application in a compact gallery:
@@ -647,6 +699,6 @@ Key views from the running application in a compact gallery:
 - Sigma rule support
 - Wazuh integration
 - Syslog collector
-- Docker deployment
+- Docker / Compose support (planned)
 - Threat intelligence feeds
 - IOC matching
