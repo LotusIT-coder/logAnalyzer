@@ -2,6 +2,15 @@
 
 Ein lokales, KI-gestütztes Log-Analyse-System mit FastAPI-Backend und React-Frontend. LogAnalyzer hilft dir, große Mengen heterogener Logdaten strukturiert zu analysieren, sicherheitsrelevante Muster zu erkennen und Incidents nachvollziehbar zu triagieren - ohne deine Daten in die Cloud zu schicken.
 
+## Highlights
+
+- Python-basiertes Detection- und Loganalyse-Framework
+- MITRE-ATT&CK-orientierte Detection-Engine
+- KI-gestützte Incident-Triage via Ollama
+- Event-Korrelation und Anomalieerkennung
+- FastAPI + React + PostgreSQL Architektur
+- Fokus auf lokale Verarbeitung und Datenschutz
+
 **Kernfunktionen:**
 - 📥 Log-Dateien, Syslog und Journald-Zeilen hochladen, streamen und überwachen
 - 🔍 Event-Suche, Filterung und interaktive Drilldowns
@@ -492,3 +501,126 @@ Für Fragen oder Bug-Reports: GitHub Issues oder intern kontaktieren.
 - [ ] Dashboard zugänglich unter `http://localhost:5173`
 - [ ] Erste Log-Quelle hinzugefügt (Sources-Seite)
 - [ ] (Optional) Ollama installiert und konfiguriert
+
+--------------------------------------------------------------------------------------------------------------
+
+# LogAnalyzer
+
+An AI-assisted log analysis and detection framework with a FastAPI backend and a React frontend. LogAnalyzer helps you analyze large volumes of heterogeneous log data, detect security-relevant patterns, and triage incidents locally without sending data to the cloud.
+
+## Highlights
+
+- Python-based detection and log analysis framework
+- MITRE ATT&CK-oriented detection engine
+- AI-assisted incident triage via Ollama
+- Event correlation and anomaly detection
+- FastAPI + React + PostgreSQL architecture
+- Local processing with privacy-first design
+
+## Problem Statement
+
+Security analysis is rarely limited by the lack of logs. The real challenge is the volume, variety, and velocity of the data. Relevant signals are distributed across application logs, system logs, journald, authentication events, and infrastructure telemetry. LogAnalyzer addresses this by bringing log sources into a unified analysis context, normalizing them, evaluating patterns, and surfacing suspicious activity.
+
+## Goals
+
+LogAnalyzer is designed to support analysts in tasks such as:
+
+- Detecting suspicious login patterns
+- Brute-force detection
+- Lateral movement indicators
+- AI-assisted pattern analysis
+- Supporting incident investigations
+
+## Architecture
+
+LogAnalyzer follows a clear pipeline from source to alerting:
+
+```mermaid
+flowchart TD
+   A[Log Sources\nFiles, Syslog, Journald, Uploads] --> B[Parser Layer\nFormat Detection & Extraction]
+   B --> C[Normalization\nCanonical Event Schema]
+   C --> D[Detection Engine\nRules, Thresholds, Correlation]
+   D --> E[AI / Pattern Analysis\nScoring & Triage]
+   E --> F[Alerting / Dashboard\nIncidents & Investigations]
+```
+
+Technical building blocks:
+
+- Parsers for different formats and sources
+- Normalization into a shared event model
+- Event correlation across time, source, host, and service
+- Thresholds, heuristics, and baselines for suspicious behavior
+- AI analysis for triage and prioritization
+
+## Example Detections
+
+These example detections show what LogAnalyzer can surface in practice:
+
+| Detection Case | Typical Signal |
+| --- | --- |
+| SSH Brute Force | Many failed SSH logins in a short time |
+| Failed MFA Flooding | Repeated MFA failures or push spam |
+| Suspicious Geo Login | Unusual login location or new region |
+| Privilege Escalation Pattern | Unexpected sudo/admin activity |
+| Lateral Movement via SMB/RDP | Suspicious connections between hosts |
+| API Abuse | High request volume, error spikes, unusual paths |
+| Impossible Travel | Two geographically implausible logins close together |
+| Unusual Service Restarts | Repeated restarts of critical services |
+
+## MITRE ATT&CK Mapping
+
+| Detection | MITRE ATT&CK |
+| --- | --- |
+| Brute Force | T1110 |
+| Lateral Movement | T1021 |
+| Credential Access | T1110.001 |
+| Suspicious Geo Login | T1078 |
+| Privilege Escalation Pattern | T1548 |
+| API Abuse | T1190 |
+| Impossible Travel | T1078 |
+| Unusual Service Restarts | T1569 |
+
+## Technical Depth
+
+The platform does not rely on AI alone. It combines classical security analytics with modern assistance:
+
+- Regex- and parser-based extraction
+- Event correlation over time windows and source groups
+- Thresholds for burst, flood, and anomaly detection
+- Baselines for normal behavior
+- Heuristics for prioritization and triage
+- Scoring to estimate signal strength and relevance
+
+## Demo Data
+
+### Benign
+
+```text
+2026-05-14T10:14:21Z auth.service login successful user=alice host=workstation-01 ip=10.10.1.20
+2026-05-14T10:14:23Z app-api request ok method=GET path=/health status=200 latency_ms=12
+```
+
+### Malicious
+
+```text
+2026-05-14T10:16:02Z sshd authentication failure user=root host=server-03 ip=203.0.113.42
+2026-05-14T10:16:04Z sshd authentication failure user=root host=server-03 ip=203.0.113.42
+2026-05-14T10:16:06Z sshd authentication failure user=root host=server-03 ip=203.0.113.42
+```
+
+### Mixed Traffic
+
+```text
+2026-05-14T10:18:11Z vpn login success user=bob region=DE
+2026-05-14T10:18:19Z vpn login failure user=bob region=US
+2026-05-14T10:18:25Z rdp connection from host=ws-17 to host=dc-02
+```
+
+## Roadmap
+
+- Sigma rule support
+- Wazuh integration
+- Syslog collector
+- Docker deployment
+- Threat intelligence feeds
+- IOC matching
