@@ -2,6 +2,7 @@ import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-qu
 import {
   getEvents,
   getErrorRate,
+  getIncidents,
   getMitreCoverage,
   getSocAnalystStatus,
   getSourceIngestionStatus,
@@ -11,6 +12,7 @@ import {
   runIngestion,
   setSocAnalystStatus,
   type EventResponse,
+  type IncidentResponse,
   type MetricsFilter,
   type SourceIngestionStatus,
   type TimeRange,
@@ -147,6 +149,17 @@ interface TopErrorDetailTarget {
   query: string
   label: string
   count: number
+  // If set, the detail modal filters by service= instead of q=.
+  service?: string
+  titleOverride?: string
+  subtitlePrefix?: string
+}
+
+interface MitreTechniqueDetailTarget {
+  techniqueId: string
+  tactic?: string | null
+  ruleCount: number
+  incidentCount: number
 }
 
 // ─── Main page ────────────────────────────────────────────────────────────────
@@ -177,6 +190,7 @@ export default function DashboardPage() {
   const [uploadResult, setUploadResult] = useState<UploadResultState | null>(null)
   const [topErrorsSeverities, setTopErrorsSeverities] = useState<string[]>(['error', 'critical'])
   const [topErrorDetail, setTopErrorDetail] = useState<TopErrorDetailTarget | null>(null)
+  const [mitreDetail, setMitreDetail] = useState<MitreTechniqueDetailTarget | null>(null)
 
   useEffect(() => {
     window.localStorage.setItem(AUTO_REFRESH_PROFILE_KEY, autoRefreshProfile)
@@ -708,12 +722,34 @@ export default function DashboardPage() {
             <Panel title="Top Services" help="Zeigt, welche Services besonders haeufig Events erzeugen. So erkennst du schnell dominante Systeme oder Hotspots.">
               {svcs.data ? (
                 <ol style={styles.ol}>
-                  {svcs.data.items.slice(0, 8).map((serviceItem: TopServiceItem, i: number) => (
-                    <li key={i} style={styles.li}>
-                      <span style={styles.count}>{serviceItem.count}</span>
-                      <span style={styles.msg}>{serviceItem.service ?? '(unbekannt)'}</span>
-                    </li>
-                  ))}
+                  {svcs.data.items.slice(0, 8).map((serviceItem: TopServiceItem, i: number) => {
+                    const serviceName = serviceItem.service ?? ''
+                    const label = serviceName || '(unbekannt)'
+                    return (
+                      <li key={i} style={styles.li}>
+                        <button
+                          type="button"
+                          style={styles.topEntryButton}
+                          onClick={() => {
+                            if (!serviceName) return
+                            setTopErrorDetail({
+                              query: '',
+                              service: serviceName,
+                              label,
+                              count: serviceItem.count,
+                              titleOverride: 'Details: Top Service',
+                              subtitlePrefix: 'Service',
+                            })
+                          }}
+                          disabled={!serviceName}
+                          title={serviceName ? 'Events dieses Services anzeigen' : 'Kein Service-Name verfügbar'}
+                        >
+                          <span style={styles.count}>{serviceItem.count}</span>
+                          <span style={styles.msg}>{label}</span>
+                        </button>
+                      </li>
+                    )
+                  })}
                   {!svcs.data.items.length && <div style={{ color: 'var(--muted-fg)', fontSize: '0.85rem' }}>Keine Service-Daten</div>}
                 </ol>
               ) : <Spinner />}
@@ -733,12 +769,24 @@ export default function DashboardPage() {
                   <ol style={styles.ol}>
                     {mitreCoverage.data.items.slice(0, 8).map(item => (
                       <li key={item.technique_id} style={styles.li}>
-                        <span style={styles.count}>{item.incident_count}</span>
-                        <span style={styles.msg}>
-                          {item.technique_id}
-                          {item.tactic ? ` (${item.tactic})` : ''}
-                          {` · rules ${item.rule_count}`}
-                        </span>
+                        <button
+                          type="button"
+                          style={styles.topEntryButton}
+                          onClick={() => setMitreDetail({
+                            techniqueId: item.technique_id,
+                            tactic: item.tactic,
+                            ruleCount: item.rule_count,
+                            incidentCount: item.incident_count,
+                          })}
+                          title="Incidents zu dieser MITRE-Technik anzeigen"
+                        >
+                          <span style={styles.count}>{item.incident_count}</span>
+                          <span style={styles.msg}>
+                            {item.technique_id}
+                            {item.tactic ? ` (${item.tactic})` : ''}
+                            {` · rules ${item.rule_count}`}
+                          </span>
+                        </button>
                       </li>
                     ))}
                     {!mitreCoverage.data.items.length && (
@@ -764,6 +812,14 @@ export default function DashboardPage() {
           initialFrom={activeTimeRange?.from}
           initialTo={activeTimeRange?.to}
           onClose={() => setTopErrorDetail(null)}
+        />
+      )}
+      {mitreDetail && (
+        <MitreTechniqueDetailModal
+          target={mitreDetail}
+          sourceIds={selectedSourceIds}
+          sourcePaths={selectedSourcePaths}
+          onClose={() => setMitreDetail(null)}
         />
       )}
     </div>
@@ -802,7 +858,7 @@ function TopErrorDetailModal({
     setAppliedToInput(nextTo)
     setLocalSearch('')
     setExpanded({})
-  }, [target.query, initialFrom, initialTo])
+  }, [target.query, target.service, initialFrom, initialTo])
 
   const fromIso = toIsoFromDateTimeLocal(appliedFromInput)
   const toIso = toIsoFromDateTimeLocal(appliedToInput)
@@ -817,11 +873,11 @@ function TopErrorDetailModal({
     isFetchingNextPage,
     isFetching,
   } = useInfiniteQuery({
-    queryKey: ['top-error-detail', target.query, sourceIds.join('|'), sourcePaths.join('|'), fromIso, toIso],
+    queryKey: ['top-error-detail', target.query, target.service ?? '', sourceIds.join('|'), sourcePaths.join('|'), fromIso, toIso],
     queryFn: ({ pageParam }: { pageParam?: string }) => getEvents({
       limit: 100,
       cursor: pageParam,
-      q: target.query,
+      ...(target.service ? { service: target.service } : { q: target.query }),
       ...(fromIso ? { from: fromIso } : {}),
       ...(toIso ? { to: toIso } : {}),
       ...(sourceIds.length ? { source_ids: sourceIds.join(',') } : {}),
@@ -888,9 +944,9 @@ function TopErrorDetailModal({
       <div style={styles.detailModalBox} onClick={e => e.stopPropagation()}>
         <div style={styles.detailModalHeader}>
           <div style={{ minWidth: 0 }}>
-            <div style={styles.detailModalTitle}>Details: Top Fehlermeldung</div>
-            <div style={styles.detailModalSubtitle} title={target.query}>
-              Typ: {target.label}
+            <div style={styles.detailModalTitle}>{target.titleOverride ?? 'Details: Top Fehlermeldung'}</div>
+            <div style={styles.detailModalSubtitle} title={target.service ?? target.query}>
+              {(target.subtitlePrefix ?? 'Typ')}: {target.label}
             </div>
           </div>
           <button type="button" onClick={onClose} style={styles.detailModalCloseBtn}>x Schließen</button>
@@ -989,6 +1045,117 @@ function TopErrorDetailModal({
                 <div style={{ color: 'var(--muted-fg)', padding: '0.75rem 1.25rem' }}>Ende der Trefferliste</div>
               )}
             </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MitreTechniqueDetailModal({
+  target,
+  sourceIds,
+  sourcePaths,
+  onClose,
+}: {
+  target: MitreTechniqueDetailTarget
+  sourceIds: string[]
+  sourcePaths: string[]
+  onClose: () => void
+}) {
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['mitre-technique-detail', sourceIds.join('|'), sourcePaths.join('|')],
+    queryFn: () => getIncidents({
+      ...(sourceIds.length ? { source_ids: sourceIds.join(',') } : {}),
+      ...(sourcePaths.length ? { source_paths: sourcePaths.join(',') } : {}),
+    }),
+    staleTime: 20_000,
+  })
+
+  const matchingIncidents = (data?.items ?? []).filter((incident: IncidentResponse) =>
+    Array.isArray(incident.mitre_techniques) && incident.mitre_techniques.includes(target.techniqueId),
+  )
+
+  return (
+    <div style={styles.detailModalOverlay} onClick={onClose}>
+      <div style={styles.detailModalBox} onClick={e => e.stopPropagation()}>
+        <div style={styles.detailModalHeader}>
+          <div style={{ minWidth: 0 }}>
+            <div style={styles.detailModalTitle}>Details: MITRE Technik</div>
+            <div style={styles.detailModalSubtitle} title={target.techniqueId}>
+              {target.techniqueId}
+              {target.tactic ? ` · Taktik: ${target.tactic}` : ''}
+              {` · Rules: ${target.ruleCount} · Incidents: ${target.incidentCount}`}
+            </div>
+          </div>
+          <button type="button" onClick={onClose} style={styles.detailModalCloseBtn}>x Schließen</button>
+        </div>
+
+        <div style={styles.detailEventList}>
+          {isLoading ? (
+            <div style={{ color: 'var(--muted-fg)', padding: '1.25rem' }}>Lade Incidents…</div>
+          ) : isError ? (
+            <div style={{ color: 'var(--danger-fg)', padding: '1.25rem' }}>
+              Fehler beim Laden: {getApiErrorMessage(error)}
+            </div>
+          ) : matchingIncidents.length === 0 ? (
+            <div style={{ color: 'var(--muted-fg)', padding: '1.25rem' }}>
+              Keine zugeordneten Incidents (Technik ist nur in Regeln vorhanden).
+            </div>
+          ) : (
+            matchingIncidents.map(incident => (
+              <div key={incident.id} style={styles.detailEventCard}>
+                <div style={styles.detailEventHeader}>
+                  <span style={styles.detailEventTs}>{dayjs(incident.last_seen).format('DD.MM.YYYY HH:mm:ss')}</span>
+                  <span
+                    style={{
+                      ...styles.detailEventSeverity,
+                      background:
+                        incident.severity === 'critical' ? '#ef4444'
+                        : incident.severity === 'error' ? '#f97316'
+                        : incident.severity === 'warning' ? '#eab308'
+                        : incident.severity === 'info' ? '#22c55e'
+                        : '#6366f1',
+                    }}
+                  >
+                    {incident.severity}
+                  </span>
+                  <span style={styles.detailEventService}>Status: {incident.status}</span>
+                  <span style={styles.detailEventHost}>Events: {incident.event_count}</span>
+                </div>
+                <div style={{ padding: '0.6rem 0.75rem 0.4rem 0.75rem', fontWeight: 600 }}>
+                  {incident.title}
+                </div>
+                <div style={styles.detailMetadataWrap}>
+                  <div style={styles.detailMetadataRow}>
+                    <span style={styles.detailMetadataKey}>ID</span>
+                    <span style={styles.detailMetadataVal}>{incident.id}</span>
+                  </div>
+                  <div style={styles.detailMetadataRow}>
+                    <span style={styles.detailMetadataKey}>Erstmals</span>
+                    <span style={styles.detailMetadataVal}>{dayjs(incident.first_seen).format('DD.MM.YYYY HH:mm:ss')}</span>
+                  </div>
+                  {incident.mitre_techniques?.length ? (
+                    <div style={styles.detailMetadataRow}>
+                      <span style={styles.detailMetadataKey}>Techniken</span>
+                      <span style={styles.detailMetadataVal}>{incident.mitre_techniques.join(', ')}</span>
+                    </div>
+                  ) : null}
+                  {incident.mitre_tactic ? (
+                    <div style={styles.detailMetadataRow}>
+                      <span style={styles.detailMetadataKey}>Taktik</span>
+                      <span style={styles.detailMetadataVal}>{incident.mitre_tactic}</span>
+                    </div>
+                  ) : null}
+                  {incident.confidence_rationale ? (
+                    <div style={styles.detailMetadataRow}>
+                      <span style={styles.detailMetadataKey}>Begründung</span>
+                      <span style={styles.detailMetadataVal}>{incident.confidence_rationale}</span>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ))
           )}
         </div>
       </div>

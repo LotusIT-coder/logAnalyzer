@@ -26,7 +26,11 @@ services:
       DATABASE_URL: postgresql+asyncpg://loganalyzer:loganalyzer@db:5432/loganalyzer
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       CORS_ALLOWED_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
-      WATCHER_INTERVAL_SECONDS: 5
+      # Watcher polling: adaptive catch-up loop.
+      # WATCHER_INTERVAL_SECONDS is only used when the previous tick was idle;
+      # after a productive tick the next one fires after WATCHER_CATCHUP_MIN_SLEEP_SECONDS.
+      WATCHER_INTERVAL_SECONDS: ${WATCHER_INTERVAL_SECONDS:-0.5}
+      WATCHER_CATCHUP_MIN_SLEEP_SECONDS: ${WATCHER_CATCHUP_MIN_SLEEP_SECONDS:-0.02}
       RULE_SCHEDULER_INTERVAL_SECONDS: 30
       ELASTIC_ENABLED: ${ELASTIC_ENABLED:-false}
       ELASTIC_URL: ${ELASTIC_URL:-http://elastic:9200}

@@ -20,6 +20,13 @@ const SEV_COLOR: Record<string, string> = {
   debug: '#6366f1',
 }
 
+// Wenn true (Standard), zeigt die Eventseite nichts an, solange keine Quelle
+// (per globalem Filter, Dropdown oder Pfad) ausgewaehlt ist. Per Build-Variable
+// `VITE_EVENTS_REQUIRE_SOURCE_SELECTION=false` deaktivierbar, dann gilt
+// wieder "kein Filter ⇒ alle Quellen anzeigen".
+const REQUIRE_SOURCE_SELECTION =
+  (import.meta.env.VITE_EVENTS_REQUIRE_SOURCE_SELECTION ?? 'true').toString().toLowerCase() !== 'false'
+
 const SEVERITIES = ['debug', 'info', 'warning', 'error', 'critical']
 
 function parseSeverityCsv(value: string) {
@@ -103,6 +110,17 @@ interface TailLine {
 }
 
 const SOURCE_COLORS = ['#7dd3fc', '#fbbf24', '#a78bfa', '#34d399', '#fb7185', '#60a5fa', '#f97316', '#c084fc']
+
+const EVENTS_REFRESH_INTERVAL_KEY = 'events:refresh-interval-ms'
+const REFRESH_INTERVAL_OPTIONS: { value: number; label: string }[] = [
+  { value: 0, label: 'Aus' },
+  { value: 2_000, label: '2 s' },
+  { value: 5_000, label: '5 s' },
+  { value: 10_000, label: '10 s' },
+  { value: 30_000, label: '30 s' },
+  { value: 60_000, label: '1 min' },
+  { value: 300_000, label: '5 min' },
+]
 
 const ANSI_LEGEND_ROWS: Array<{ sample: string; code: string; meaning: string }> = [
   { sample: 'var(--ansi-fg-31)', code: '31 / 91', meaning: 'Error, kritisch, fehlgeschlagen' },
@@ -334,28 +352,19 @@ export default function EventsPage() {
   const [tailSources, setTailSources] = useState<SourceResponse[] | null>(null)
   const [uploadResult, setUploadResult] = useState<UploadResultState | null>(null)
   const [showColorLegend, setShowColorLegend] = useState(false)
+  const [refreshIntervalMs, setRefreshIntervalMs] = useState<number>(() => {
+    const stored = typeof window !== 'undefined' ? window.localStorage.getItem(EVENTS_REFRESH_INTERVAL_KEY) : null
+    const parsed = stored ? Number(stored) : NaN
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 5_000
+  })
   const tableContainerRef = useRef<HTMLDivElement>(null)
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(EVENTS_REFRESH_INTERVAL_KEY, String(refreshIntervalMs))
+  }, [refreshIntervalMs])
+
   const { data: sources = [] } = useQuery({ queryKey: ['sources'], queryFn: getSources })
-  // Live-Tail works for selected file and journald sources (1..n) – configured directly,
-  // presets/custom paths are resolved against configured sources by path.
-  const liveTailSources: SourceResponse[] = (() => {
-    const result: SourceResponse[] = []
-    const seen = new Set<string>()
-    for (const sel of selectedSources) {
-      let match: SourceResponse | undefined
-      if (sel.kind === 'configured') {
-        match = sources.find(s => s.id === sel.id.replace('source:', ''))
-      } else if (sel.path) {
-        match = sources.find(s => s.config?.path === sel.path)
-      }
-      if (match && (match.type === 'file' || match.type === 'journald') && !seen.has(match.id)) {
-        seen.add(match.id)
-        result.push(match)
-      }
-    }
-    return result
-  })()
   const globalSourceIdsCsv = globalFilter.sourceIds.join(',')
   const globalSourcePathsCsv = globalFilter.sourcePaths.join(',')
   const globalSingleSourceId = globalFilter.sourceIds.length === 1 && globalFilter.sourcePaths.length === 0
@@ -441,6 +450,8 @@ export default function EventsPage() {
   }, [])
 
   // Infinite query: loads events page by page
+  const hasAnySourceSelection = Boolean(sourceId || effectiveSourceIdsCsv || effectiveSourcePathsCsv)
+  const eventsQueryEnabled = !REQUIRE_SOURCE_SELECTION || hasAnySourceSelection
   const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage, isFetching } = useInfiniteQuery({
     queryKey: ['events', sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, effectiveFrom, effectiveTo, selectedSeveritiesCsv, provider, host, service, search, refreshTick],
     queryFn: ({ pageParam }: { pageParam?: string }) => getEvents({
@@ -460,10 +471,13 @@ export default function EventsPage() {
     initialPageParam: undefined,
     getNextPageParam: (lastPage) => lastPage.next_cursor,
     staleTime: 30_000,
+    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+    refetchIntervalInBackground: false,
+    enabled: eventsQueryEnabled,
   })
 
   // Flatten all pages into single events array
-  const allEvents = data?.pages.flatMap(page => page.items) ?? []
+  const allEvents = eventsQueryEnabled ? (data?.pages.flatMap(page => page.items) ?? []) : []
 
   useEffect(() => {
     const container = tableContainerRef.current
@@ -581,21 +595,20 @@ export default function EventsPage() {
         <button onClick={refreshLatest} disabled={isFetching} style={styles.refBtn}>
           {isFetching ? 'Aktualisiere...' : 'Aktualisieren'}
         </button>
-        <button
-          onClick={() => liveTailSources.length > 0 && setTailSources(liveTailSources)}
-          disabled={liveTailSources.length === 0}
-          style={liveTailSources.length === 0 ? styles.liveBtnDisabled : styles.liveBtn}
-          title={
-            liveTailSources.length === 0
-              ? 'Mindestens eine Datei-Quelle auswaehlen'
-              : liveTailSources.length === 1
-                ? `Live-Ansicht fuer ${liveTailSources[0].name}`
-                : `Live-Ansicht fuer ${liveTailSources.length} Quellen`
-          }
-        >
-          {liveTailSources.length > 1 ? `Live-Ansicht (${liveTailSources.length})` : 'Live-Ansicht'}
-        </button>
-        <HelpTip content="Die Live-Ansicht streamt neue Zeilen aller gewaehlten Datei- und Journald-Quellen direkt in ein Tail-Fenster. Damit pruefst du schnell, ob gerade frische Daten ankommen." ariaLabel="Live-Ansicht erklaeren" />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <span style={{ color: 'var(--muted-fg)', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Live</span>
+          <select
+            value={String(refreshIntervalMs)}
+            onChange={e => setRefreshIntervalMs(Number(e.target.value))}
+            style={styles.intervalSelect}
+            aria-label="Aktualisierungsintervall"
+          >
+            {REFRESH_INTERVAL_OPTIONS.map(opt => (
+              <option key={opt.value} value={String(opt.value)}>{opt.label}</option>
+            ))}
+          </select>
+          <HelpTip content="Die Eventliste aktualisiert sich automatisch im gewaehlten Intervall mit den aktuellen Filtern. 'Aus' pausiert die Live-Aktualisierung." ariaLabel="Live-Aktualisierung erklaeren" />
+        </div>
 
         <TimeRangePicker value={rangeHours} onChange={handleRangeHoursChange} />
         <HelpTip content="Das Zeitfenster gilt fuer Eventliste und Dashboard gleichzeitig. Aenderungen werden zwischen den Reitern synchronisiert." ariaLabel="Zeitfenster erklaeren" />
@@ -773,7 +786,11 @@ export default function EventsPage() {
                 </div>
               ))}
               {!allEvents.length && (
-                <div style={{ padding: '2rem', color: 'var(--muted-fg)', textAlign: 'center' }}>Keine Events gefunden</div>
+                <div style={{ padding: '2rem', color: 'var(--muted-fg)', textAlign: 'center' }}>
+                  {REQUIRE_SOURCE_SELECTION && !hasAnySourceSelection
+                    ? 'Keine Quelle ausgewählt – bitte oben eine oder mehrere Quellen wählen, um Events anzuzeigen.'
+                    : 'Keine Events gefunden'}
+                </div>
               )}
               {isFetchingNextPage && (
                 <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--muted-fg)', fontSize: '0.85rem' }}>
@@ -792,6 +809,7 @@ const styles: Record<string, React.CSSProperties> = {
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' },
   h2: { margin: 0, fontSize: '1.5rem' },
   refBtn: { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--muted-fg)', borderRadius: 6, padding: '0.35rem 0.75rem', cursor: 'pointer', opacity: 1 },
+  intervalSelect: { background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)', borderRadius: 6, padding: '0.35rem 0.55rem', fontSize: '0.82rem' },
   liveBtn: { background: 'var(--nav-active-bg)', border: '1px solid var(--accent)', color: 'var(--nav-active-fg)', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap' },
   liveBtnDisabled: { background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--muted-fg)', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'not-allowed', fontWeight: 700, whiteSpace: 'nowrap' },
   filters: { display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center' },

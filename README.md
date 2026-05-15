@@ -480,6 +480,13 @@ alembic upgrade head
   ```
 - **Source konfiguriert?** Gehe zu Sources-Seite und überprüfe den Pfad
 - **Ingestion starten**: Klick auf Dashboard → "Verarbeitung starten"
+- **Watcher zu langsam?** Der Watcher pollt im Leerlauf alle `WATCHER_INTERVAL_SECONDS`
+  (Default `0.5 s`) und schaltet bei vorhandenem Backlog in einen Catch-up-Modus mit
+  `WATCHER_CATCHUP_MIN_SLEEP_SECONDS` zwischen Ticks (Default `0.02 s`). Beide Werte
+  lassen sich per Env-Variable überschreiben, z. B.:
+  ```bash
+  WATCHER_INTERVAL_SECONDS=1.0 WATCHER_CATCHUP_MIN_SLEEP_SECONDS=0.05 ./scripts/dev-up.sh
+  ```
 
 ### AI/Ollama antwortet nicht
 

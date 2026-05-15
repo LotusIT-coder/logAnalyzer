@@ -96,13 +96,26 @@ async def _refresh_source_status(session, source_id: str, touched_at: datetime) 
 
 
 class WatcherService:
-    """Async background service that polls log sources on a fixed interval."""
+    """Async background service that polls log sources on a fixed interval.
 
-    def __init__(self, interval_seconds: float = 5.0) -> None:
+    Implements an adaptive "catch-up" loop: when the previous tick produced
+    data (i.e. lines were ingested), the next tick fires after only
+    ``catchup_min_sleep_seconds`` instead of the full ``interval_seconds``.
+    That keeps the dashboard fresh during bursts while idling cheaply when
+    nothing new arrives.
+    """
+
+    def __init__(
+        self,
+        interval_seconds: float = 1.0,
+        catchup_min_sleep_seconds: float = 0.05,
+    ) -> None:
         self.interval_seconds = interval_seconds
+        self.catchup_min_sleep_seconds = catchup_min_sleep_seconds
         self._task: asyncio.Task | None = None
         self.tick_count: int = 0
         self._tick_running: bool = False  # backpressure guard
+        self._last_tick_lines: int = 0
 
     @property
     def running(self) -> bool:
@@ -128,11 +141,18 @@ class WatcherService:
         logger.info("watcher_stopped")
 
     async def _loop(self) -> None:
-        """Main polling loop: runs until cancelled."""
+        """Main polling loop: runs until cancelled.
+
+        Sleeps ``catchup_min_sleep_seconds`` after productive ticks (any lines
+        ingested) and the full ``interval_seconds`` when nothing happened.
+        """
         while True:
             await self._tick()
             self.tick_count += 1
-            await asyncio.sleep(self.interval_seconds)
+            if self._last_tick_lines > 0:
+                await asyncio.sleep(self.catchup_min_sleep_seconds)
+            else:
+                await asyncio.sleep(self.interval_seconds)
 
     async def _tick(self) -> None:
         """One ingestion cycle: open a session, list sources, ingest each."""
@@ -164,6 +184,7 @@ class WatcherService:
             )
 
             total_lines = 0
+            self._last_tick_lines = 0
             for source in ordered_sources:
                 if not source.enabled:
                     continue
@@ -193,3 +214,5 @@ class WatcherService:
             except Exception:
                 logger.exception("watcher_commit_failed")
                 await session.rollback()
+
+            self._last_tick_lines = total_lines

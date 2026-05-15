@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
 import { EMPTY_FILTER, SourceFilterContext, type GlobalSourceFilter, type SourceOption } from './SourceFilterContext.shared'
+import { getSources } from '../lib/requests'
 
 const FILTER_STORAGE_KEY = 'logAnalyzer:globalSourceFilter'
 const SELECTED_SOURCES_STORAGE_KEY = 'logAnalyzer:selectedSources'
@@ -101,6 +103,36 @@ export function SourceFilterProvider({ children }: { children: React.ReactNode }
       setSelectedSources([])
     }
   }, [filter.sourceIds, filter.sourcePaths, selectedSources.length])
+
+  // Reconcile stored selection against the actual available sources on the
+  // backend. Removes IDs that no longer exist (e.g. after a source was deleted
+  // outside this browser session) so the dropdown does not display ghost
+  // entries forever.
+  const { data: availableSources } = useQuery({
+    queryKey: ['sources', 'reconcile'],
+    queryFn: getSources,
+    staleTime: 60_000,
+    retry: 1,
+  })
+
+  useEffect(() => {
+    if (!availableSources) return
+    const validIds = new Set(availableSources.map(s => s.id))
+
+    const prunedFilterIds = filter.sourceIds.filter(id => validIds.has(id))
+    if (prunedFilterIds.length !== filter.sourceIds.length) {
+      setFilterState(prev => ({ ...prev, sourceIds: prunedFilterIds }))
+    }
+
+    const prunedSelected = selectedSources.filter(source => {
+      if (source.kind !== 'configured') return true
+      const rawId = source.id.startsWith('source:') ? source.id.slice('source:'.length) : source.id
+      return validIds.has(rawId)
+    })
+    if (prunedSelected.length !== selectedSources.length) {
+      setSelectedSources(prunedSelected)
+    }
+  }, [availableSources, filter.sourceIds, selectedSources])
 
   const hasFilter = filter.sourceIds.length > 0 || filter.sourcePaths.length > 0
 

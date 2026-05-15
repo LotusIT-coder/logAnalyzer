@@ -27,7 +27,13 @@ class Settings(BaseSettings):
     ollama_path: str = "/usr/bin/ollama"
 
     cors_allowed_origins: str = "http://localhost:5173"
-    watcher_interval_seconds: float = 5.0
+    # Idle poll interval for the file/journald watcher. When the previous tick
+    # produced data the loop runs again immediately (catch-up mode); this value
+    # only takes effect when there is nothing new to ingest. Override via env
+    # `WATCHER_INTERVAL_SECONDS`.
+    watcher_interval_seconds: float = 0.5
+    # Minimum sleep between ticks even in catch-up mode, to keep DB load bounded.
+    watcher_catchup_min_sleep_seconds: float = 0.02
     rule_scheduler_interval_seconds: float = 30.0
     notification_webhook_url: str | None = None
 

@@ -78,10 +78,17 @@ async def lifespan(app: FastAPI):
     logger.info("database_connected")
 
     # Start ingestion watcher
-    watcher = WatcherService(interval_seconds=settings.watcher_interval_seconds)
+    watcher = WatcherService(
+        interval_seconds=settings.watcher_interval_seconds,
+        catchup_min_sleep_seconds=settings.watcher_catchup_min_sleep_seconds,
+    )
     app.state.watcher = watcher
     await watcher.start()
-    logger.info("watcher_started", interval=settings.watcher_interval_seconds)
+    logger.info(
+        "watcher_started",
+        interval=settings.watcher_interval_seconds,
+        catchup_min_sleep=settings.watcher_catchup_min_sleep_seconds,
+    )
 
     # Start rule evaluation scheduler
     rule_scheduler = RuleSchedulerService(interval_seconds=settings.rule_scheduler_interval_seconds)
