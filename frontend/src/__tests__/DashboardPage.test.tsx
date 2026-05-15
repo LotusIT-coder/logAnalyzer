@@ -61,7 +61,7 @@ beforeEach(() => {
     points: [{ ts: '2026-05-06T10:00:00Z', count: 5 }],
   } satisfies TimeseriesResponse)
   mockGetTopErrors.mockResolvedValue({
-    items: [{ key: 'connection refused', count: 3 }],
+    items: [{ key: 'connection refused', count: 3, latest: '2026-05-06T10:00:00Z' }],
   } satisfies TopErrorsResponse)
   mockGetTopServices.mockResolvedValue({
     items: [{ service: 'nginx', count: 4 }],

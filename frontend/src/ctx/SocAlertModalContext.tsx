@@ -1,4 +1,5 @@
-import { ReactNode, createContext, useCallback, useContext, useState } from 'react'
+import { createContext, useCallback, useContext, useState } from 'react'
+import type { ReactNode } from 'react'
 
 export interface SocAlertModal {
   id: string
