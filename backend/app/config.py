@@ -38,6 +38,22 @@ class Settings(BaseSettings):
     soc_analyst_confidence_threshold: float = 0.7
     soc_analyst_window_events: int = 100
 
+    # Elasticsearch (optional secondary search/analytics store)
+    elastic_enabled: bool = False
+    elastic_url: str = "http://127.0.0.1:9200"
+    elastic_username: str | None = None
+    elastic_password: str | None = None
+    elastic_verify_tls: bool = True
+    elastic_timeout_seconds: float = 3.0
+    elastic_ilm_policy_name: str = "loganalyzer-events-policy-v1"
+    elastic_index_template_name: str = "loganalyzer-events-template-v1"
+    elastic_index_pattern: str = "logs-events-v1-*"
+    elastic_index_name: str = "logs-events-v1-default"
+    elastic_indexer_enabled: bool = False
+    elastic_indexer_interval_seconds: float = 5.0
+    elastic_indexer_batch_size: int = 500
+    elastic_indexer_max_retries: int = 8
+
     @property
     def cors_origins_list(self) -> List[str]:
         return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]

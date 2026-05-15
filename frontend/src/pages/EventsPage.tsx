@@ -29,6 +29,12 @@ function parseSeverityCsv(value: string) {
     .filter(Boolean)
 }
 
+function normalizeProvider(value: string) {
+  const lowered = value.trim().toLowerCase()
+  if (lowered === 'postgres' || lowered === 'elastic') return lowered
+  return ''
+}
+
 function getInitialFilterValue(searchParams: URLSearchParams, key: string) {
   return searchParams.get(key) ?? ''
 }
@@ -47,6 +53,7 @@ function buildContextItems(params: {
   fromTime: string
   toTime: string
   severityCsv: string
+  provider: string
   host: string
   service: string
   search: string
@@ -83,6 +90,7 @@ function buildContextItems(params: {
   if (params.host) items.push(`Host: ${params.host}`)
   if (params.service) items.push(`Service: ${params.service}`)
   if (params.search) items.push(`Suche: ${params.search}`)
+  if (params.provider) items.push(`Provider: ${params.provider}`)
 
   return items
 }
@@ -316,6 +324,7 @@ export default function EventsPage() {
   const [fromTime, setFromTime] = useState(() => getInitialFilterValue(searchParams, 'from'))
   const [toTime, setToTime] = useState(() => getInitialFilterValue(searchParams, 'to'))
   const [selectedSeverities, setSelectedSeverities] = useState<string[]>(() => parseSeverityCsv(getInitialFilterValue(searchParams, 'severity')))
+  const [provider, setProvider] = useState(() => normalizeProvider(getInitialFilterValue(searchParams, 'provider')))
   const [host, setHost] = useState(() => getInitialFilterValue(searchParams, 'host'))
   const [service, setService] = useState(() => getInitialFilterValue(searchParams, 'service'))
   const [search, setSearch] = useState(() => getInitialFilterValue(searchParams, 'q'))
@@ -433,7 +442,7 @@ export default function EventsPage() {
 
   // Infinite query: loads events page by page
   const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage, isFetching } = useInfiniteQuery({
-    queryKey: ['events', sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, effectiveFrom, effectiveTo, selectedSeveritiesCsv, host, service, search, refreshTick],
+    queryKey: ['events', sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, effectiveFrom, effectiveTo, selectedSeveritiesCsv, provider, host, service, search, refreshTick],
     queryFn: ({ pageParam }: { pageParam?: string }) => getEvents({
       limit: 50,
       cursor: pageParam,
@@ -443,6 +452,7 @@ export default function EventsPage() {
       ...(effectiveSourceIdsCsv ? { source_ids: effectiveSourceIdsCsv } : {}),
       ...(effectiveSourcePathsCsv ? { source_paths: effectiveSourcePathsCsv } : {}),
       ...(selectedSeveritiesCsv ? { severity: selectedSeveritiesCsv } : {}),
+      ...(provider ? { provider } : {}),
       ...(host ? { host } : {}),
       ...(service ? { service } : {}),
       ...(search ? { q: search } : {}),
@@ -482,6 +492,7 @@ export default function EventsPage() {
     setFromTime('')
     setToTime('')
     setSelectedSeverities([])
+    setProvider('')
     setHost('')
     setService('')
     setSearch('')
@@ -527,6 +538,7 @@ export default function EventsPage() {
     fromTime: effectiveFrom ?? '',
     toTime: effectiveTo ?? '',
     severityCsv: selectedSeveritiesCsv,
+    provider,
     host,
     service,
     search,
@@ -567,7 +579,7 @@ export default function EventsPage() {
         />
         <HelpTip content="Wähle eine oder mehrere Quellen für die Eventliste. Die Auswahl steuert auch den globalen Kontext für den AI-Chat." ariaLabel="Quellenfilter erklaeren" />
         <button onClick={refreshLatest} disabled={isFetching} style={styles.refBtn}>
-          {isFetching ? 'Refresh...' : 'Refresh'}
+          {isFetching ? 'Aktualisiere...' : 'Aktualisieren'}
         </button>
         <button
           onClick={() => liveTailSources.length > 0 && setTailSources(liveTailSources)}
@@ -637,6 +649,24 @@ export default function EventsPage() {
           </div>
         </details>
         <HelpTip content="Schweregrade helfen beim Priorisieren. Fehler und kritische Events deuten auf unmittelbaren Handlungsbedarf hin, waehrend Info- und Debug-Events meist Kontext liefern." ariaLabel="Severity-Filter erklaeren" />
+        <select
+          value={provider}
+          onChange={e => setProvider(normalizeProvider(e.target.value))}
+          style={{ ...styles.select, minWidth: 170 }}
+          aria-label="Event-Provider"
+          title="Diagnose-Provider fuer die Event-Suche"
+        >
+          <option value="">Provider: auto</option>
+          <option value="postgres">Provider: postgres</option>
+          <option value="elastic">Provider: elastic</option>
+        </select>
+        <span style={styles.providerHint}>
+          {provider === 'postgres'
+            ? 'Erzwingt PostgreSQL'
+            : provider === 'elastic'
+              ? 'Erzwingt Elasticsearch'
+              : 'Auto: Elastic mit PostgreSQL-Fallback'}
+        </span>
         <input
           value={host}
           onChange={e => setHost(e.target.value)}
@@ -790,6 +820,11 @@ const styles: Record<string, React.CSSProperties> = {
   severityActionBtn: {
     background: 'var(--surface-2)', color: 'var(--accent)', border: '1px solid var(--border)', borderRadius: 6,
     padding: '0.2rem 0.5rem', fontSize: '0.75rem', cursor: 'pointer',
+  },
+  providerHint: {
+    color: 'var(--muted-fg)',
+    fontSize: '0.76rem',
+    whiteSpace: 'nowrap',
   },
   search: { flex: 1, minWidth: 120, background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)', borderRadius: 6, padding: '0.4rem 0.75rem' },
   btn: { background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', whiteSpace: 'nowrap' },

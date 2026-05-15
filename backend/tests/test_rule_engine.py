@@ -78,6 +78,20 @@ class TestMatchesCondition:
         e = _make_event(message="all good")
         assert _matches_condition(e, {"message_contains": "error"}) is False
 
+    def test_message_contains_any_match(self):
+        e = _make_event(message="powershell.exe -EncodedCommand AAAA")
+        assert _matches_condition(
+            e,
+            {"message_contains_any": ["powershell -enc", "-encodedcommand", "invoke-expression"]},
+        ) is True
+
+    def test_message_contains_any_no_match(self):
+        e = _make_event(message="normal service startup completed")
+        assert _matches_condition(
+            e,
+            {"message_contains_any": ["powershell -enc", "-encodedcommand", "invoke-expression"]},
+        ) is False
+
     def test_service_match(self):
         e = _make_event(service="nginx")
         assert _matches_condition(e, {"service": "nginx"}) is True

@@ -184,3 +184,21 @@ class TestEventsAPI:
         result = await db_session.execute(_stream_events_stmt())
         rows = [row for row in reversed(result.scalars().all()) if row.id not in seen_ids]
         assert [row.id for row in rows] == [fresh.id]
+
+    async def test_provider_query_rejects_invalid_value(self, client: AsyncClient):
+        resp = await client.get("/api/v1/events?provider=invalid")
+        assert resp.status_code == 422
+
+    async def test_provider_query_elastic_returns_503_when_disabled(self, client: AsyncClient):
+        resp = await client.get("/api/v1/events?provider=elastic")
+        assert resp.status_code == 503
+
+    async def test_provider_auto_falls_back_to_postgres(self, client: AsyncClient, db_session: AsyncSession):
+        src = await _seed_source(db_session)
+        await _seed_event(db_session, src.id, message="fallback works")
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/events?provider=auto")
+        assert resp.status_code == 200
+        assert resp.headers.get("x-events-provider") == "postgres"
+        assert any(item["message"] == "fallback works" for item in resp.json()["items"])

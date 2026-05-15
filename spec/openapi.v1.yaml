@@ -245,9 +245,21 @@ paths:
           in: query
           schema:
             type: string
+        - name: provider
+          in: query
+          schema:
+            type: string
+            enum: [auto, postgres, elastic]
+          description: Select event search provider. auto prefers elastic and falls back to postgres.
       responses:
         "200":
           description: Paged event results
+          headers:
+            X-Events-Provider:
+              description: Provider used for this response.
+              schema:
+                type: string
+                enum: [postgres, elastic, none]
           content:
             application/json:
               schema:
@@ -261,6 +273,8 @@ paths:
                     type: string
                     nullable: true
                 required: [items]
+        "503":
+          description: Requested provider unavailable (for example provider=elastic while elastic is disabled/unreachable)
 
   /api/v1/events/{id}:
     get:

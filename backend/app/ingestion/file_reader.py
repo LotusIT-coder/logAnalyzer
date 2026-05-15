@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.models import Event, ParserProfile, RawLog, Source
+from app.domain.models import Event, EventIndexOutbox, ParserProfile, RawLog, Source
 from app.parser.pipeline import parse_line
 from app.services.source_service import get_source_config_path, resolve_source_path, source_path_is_regex
 
@@ -30,6 +30,7 @@ _PATH_BASED_SOURCE_TYPES = {"file", "docker"}
 _MAX_BACKLOG_BYTES_BEFORE_FAST_FORWARD = 20_000_000
 _FAST_FORWARD_TAIL_BYTES = 2_000_000
 _JOURNAL_CURSOR_PREFIX = "journal\t"
+_JOURNAL_CURSOR_CHECKPOINT_LINE = "__journal_cursor_checkpoint__"
 _JOURNALD_PRIORITY_MAP = {
     "0": "critical",
     "1": "critical",
@@ -72,6 +73,25 @@ async def _get_last_cursor(session: AsyncSession, source_id: str) -> tuple[Optio
 
 
 async def _get_last_journal_cursor(session: AsyncSession, source_id: str) -> Optional[str]:
+    # Prefer explicit checkpoint rows. A large bulk insert can assign identical
+    # ingested_at values to many raw rows, which makes ordering ambiguous.
+    checkpoint = await session.execute(
+        select(RawLog.cursor)
+        .where(
+            RawLog.source_id == source_id,
+            RawLog.cursor.isnot(None),
+            RawLog.raw_line == _JOURNAL_CURSOR_CHECKPOINT_LINE,
+        )
+        .order_by(RawLog.ingested_at.desc())
+        .limit(1)
+    )
+    checkpoint_row = checkpoint.scalar_one_or_none()
+    if checkpoint_row is not None:
+        cursor = str(checkpoint_row)
+        if cursor.startswith(_JOURNAL_CURSOR_PREFIX):
+            return cursor[len(_JOURNAL_CURSOR_PREFIX):]
+        return cursor or None
+
     result = await session.execute(
         select(RawLog.cursor)
         .where(RawLog.source_id == source_id, RawLog.cursor.isnot(None))
@@ -89,6 +109,23 @@ async def _get_last_journal_cursor(session: AsyncSession, source_id: str) -> Opt
 
 def _line_hash(line: str) -> str:
     return hashlib.sha256(line.encode()).hexdigest()
+
+
+async def _enqueue_event_index_outbox(session: AsyncSession, event_rows: list[dict]) -> None:
+    if not event_rows:
+        return
+    await session.execute(
+        insert(EventIndexOutbox),
+        [
+            {
+                "id": str(uuid.uuid4()),
+                "event_id": row["id"],
+                "payload_json": {},
+                "attempts": 0,
+            }
+            for row in event_rows
+        ],
+    )
 
 
 def _map_journald_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
@@ -148,6 +185,7 @@ def _build_journalctl_command(source: Source, after_cursor: Optional[str] = None
 
 async def _ingest_live_journald_source(session: AsyncSession, source: Source) -> dict:
     last_cursor = await _get_last_journal_cursor(session, source.id)
+    latest_cursor = last_cursor
     command = _build_journalctl_command(source, after_cursor=last_cursor)
     process = await asyncio.create_subprocess_exec(
         *command,
@@ -182,6 +220,7 @@ async def _ingest_live_journald_source(session: AsyncSession, source: Source) ->
         cursor = mapped.pop("cursor", None)
         if not cursor:
             continue
+        latest_cursor = cursor
 
         raw_batch.append({
             "id": str(uuid.uuid4()),
@@ -208,12 +247,29 @@ async def _ingest_live_journald_source(session: AsyncSession, source: Source) ->
         if lines_ingested % _BATCH_SIZE == 0:
             await session.execute(insert(RawLog), raw_batch)
             await session.execute(insert(Event), evt_batch)
+            await _enqueue_event_index_outbox(session, evt_batch)
             raw_batch.clear()
             evt_batch.clear()
 
     if raw_batch:
         await session.execute(insert(RawLog), raw_batch)
         await session.execute(insert(Event), evt_batch)
+        await _enqueue_event_index_outbox(session, evt_batch)
+
+    # Persist one deterministic cursor checkpoint row per run so the next
+    # iteration can continue exactly from the newest processed journald entry.
+    if latest_cursor:
+        checkpoint_cursor = f"{_JOURNAL_CURSOR_PREFIX}{latest_cursor}"
+        await session.execute(
+            insert(RawLog),
+            [{
+                "id": str(uuid.uuid4()),
+                "source_id": source.id,
+                "raw_line": _JOURNAL_CURSOR_CHECKPOINT_LINE,
+                "raw_hash": _line_hash(f"{_JOURNAL_CURSOR_CHECKPOINT_LINE}:{checkpoint_cursor}"),
+                "cursor": checkpoint_cursor,
+            }],
+        )
 
     return {
         "source_id": str(source.id),
@@ -221,7 +277,7 @@ async def _ingest_live_journald_source(session: AsyncSession, source: Source) ->
         "events_created": events_created,
         "fast_forwarded": False,
         "start_offset": 0,
-        "new_cursor": last_cursor,
+        "new_cursor": latest_cursor,
     }
 
 
@@ -480,6 +536,7 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
                 if lines_ingested % _BATCH_SIZE == 0:
                     await session.execute(insert(RawLog), _raw_batch)
                     await session.execute(insert(Event), _evt_batch)
+                    await _enqueue_event_index_outbox(session, _evt_batch)
                     _raw_batch.clear()
                     _evt_batch.clear()
     except PermissionError:
@@ -501,6 +558,7 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
     if _raw_batch:
         await session.execute(insert(RawLog), _raw_batch)
         await session.execute(insert(Event), _evt_batch)
+        await _enqueue_event_index_outbox(session, _evt_batch)
 
     return {
         "source_id": str(source.id),

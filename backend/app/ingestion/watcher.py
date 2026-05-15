@@ -88,15 +88,22 @@ class WatcherService:
                 logger.exception("watcher_list_sources_failed")
                 return
 
+            # Process journald first so near-real-time system events stay fresh
+            # even when other sources have a large backlog.
+            ordered_sources = sorted(
+                sources,
+                key=lambda source: (0 if source.type == "journald" else 1),
+            )
+
             total_lines = 0
-            for source in sources:
+            for source in ordered_sources:
                 if not source.enabled:
                     continue
                 if total_lines >= _MAX_LINES_TOTAL_PER_TICK:
                     logger.warning(
                         "watcher_tick_global_limit_reached",
                         limit=_MAX_LINES_TOTAL_PER_TICK,
-                        remaining_sources=sum(1 for s in sources if s.enabled),
+                        remaining_sources=sum(1 for s in ordered_sources if s.enabled),
                     )
                     break
                 try:

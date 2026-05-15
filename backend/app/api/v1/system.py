@@ -50,11 +50,20 @@ def _build_soc_status_payload(request: Request) -> dict:
 @router.get("/health")
 async def health(request: Request):
     ollama_available = getattr(request.app.state, "ollama_available", False)
+    elastic_enabled = bool(getattr(request.app.state, "elastic_enabled", False))
+    elastic_available = bool(getattr(request.app.state, "elastic_available", False))
+    elastic_bootstrap_ok = bool(getattr(request.app.state, "elastic_bootstrap_ok", False))
+    elastic_indexer = getattr(request.app.state, "elastic_indexer", None)
+    elastic_indexer_running = bool(elastic_indexer is not None and elastic_indexer.running)
     return {
         "status": "ok",
         "uptime_seconds": int(time.monotonic() - _start_time),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "ollama_available": ollama_available,
+        "elastic_enabled": elastic_enabled,
+        "elastic_available": elastic_available,
+        "elastic_bootstrap_ok": elastic_bootstrap_ok,
+        "elastic_indexer_running": elastic_indexer_running,
     }
 
 

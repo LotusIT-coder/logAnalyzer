@@ -26,6 +26,11 @@ services:
       CORS_ALLOWED_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
       WATCHER_INTERVAL_SECONDS: 5
       RULE_SCHEDULER_INTERVAL_SECONDS: 30
+      ELASTIC_ENABLED: ${ELASTIC_ENABLED:-false}
+      ELASTIC_URL: ${ELASTIC_URL:-http://elastic:9200}
+      ELASTIC_INDEXER_ENABLED: ${ELASTIC_INDEXER_ENABLED:-false}
+      ELASTIC_INDEXER_INTERVAL_SECONDS: ${ELASTIC_INDEXER_INTERVAL_SECONDS:-5}
+      ELASTIC_INDEXER_BATCH_SIZE: ${ELASTIC_INDEXER_BATCH_SIZE:-500}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -34,6 +39,19 @@ services:
     command: ["bash", "-lc", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     ports:
       - "8000:8000"
+
+  elastic:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.3
+    restart: unless-stopped
+    profiles: ["elastic"]
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
 
   frontend:
     build:
@@ -47,3 +65,4 @@ services:
 
 volumes:
   pgdata:
+  esdata:

@@ -70,6 +70,10 @@ Die folgenden Detection-Cases zeigen, welche Muster LogAnalyzer konkret sichtbar
 | API Abuse | Übermäßige Requests, Error-Spikes, ungewöhnliche Pfade |
 | Impossible Travel | Zwei geografisch unplausible Logins in kurzem Abstand |
 | Unusual Service Restarts | Wiederholte Restarts sicherheitskritischer Services |
+| Kerberoasting Indicators | Auffällige Menge an Kerberos-Service-Ticket-Requests (z. B. Event 4769) |
+| Suspicious PowerShell | Verdächtige PowerShell-Ausführung (z. B. encoded/hidden command patterns) |
+| Persistence Indicators | Hinweise auf Persistenz (z. B. Scheduled Tasks, Autostart-Aktivität) |
+| Service Account Abuse | Service-Account-Logins/Verwendung außerhalb normaler Muster |
 
 ## MITRE ATT&CK Mapping
 
@@ -91,6 +95,7 @@ Ein Mapping auf MITRE ATT&CK macht Detections für Security-Teams sofort einordb
 Die Plattform setzt nicht nur auf KI, sondern auf eine Kombination aus klassischen und analytischen Verfahren:
 
 - Regex- und parserbasierte Extraktion
+- Multi-Pattern-Matching fuer verdaechtige Befehls- und Authentifizierungsindikatoren
 - Event-Korrelation über Zeitfenster und Quellgruppen
 - Thresholds für Burst-, Flood- und Anomalie-Erkennung
 - Baselines für Normalverhalten
@@ -477,6 +482,18 @@ Container-Setup mit One-Command-Start:
 docker compose up --build -d
 ```
 
+Optional mit Elasticsearch-Profil (sekundaerer Search/Analytics-Store):
+
+```bash
+ELASTIC_ENABLED=true docker compose --profile elastic up --build -d
+```
+
+Mit Outbox-Indexer aktiv (PR2, empfohlen fuer kontinuierliches Indexing):
+
+```bash
+ELASTIC_ENABLED=true ELASTIC_INDEXER_ENABLED=true docker compose --profile elastic up --build -d
+```
+
 Nützliche Befehle:
 
 ```bash
@@ -494,8 +511,34 @@ Standard-URLs im Compose-Setup:
 
 - Frontend: `http://localhost:8080`
 - Backend API: `http://localhost:8000`
+- Elasticsearch (optional Profil): `http://localhost:9200`
 
 Hinweis zu Ollama: Wenn Ollama lokal auf dem Host läuft, nutzt das Backend im Compose-Setup `http://host.docker.internal:11434`.
+Hinweis zu Health: `GET /api/v1/health` liefert zusätzlich `elastic_enabled`, `elastic_available`, `elastic_bootstrap_ok` und `elastic_indexer_running`.
+
+Event-Search-Routing (PR3):
+
+- Standard (`provider=auto`): bevorzugt Elasticsearch und faellt bei Fehlern auf PostgreSQL zurueck
+- Diagnose erzwingen: `GET /api/v1/events?provider=postgres` oder `GET /api/v1/events?provider=elastic`
+- Der verwendete Provider wird im Response-Header `X-Events-Provider` ausgegeben
+
+Historische Events in die Outbox nachschieben (Backfill):
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m app.services.elastic_backfill --batch-size 1000
+```
+
+### Maintainer-Checkliste (README + Docker aktuell halten)
+
+Bei jeder funktionalen Aenderung mit Build-, Runtime- oder API-Auswirkung:
+
+- README aktualisieren (Features, Setup, Ports, Healthchecks, bekannte Grenzen)
+- Docker-Artefakte pruefen und bei Bedarf anpassen (`docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile`, `frontend/nginx.conf`)
+- Einmal verifizieren: `docker compose up --build -d` und Healthcheck auf `http://localhost:8000/api/v1/health`
+- Frontend-Proxy pruefen: `http://localhost:8080/api/v1/health`
+- Runbook konsistent halten: `docs/operations/local-runtime.md` bei geaenderten Betriebsablaeufen mitziehen
 
 ---
 
@@ -624,6 +667,10 @@ These example detections show what LogAnalyzer can surface in practice:
 | API Abuse | High request volume, error spikes, unusual paths |
 | Impossible Travel | Two geographically implausible logins close together |
 | Unusual Service Restarts | Repeated restarts of critical services |
+| Kerberoasting Indicators | Bursts of Kerberos service ticket requests (for example Event 4769) |
+| Suspicious PowerShell | Suspicious PowerShell execution (for example encoded/hidden command patterns) |
+| Persistence Indicators | Persistence-related activity (for example scheduled tasks, autostart behavior) |
+| Service Account Abuse | Service account usage or logins outside expected behavior |
 
 ## MITRE ATT&CK Mapping
 
@@ -643,6 +690,7 @@ These example detections show what LogAnalyzer can surface in practice:
 The platform does not rely on AI alone. It combines classical security analytics with modern assistance:
 
 - Regex- and parser-based extraction
+- Multi-pattern matching for suspicious command and authentication indicators
 - Event correlation over time windows and source groups
 - Thresholds for burst, flood, and anomaly detection
 - Baselines for normal behavior
@@ -681,6 +729,18 @@ Docker / Compose one-command setup:
 docker compose up --build -d
 ```
 
+Optional with Elasticsearch profile (secondary search/analytics store):
+
+```bash
+ELASTIC_ENABLED=true docker compose --profile elastic up --build -d
+```
+
+With outbox indexer enabled (PR2, recommended for continuous indexing):
+
+```bash
+ELASTIC_ENABLED=true ELASTIC_INDEXER_ENABLED=true docker compose --profile elastic up --build -d
+```
+
 Useful commands:
 
 ```bash
@@ -698,8 +758,34 @@ Default URLs in the Compose setup:
 
 - Frontend: `http://localhost:8080`
 - Backend API: `http://localhost:8000`
+- Elasticsearch (optional profile): `http://localhost:9200`
 
 Ollama note: If Ollama runs on the host machine, the backend uses `http://host.docker.internal:11434` in Compose.
+Health note: `GET /api/v1/health` now also returns `elastic_enabled`, `elastic_available`, `elastic_bootstrap_ok`, and `elastic_indexer_running`.
+
+Event search routing (PR3):
+
+- Default (`provider=auto`): prefers Elasticsearch and falls back to PostgreSQL on failures
+- Force for diagnostics: `GET /api/v1/events?provider=postgres` or `GET /api/v1/events?provider=elastic`
+- The provider used is returned in response header `X-Events-Provider`
+
+Backfill historical events into the outbox:
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m app.services.elastic_backfill --batch-size 1000
+```
+
+## Maintainer Checklist (Keep README + Docker in Sync)
+
+For every functional change that impacts build, runtime, or API behavior:
+
+- Update README (features, setup, ports, health checks, known limitations)
+- Verify and adjust Docker artifacts when needed (`docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile`, `frontend/nginx.conf`)
+- Verify once with `docker compose up --build -d` and a health check on `http://localhost:8000/api/v1/health`
+- Verify frontend proxy on `http://localhost:8080/api/v1/health`
+- Keep the runbook aligned by updating `docs/operations/local-runtime.md` when operational flows change
 
 ## Demo Screenshots
 

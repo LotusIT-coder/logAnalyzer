@@ -100,6 +100,32 @@ class Event(Base):
 
     source: Mapped["Source"] = relationship(back_populates="events")
     incident_events: Mapped[list["IncidentEvent"]] = relationship(back_populates="event", cascade="all, delete-orphan")
+    index_outbox_entries: Mapped[list["EventIndexOutbox"]] = relationship(
+        back_populates="event",
+        cascade="all, delete-orphan",
+    )
+
+
+class EventIndexOutbox(Base):
+    __tablename__ = "event_index_outbox"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    event_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("event.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_retry_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    event: Mapped["Event"] = relationship(back_populates="index_outbox_entries")
 
 
 class Rule(Base):

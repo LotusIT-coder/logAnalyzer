@@ -102,6 +102,29 @@ describe('EventsPage', () => {
     expect(screen.getByText('Host: app01')).toBeInTheDocument()
   })
 
+  test('passes provider query param through to the event request', async () => {
+    renderPage('/events?provider=postgres&q=db01')
+
+    await waitFor(() => {
+      expect(mockGetEvents).toHaveBeenCalledWith({
+        limit: 50,
+        cursor: undefined,
+        from: undefined,
+        to: undefined,
+        source_id: undefined,
+        source_ids: undefined,
+        source_paths: undefined,
+        severity: undefined,
+        provider: 'postgres',
+        host: undefined,
+        service: undefined,
+        q: 'db01',
+      })
+    })
+
+    expect(screen.getAllByText('Provider: postgres').length).toBeGreaterThan(0)
+  })
+
   test('opens ANSI color legend modal via top-toolbar event', async () => {
     renderPage('/events')
     fireEvent(window, new Event('events:open-color-legend'))

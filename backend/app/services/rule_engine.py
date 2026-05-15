@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models import Event, Incident, Rule
@@ -35,6 +35,10 @@ def _build_condition_clauses(condition: dict) -> list:
         clauses.append(Event.severity.in_(condition["severity_in"]))
     if "message_contains" in condition:
         clauses.append(Event.message.ilike(f"%{condition['message_contains']}%"))
+    if "message_contains_any" in condition:
+        needles = [n for n in condition["message_contains_any"] if n]
+        if needles:
+            clauses.append(or_(*[Event.message.ilike(f"%{needle}%") for needle in needles]))
     if "service" in condition:
         clauses.append(Event.service == condition["service"])
     if "host" in condition:
@@ -69,6 +73,12 @@ def _matches_condition(event: "Event", condition: dict) -> bool:
     if "message_contains" in condition:
         needle = condition["message_contains"]
         if needle.lower() not in (event.message or "").lower():
+            return False
+
+    if "message_contains_any" in condition:
+        message = (event.message or "").lower()
+        needles = [str(n).lower() for n in condition["message_contains_any"] if n]
+        if needles and not any(needle in message for needle in needles):
             return False
 
     if "service" in condition:

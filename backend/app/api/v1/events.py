@@ -9,7 +9,7 @@ import json
 from datetime import datetime
 from typing import AsyncGenerator, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,7 @@ from app.db.session import get_session_factory
 from app.dependencies import get_db
 from app.domain.models import Event
 from app.schemas.event import EventListResponse, EventResponse
+from app.services.event_search import EventSearchQuery, search_events_elastic, search_events_postgres
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
@@ -87,6 +88,8 @@ async def stream_events(
 
 @router.get("", response_model=EventListResponse)
 async def list_events(
+    request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_db),
     from_: Optional[datetime] = Query(None, alias="from"),
     to: Optional[datetime] = Query(None),
@@ -99,49 +102,45 @@ async def list_events(
     q: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=1000),
     cursor: Optional[str] = Query(None),
+    provider: Optional[str] = Query(None),
 ):
+    provider_mode = (provider or "auto").strip().lower()
+    if provider_mode not in {"auto", "postgres", "elastic"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="provider must be auto, postgres, or elastic")
+
     resolved_source_ids = await resolve_source_ids(session, source_id, source_ids, source_paths)
     if resolved_source_ids == []:
+        response.headers["X-Events-Provider"] = "none"
         return EventListResponse(items=[], next_cursor=None)
 
-    stmt = select(Event).order_by(Event.timestamp.desc()).limit(limit + 1)
-
-    if from_:
-        stmt = stmt.where(Event.timestamp >= from_)
-    if to:
-        stmt = stmt.where(Event.timestamp <= to)
-    if resolved_source_ids is not None:
-        stmt = stmt.where(Event.source_id.in_(resolved_source_ids))
-    if severity:
-        severity_values = [value.strip().lower() for value in severity.split(",") if value.strip()]
-        if severity_values:
-            stmt = stmt.where(Event.severity.in_(severity_values))
-    if service:
-        stmt = stmt.where(Event.service.ilike(f"%{service}%"))
-    if host:
-        stmt = stmt.where(Event.host.ilike(f"%{host}%"))
-    if q:
-        stmt = stmt.where(Event.message.ilike(f"%{q}%"))
-    if cursor:
-        # cursor is a timestamp ISO string used as keyset pagination marker
-        try:
-            cursor_ts = datetime.fromisoformat(cursor)
-            stmt = stmt.where(Event.timestamp < cursor_ts)  # DESC: next page goes further back
-        except ValueError:
-            pass  # ignore invalid cursor – start from beginning
-
-    result = await session.execute(stmt)
-    rows = list(result.scalars().all())
-
-    next_cursor: Optional[str] = None
-    if len(rows) > limit:
-        rows = rows[:limit]
-        next_cursor = rows[-1].timestamp.isoformat()
-
-    return EventListResponse(
-        items=[EventResponse.model_validate(r) for r in rows],
-        next_cursor=next_cursor,
+    query = EventSearchQuery(
+        from_ts=from_,
+        to_ts=to,
+        resolved_source_ids=resolved_source_ids,
+        severity=severity,
+        service=service,
+        host=host,
+        q=q,
+        limit=limit,
+        cursor=cursor,
     )
+
+    elastic_available = bool(getattr(request.app.state, "elastic_available", False))
+    if provider_mode == "postgres":
+        result = await search_events_postgres(session, query)
+    elif provider_mode == "elastic":
+        try:
+            result = await search_events_elastic(session, query, elastic_is_available=elastic_available)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    else:
+        try:
+            result = await search_events_elastic(session, query, elastic_is_available=elastic_available)
+        except Exception:
+            result = await search_events_postgres(session, query)
+
+    response.headers["X-Events-Provider"] = result.provider_used
+    return EventListResponse(items=result.items, next_cursor=result.next_cursor)
 
 
 @router.get("/{event_id}", response_model=EventResponse)

@@ -16,6 +16,8 @@ from app.db.session import get_engine
 from app.errors import http_exception_handler, unhandled_exception_handler
 from app.ingestion.watcher import WatcherService
 from app.logging_config import RequestLoggingMiddleware, configure_logging
+from app.services.elastic_client import ElasticClient
+from app.services.elastic_indexer import ElasticIndexerService
 from app.services.rule_scheduler import RuleSchedulerService
 from app.services.soc_analyst import SOCAnalystService
 from app.services.soc_analyst_runtime import load_soc_analyst_runtime_state
@@ -39,6 +41,35 @@ async def lifespan(app: FastAPI):
 
     # Check Ollama availability
     app.state.ollama_available = await check_ollama_available(settings)
+
+    # Optional Elasticsearch integration (secondary store)
+    app.state.elastic_enabled = settings.elastic_enabled
+    app.state.elastic_available = False
+    app.state.elastic_bootstrap_ok = False
+    if settings.elastic_enabled:
+        elastic = ElasticClient.from_settings(settings)
+        app.state.elastic_available = await elastic.ping()
+        if app.state.elastic_available:
+            app.state.elastic_bootstrap_ok = await elastic.ensure_bootstrap(
+                ilm_policy_name=settings.elastic_ilm_policy_name,
+                index_template_name=settings.elastic_index_template_name,
+                index_pattern=settings.elastic_index_pattern,
+            )
+        else:
+            logger.warning("elastic_unavailable", elastic_url=settings.elastic_url)
+    else:
+        logger.info("elastic_disabled")
+
+    app.state.elastic_indexer = None
+    if settings.elastic_enabled and settings.elastic_indexer_enabled:
+        elastic_indexer = ElasticIndexerService(
+            interval_seconds=settings.elastic_indexer_interval_seconds,
+            batch_size=settings.elastic_indexer_batch_size,
+        )
+        app.state.elastic_indexer = elastic_indexer
+        await elastic_indexer.start()
+    else:
+        logger.info("elastic_indexer_disabled")
 
     # Warm up DB connection pool
     engine = get_engine()
@@ -103,6 +134,9 @@ async def lifespan(app: FastAPI):
     running_soc = getattr(app.state, "soc_analyst", None)
     if running_soc is not None:
         await running_soc.stop()
+    running_indexer = getattr(app.state, "elastic_indexer", None)
+    if running_indexer is not None:
+        await running_indexer.stop()
     await engine.dispose()
 
 

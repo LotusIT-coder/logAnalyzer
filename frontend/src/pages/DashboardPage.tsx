@@ -393,6 +393,8 @@ export default function DashboardPage() {
     return () => window.clearInterval(timer)
   }, [])
 
+  const isAnyQueryLoading = ts.isLoading || errs.isLoading || svcs.isLoading || rate.isLoading || sourceStatus.isLoading
+
   void clockTick
 
   function sourceStatusTone(status?: SourceIngestionStatus) {
@@ -410,6 +412,9 @@ export default function DashboardPage() {
           <h2 style={styles.h2}>Dashboard</h2>
           <HelpTip content="Hier waehlst du Quellen und Zeitfenster fuer den aktuellen Analysekontext. Alle Metriken auf dieser Seite reagieren direkt auf diese Auswahl." ariaLabel="Dashboard erklaeren" />
         </div>
+        <button onClick={refetchAll} disabled={isAnyQueryLoading} style={styles.refBtn}>
+          {isAnyQueryLoading ? 'Aktualisiere...' : 'Aktualisieren'}
+        </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
             <TimeRangePicker value={rangeHours} onChange={handleRangeHoursChange} />
@@ -1176,6 +1181,7 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
 const styles: Record<string, React.CSSProperties> = {
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', gap: '1rem', flexWrap: 'wrap' },
   h2: { margin: 0, fontSize: '1.5rem' },
+  refBtn: { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--muted-fg)', borderRadius: 6, padding: '0.35rem 0.75rem', cursor: 'pointer', opacity: 1, fontSize: '0.85rem', whiteSpace: 'nowrap' },
   ingestRow: { display: 'flex', gap: '0.5rem', alignItems: 'center' },
   socToggleWrap: { display: 'flex', gap: '0.45rem', alignItems: 'center', flexWrap: 'wrap' },
   socStatusPill: {
