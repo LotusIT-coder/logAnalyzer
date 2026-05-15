@@ -1,14 +1,138 @@
 # LogAnalyzer
 
-Ein lokales, KI-gestütztes Log-Analyse-System mit FastAPI Backend und React Frontend. LogAnalyzer hilft dir, Log-Dateien zu strukturieren, automatisch zu analysieren und Anomalien zu erkennen – ohne deine Daten in die Cloud zu schicken.
+Ein lokales, KI-gestütztes Log-Analyse-System mit FastAPI-Backend und React-Frontend. LogAnalyzer hilft dir, große Mengen heterogener Logdaten strukturiert zu analysieren, sicherheitsrelevante Muster zu erkennen und Incidents nachvollziehbar zu triagieren - ohne deine Daten in die Cloud zu schicken.
 
-**Features:**
-- 📥 Log-Dateien hochladen und streamen
-- 🔍 Intelligente Event-Suche und Filterung
-- 🤖 KI-basierte Triage mit Ollama
-- 📊 Anomalieerkennung und Metriken
-- 📋 Regelbasierte Incident-Generierung
-- 💾 Persistente Quellenfilter und Einstellungen
+**Kernfunktionen:**
+- 📥 Log-Dateien, Syslog und Journald-Zeilen hochladen, streamen und überwachen
+- 🔍 Event-Suche, Filterung und interaktive Drilldowns
+- 🤖 KI-gestützte Triage mit Ollama
+- 📊 Anomalieerkennung, Metriken und Pattern Scoring
+- 📋 Regelbasierte Incident-Generierung und Alerting
+- 💾 Persistente Quellenfilter, Kontexte und Einstellungen
+
+---
+
+## Problemstellung
+
+Sicherheitsanalysen scheitern in der Praxis oft nicht am Mangel an Daten, sondern an deren Vielfalt, Menge und Geschwindigkeit. Relevante Signale liegen verteilt in Anwendung-Logs, System-Logs, Journald, Auth-Events und Infrastruktur-Telemetrie. LogAnalyzer adressiert genau dieses Problem: Es bringt Logquellen in einen gemeinsamen Analysekontext, normalisiert sie, bewertet Muster und macht verdächtige Aktivitäten sichtbar.
+
+## Zielsetzung
+
+LogAnalyzer ist darauf ausgelegt, Analysten bei folgenden Aufgaben zu unterstützen:
+
+- Erkennung verdächtiger Login-Muster
+- Brute-Force-Detection
+- Lateral-Movement-Indikatoren
+- KI-gestützte Musteranalyse
+- Unterstützung bei Incident Analysis
+
+## Architektur
+
+LogAnalyzer folgt einer klaren Pipeline von der Quelle bis zur Benachrichtigung:
+
+```mermaid
+flowchart TD
+   A[Log Sources\nFiles, Syslog, Journald, Uploads] --> B[Parser Layer\nFormat-Erkennung & Extraktion]
+   B --> C[Normalization\nCanonical Event Schema]
+   C --> D[Detection Engine\nRules, Thresholds, Correlation]
+   D --> E[AI / Pattern Analysis\nScoring & Triage]
+   E --> F[Alerting / Dashboard\nIncidents & Investigations]
+```
+
+Die technische Umsetzung ist bewusst mehrschichtig:
+
+- Parser für unterschiedliche Formate und Quellen
+- Normalisierung in ein gemeinsames Event-Modell
+- Event-Korrelation über Zeit, Quelle, Host und Service
+- Schwellenwerte, Heuristiken und Baselines für verdächtige Muster
+- KI-Analyse für Triage und Priorisierung
+
+## Beispiel-Detections
+
+Die folgenden Detection-Cases zeigen, welche Muster LogAnalyzer konkret sichtbar machen kann:
+
+| Detection Case | Typisches Signal |
+| --- | --- |
+| SSH Brute Force | Viele fehlgeschlagene SSH-Logins in kurzer Zeit |
+| Failed MFA Flooding | Wiederholte MFA-Abbrüche oder Push-Spam |
+| Suspicious Geo Login | Ungewöhnlicher Login-Ort oder neue Region |
+| Privilege Escalation Pattern | Unerwartete Sudo-/Admin-Ereignisse |
+| Lateral Movement via SMB/RDP | Auffällige Verbindungen zwischen Hosts |
+| API Abuse | Übermäßige Requests, Error-Spikes, ungewöhnliche Pfade |
+| Impossible Travel | Zwei geografisch unplausible Logins in kurzem Abstand |
+| Unusual Service Restarts | Wiederholte Restarts sicherheitskritischer Services |
+
+## MITRE ATT&CK Mapping
+
+Ein Mapping auf MITRE ATT&CK macht Detections für Security-Teams sofort einordbar:
+
+| Detection | MITRE ATT&CK |
+| --- | --- |
+| Brute Force | T1110 |
+| Lateral Movement | T1021 |
+| Credential Access | T1110.001 |
+| Suspicious Geo Login | T1078 |
+| Privilege Escalation Pattern | T1548 |
+| API Abuse | T1190 |
+| Impossible Travel | T1078 |
+| Unusual Service Restarts | T1569 |
+
+## Technische Tiefe
+
+Die Plattform setzt nicht nur auf KI, sondern auf eine Kombination aus klassischen und analytischen Verfahren:
+
+- Regex- und parserbasierte Extraktion
+- Event-Korrelation über Zeitfenster und Quellgruppen
+- Thresholds für Burst-, Flood- und Anomalie-Erkennung
+- Baselines für Normalverhalten
+- Heuristics für Priorisierung und Triage
+- Scoring zur Einordnung von Signalstärke und Relevanz
+
+## Demo-Screenshots
+
+Die README sollte idealerweise um echte Screenshots ergänzt werden. Sinnvolle Motive sind:
+
+- Dashboard
+- Detection Alerts
+- Pattern Recognition
+- Threat Classification
+- Terminal Output
+
+Wenn du die Screenshots später ergänzen willst, kannst du sie z. B. unter `docs/` ablegen und hier verlinken.
+
+## Beispiel-Logs
+
+### Benign
+
+```text
+2026-05-14T10:14:21Z auth.service login successful user=alice host=workstation-01 ip=10.10.1.20
+2026-05-14T10:14:23Z app-api request ok method=GET path=/health status=200 latency_ms=12
+```
+
+### Malicious
+
+```text
+2026-05-14T10:16:02Z sshd authentication failure user=root host=server-03 ip=203.0.113.42
+2026-05-14T10:16:04Z sshd authentication failure user=root host=server-03 ip=203.0.113.42
+2026-05-14T10:16:06Z sshd authentication failure user=root host=server-03 ip=203.0.113.42
+```
+
+### Mixed Traffic
+
+```text
+2026-05-14T10:18:11Z vpn login success user=bob region=DE
+2026-05-14T10:18:19Z vpn login failure user=bob region=US
+2026-05-14T10:18:25Z rdp connection from host=ws-17 to host=dc-02
+```
+
+## Roadmap
+
+- Sigma Rule Support
+- Wazuh Integration
+- Syslog Collector
+- Docker Deployment
+- Threat Intelligence Feeds
+- IOC Matching
 
 ---
 
