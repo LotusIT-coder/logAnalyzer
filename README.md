@@ -164,7 +164,7 @@ Die wichtigsten Ansichten aus der laufenden Anwendung im kompakten Überblick:
 - Sigma Rule Support
 - Wazuh Integration
 - Syslog Collector
-- Docker / Compose Deployment (geplant)
+- Helm/Kubernetes-Deployment
 - Threat Intelligence Feeds
 - IOC Matching
 
@@ -471,7 +471,31 @@ Für das lokale One-Command-Setup reicht in der Regel `./scripts/dev-up.sh`.
 
 ### Docker / Compose
 
-Ein Docker-/Compose-Setup ist als nächster Modernisierungsschritt auf der Roadmap. Der aktuelle lokale Workflow ist bereits mit `./scripts/dev-up.sh` als One-Command-Setup automatisiert.
+Container-Setup mit One-Command-Start:
+
+```bash
+docker compose up --build -d
+```
+
+Nützliche Befehle:
+
+```bash
+# Logs ansehen
+docker compose logs -f
+
+# Services stoppen
+docker compose down
+
+# Services + Datenbank-Volume entfernen
+docker compose down -v
+```
+
+Standard-URLs im Compose-Setup:
+
+- Frontend: `http://localhost:8080`
+- Backend API: `http://localhost:8000`
+
+Hinweis zu Ollama: Wenn Ollama lokal auf dem Host läuft, nutzt das Backend im Compose-Setup `http://host.docker.internal:11434`.
 
 ---
 
@@ -490,6 +514,7 @@ logAnalyzer/
 │   │   └── services/     # Business Logic
 │   ├── alembic/          # Database Migrations
 │   ├── tests/            # Unit & Integration Tests
+│   ├── Dockerfile        # Backend container image
 │   └── pyproject.toml    # Dependencies
 │
 ├── frontend/             # React + TypeScript
@@ -498,11 +523,13 @@ logAnalyzer/
 │   │   ├── components/   # Reusable UI Components
 │   │   ├── ctx/          # Context (State Management)
 │   │   └── lib/          # API Clients
+│   ├── Dockerfile        # Frontend container image
 │   ├── package.json      # NPM Dependencies
 │   └── vite.config.ts    # Build Config
 │
 ├── db/                   # Database Schema (SQLite)
 ├── docs/                 # Dokumentation
+├── docker-compose.yml    # Docker/Compose One-Command Setup
 ├── scripts/              # Start/Stop Scripts
 └── spec/                 # OpenAPI Spec
 ```
@@ -648,7 +675,31 @@ For a local one-command setup, the current workflow is already automated with:
 ./scripts/dev-up.sh
 ```
 
-Docker / Compose support is planned as the next modernization step.
+Docker / Compose one-command setup:
+
+```bash
+docker compose up --build -d
+```
+
+Useful commands:
+
+```bash
+# Tail logs
+docker compose logs -f
+
+# Stop services
+docker compose down
+
+# Stop services and remove database volume
+docker compose down -v
+```
+
+Default URLs in the Compose setup:
+
+- Frontend: `http://localhost:8080`
+- Backend API: `http://localhost:8000`
+
+Ollama note: If Ollama runs on the host machine, the backend uses `http://host.docker.internal:11434` in Compose.
 
 ## Demo Screenshots
 
@@ -699,6 +750,6 @@ Key views from the running application in a compact gallery:
 - Sigma rule support
 - Wazuh integration
 - Syslog collector
-- Docker / Compose support (planned)
+- Helm/Kubernetes deployment
 - Threat intelligence feeds
 - IOC matching
