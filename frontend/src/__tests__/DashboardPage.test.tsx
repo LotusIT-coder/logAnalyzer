@@ -10,6 +10,10 @@ vi.mock('../lib/requests', () => ({
   getTopErrors: vi.fn(),
   getTopServices: vi.fn(),
   getErrorRate: vi.fn(),
+  getMitreCoverage: vi.fn(),
+  getSocAnalystStatus: vi.fn(),
+  setSocAnalystStatus: vi.fn(),
+  getSourceIngestionStatus: vi.fn(),
   runIngestion: vi.fn(),
   getSources: vi.fn(),
   uploadImport: vi.fn(),
@@ -26,6 +30,7 @@ import {
   getTopErrors,
   getTopServices,
   getErrorRate,
+  getSocAnalystStatus,
   getSources,
 } from '../lib/requests'
 
@@ -33,6 +38,7 @@ const mockGetTimeseries = vi.mocked(getTimeseries)
 const mockGetTopErrors = vi.mocked(getTopErrors)
 const mockGetTopServices = vi.mocked(getTopServices)
 const mockGetErrorRate = vi.mocked(getErrorRate)
+const mockGetSocAnalystStatus = vi.mocked(getSocAnalystStatus)
 const mockGetSources = vi.mocked(getSources)
 
 function renderDashboard() {
@@ -71,6 +77,12 @@ beforeEach(() => {
     error_events: 3,
     error_rate: 0.3,
   } satisfies ErrorRateResponse)
+  mockGetSocAnalystStatus.mockResolvedValue({
+    enabled: false,
+    running: false,
+    source_ids: [],
+    tick_count: 0,
+  })
 })
 
 describe('DashboardPage', () => {

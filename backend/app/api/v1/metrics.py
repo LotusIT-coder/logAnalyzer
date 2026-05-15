@@ -6,7 +6,7 @@ from math import floor
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import Integer, cast, func, select, text
+from sqlalchemy import or_, Integer, cast, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.source_filters import resolve_source_ids
@@ -71,21 +71,31 @@ async def timeseries(
         ).label("bucket")
         stmt = (
             select(bucket_expr, func.count().label("count"))
-            .where(Event.timestamp >= from_dt, Event.timestamp <= to_dt)
+            .where(
+                or_(
+                    Event.timestamp.between(from_dt, to_dt),
+                    Event.created_at.between(from_dt, to_dt),
+                )
+            )
             .group_by(text("bucket"))
             .order_by(text("bucket"))
         )
         if resolved_source_ids is not None:
             stmt = stmt.where(Event.source_id.in_(resolved_source_ids))
         result = await session.execute(stmt)
-        points = [TimeseriesPoint(ts=row.bucket, count=row.count) for row in result]
+        points = [TimeseriesPoint(ts=row.bucket, count=int(row.count) if isinstance(row.count, (int, float)) else 0) for row in result]
         return TimeseriesResponse(points=points)
 
     # SQLite fallback (used in tests): fetch timestamps with a safety LIMIT
     # and bucket in Python.
     stmt = (
         select(Event.timestamp)
-        .where(Event.timestamp >= from_dt, Event.timestamp <= to_dt)
+        .where(
+            or_(
+                Event.timestamp.between(from_dt, to_dt),
+                Event.created_at.between(from_dt, to_dt),
+            )
+        )
         .order_by(Event.timestamp)
         .limit(_TIMESERIES_PYTHON_LIMIT)
     )
@@ -146,7 +156,7 @@ async def top_errors(
         stmt = stmt.where(Event.source_id.in_(resolved_source_ids))
 
     result = await session.execute(stmt)
-    items = [TopErrorItem(key=row.message, count=row.count, latest=row.latest) for row in result]
+    items = [TopErrorItem(key=row.message, count=int(row.count) if isinstance(row.count, (int, float)) else 0, latest=row.latest) for row in result]
     return TopErrorsResponse(items=items)
 
 
@@ -178,7 +188,7 @@ async def top_services(
         stmt = stmt.where(Event.source_id.in_(resolved_source_ids))
 
     result = await session.execute(stmt)
-    items = [TopServiceItem(service=row.service, count=row.count) for row in result]
+    items = [TopServiceItem(service=row.service, count=int(row.count) if isinstance(row.count, (int, float)) else 0) for row in result]
     return TopServicesResponse(items=items)
 
 

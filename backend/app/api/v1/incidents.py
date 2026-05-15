@@ -5,20 +5,84 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.source_filters import resolve_source_ids
 from app.dependencies import get_db
-from app.domain.models import Event, Incident, IncidentEvent
+from app.domain.models import Event, Incident, IncidentEvent, Rule
 from app.schemas.domain import (
     IncidentListResponse,
     IncidentPatchRequest,
     IncidentResponse,
+    MitreCoverageItem,
+    MitreCoverageResponse,
 )
 
 router = APIRouter(prefix="/incidents", tags=["Incidents"])
 
 _VALID_STATUSES = {"open", "investigating", "resolved", "false_positive", "archived"}
+
+
+@router.get("/mitre-coverage", response_model=MitreCoverageResponse)
+async def get_mitre_coverage(
+    session: AsyncSession = Depends(get_db),
+):
+    try:
+        rules_result = await session.execute(
+            select(Rule.mitre_techniques_json, Rule.mitre_tactic).where(Rule.mitre_techniques_json.is_not(None))
+        )
+        mapped_rules = list(rules_result.all())
+    except ProgrammingError:
+        await session.rollback()
+        mapped_rules = []
+
+    try:
+        incidents_result = await session.execute(
+            select(Incident.mitre_techniques_json, Incident.mitre_tactic).where(Incident.mitre_techniques_json.is_not(None))
+        )
+        mapped_incidents = list(incidents_result.all())
+    except ProgrammingError:
+        await session.rollback()
+        mapped_incidents = []
+
+    coverage: dict[str, MitreCoverageItem] = {}
+
+    def get_or_create_item(technique_id: str) -> MitreCoverageItem:
+        if technique_id not in coverage:
+            coverage[technique_id] = MitreCoverageItem(
+                technique_id=technique_id,
+                tactic=None,
+                rule_count=0,
+                incident_count=0,
+            )
+        return coverage[technique_id]
+
+    for techniques_json, mitre_tactic in mapped_rules:
+        techniques = {str(t).strip() for t in (techniques_json or []) if str(t).strip()}
+        for technique in techniques:
+            item = get_or_create_item(technique)
+            item.rule_count += 1
+            if not item.tactic and mitre_tactic:
+                item.tactic = mitre_tactic
+
+    for techniques_json, mitre_tactic in mapped_incidents:
+        techniques = {str(t).strip() for t in (techniques_json or []) if str(t).strip()}
+        for technique in techniques:
+            item = get_or_create_item(technique)
+            item.incident_count += 1
+            if not item.tactic and mitre_tactic:
+                item.tactic = mitre_tactic
+
+    items = sorted(
+        coverage.values(),
+        key=lambda item: (-item.incident_count, -item.rule_count, item.technique_id),
+    )
+    return MitreCoverageResponse(
+        items=items,
+        mapped_rules=len(mapped_rules),
+        mapped_incidents=len(mapped_incidents),
+    )
 
 
 @router.get("", response_model=IncidentListResponse)

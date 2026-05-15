@@ -26,6 +26,9 @@ export interface SourceIngestionStatus {
   last_ingested_at?: string | null
   last_event_timestamp?: string | null
   last_event_created_at?: string | null
+  last_seen_at?: string | null
+  events_per_min?: number
+  parse_error_count?: number
 }
 
 export interface IngestionRunEntry extends JsonObject {
@@ -66,10 +69,28 @@ export interface IncidentResponse extends JsonObject {
   event_count: number
   first_seen: string
   last_seen: string
+  rule_id?: string | null
+  mitre_techniques?: string[] | null
+  mitre_tactic?: string | null
+  confidence_score?: number | null
+  confidence_rationale?: string | null
 }
 
 export interface IncidentListResponse {
   items: IncidentResponse[]
+}
+
+export interface MitreCoverageItem {
+  technique_id: string
+  tactic?: string | null
+  rule_count: number
+  incident_count: number
+}
+
+export interface MitreCoverageResponse {
+  items: MitreCoverageItem[]
+  mapped_rules: number
+  mapped_incidents: number
 }
 
 export interface RuleResponse extends JsonObject {
@@ -77,6 +98,8 @@ export interface RuleResponse extends JsonObject {
   name: string
   description?: string
   condition?: Record<string, unknown>
+  mitre_techniques?: string[] | null
+  mitre_tactic?: string | null
   severity: string
   threshold: number
   window_seconds: number
@@ -209,6 +232,11 @@ export async function getEvents(params?: object) {
 export async function getIncidents(params?: QueryParams) {
   const r = await api.get('/incidents', { params })
   return r.data as IncidentListResponse
+}
+
+export async function getMitreCoverage() {
+  const r = await api.get('/incidents/mitre-coverage')
+  return r.data as MitreCoverageResponse
 }
 
 export async function patchIncident(id: string, body: JsonObject) {

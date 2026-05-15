@@ -34,7 +34,7 @@ class Source(Base):
     type: Mapped[str] = mapped_column(
         Text,
         CheckConstraint(
-            "type IN ('file','syslog','journald','docker')"
+            "type IN ('file','syslog','journald','docker','filebeat','winlogbeat','elastic_agent')"
         ),
         nullable=False,
     )
@@ -47,6 +47,35 @@ class Source(Base):
 
     raw_logs: Mapped[list["RawLog"]] = relationship(back_populates="source", cascade="all, delete-orphan")
     events: Mapped[list["Event"]] = relationship(back_populates="source", cascade="all, delete-orphan")
+    ingestion_status: Mapped["SourceIngestionStatus | None"] = relationship(
+        back_populates="source",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class SourceIngestionStatus(Base):
+    __tablename__ = "source_ingestion_status"
+
+    source_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("source.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    last_ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_event_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_event_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    events_per_min: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    parse_error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    source: Mapped["Source"] = relationship(back_populates="ingestion_status")
 
 
 class RawLog(Base):
@@ -135,6 +164,10 @@ class Rule(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     condition_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    sequence_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    group_by_entity: Mapped[str | None] = mapped_column(Text)
+    mitre_techniques_json: Mapped[list[str] | None] = mapped_column(JSONB)
+    mitre_tactic: Mapped[str | None] = mapped_column(Text)
     threshold: Mapped[int] = mapped_column(Integer, CheckConstraint("threshold > 0"), nullable=False)
     window_seconds: Mapped[int] = mapped_column(Integer, CheckConstraint("window_seconds > 0"), nullable=False)
     severity: Mapped[str] = mapped_column(Text, nullable=False)
@@ -162,6 +195,10 @@ class Incident(Base):
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     event_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     rule_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("rule.id", ondelete="SET NULL"))
+    mitre_techniques_json: Mapped[list[str] | None] = mapped_column(JSONB)
+    mitre_tactic: Mapped[str | None] = mapped_column(Text)
+    confidence_score: Mapped[float | None] = mapped_column(Numeric(5, 2))
+    confidence_rationale: Mapped[str | None] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
     assignee: Mapped[str | None] = mapped_column(Text)
     tags_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)

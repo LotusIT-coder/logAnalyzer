@@ -18,6 +18,10 @@ class RuleResponse(BaseModel):
     name: str
     description: Optional[str] = None
     condition: Dict[str, Any] = Field(validation_alias="condition_json")
+    sequence: Optional[List[Dict[str, Any]]] = Field(default=None, validation_alias="sequence_json")
+    group_by_entity: Optional[str] = None
+    mitre_techniques: Optional[List[str]] = Field(default=None, validation_alias="mitre_techniques_json")
+    mitre_tactic: Optional[str] = None
     threshold: int
     window_seconds: int
     severity: str
@@ -34,6 +38,10 @@ class RuleCreateRequest(BaseModel):
     name: str
     description: Optional[str] = None
     condition: Dict[str, Any]
+    sequence: Optional[List[Dict[str, Any]]] = None
+    group_by_entity: Optional[str] = None
+    mitre_techniques: Optional[List[str]] = None
+    mitre_tactic: Optional[str] = None
     threshold: int = Field(ge=1)
     window_seconds: int = Field(ge=1)
     severity: str
@@ -44,6 +52,10 @@ class RulePatchRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     condition: Optional[Dict[str, Any]] = None
+    sequence: Optional[List[Dict[str, Any]]] = None
+    group_by_entity: Optional[str] = None
+    mitre_techniques: Optional[List[str]] = None
+    mitre_tactic: Optional[str] = None
     threshold: Optional[int] = Field(None, ge=1)
     window_seconds: Optional[int] = Field(None, ge=1)
     severity: Optional[str] = None
@@ -77,6 +89,10 @@ class IncidentResponse(BaseModel):
     last_seen: datetime
     event_count: int
     rule_id: Optional[str] = None
+    mitre_techniques: Optional[List[str]] = Field(default=None, validation_alias="mitre_techniques_json")
+    mitre_tactic: Optional[str] = None
+    confidence_score: Optional[float] = None
+    confidence_rationale: Optional[str] = None
     summary: Optional[str] = None
     assignee: Optional[str] = None
     tags: List[str] = Field(validation_alias="tags_json")
@@ -93,6 +109,19 @@ class IncidentPatchRequest(BaseModel):
     summary: Optional[str] = None
     assignee: Optional[str] = None
     tags: Optional[List[str]] = None
+
+
+class MitreCoverageItem(BaseModel):
+    technique_id: str
+    tactic: Optional[str] = None
+    rule_count: int
+    incident_count: int
+
+
+class MitreCoverageResponse(BaseModel):
+    items: List[MitreCoverageItem]
+    mapped_rules: int
+    mapped_incidents: int
 
 
 # ---------------------------------------------------------------------------

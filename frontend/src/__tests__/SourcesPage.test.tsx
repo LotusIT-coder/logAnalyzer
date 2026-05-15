@@ -6,15 +6,17 @@ import SourcesPage from '../pages/SourcesPage'
 
 vi.mock('../lib/requests', () => ({
   getSources: vi.fn(),
+  getSourceIngestionStatus: vi.fn(),
   createSource: vi.fn(),
   testSource: vi.fn(),
   patchSource: vi.fn(),
   deleteSource: vi.fn(),
 }))
 
-import { getSources, type SourceResponse } from '../lib/requests'
+import { getSources, getSourceIngestionStatus, type SourceResponse } from '../lib/requests'
 
 const mockGetSources = vi.mocked(getSources)
+const mockGetSourceIngestionStatus = vi.mocked(getSourceIngestionStatus)
 
 function renderPage() {
   const queryClient = new QueryClient({
@@ -33,6 +35,7 @@ beforeEach(() => {
   mockGetSources.mockResolvedValue([
     { id: 'source-1', name: 'Syslog', type: 'file', enabled: true, config: { path: '/var/log/syslog' } },
   ] satisfies SourceResponse[])
+  mockGetSourceIngestionStatus.mockResolvedValue([])
 })
 
 describe('SourcesPage', () => {

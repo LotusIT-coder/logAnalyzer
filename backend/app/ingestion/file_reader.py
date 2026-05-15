@@ -19,13 +19,14 @@ from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models import Event, EventIndexOutbox, ParserProfile, RawLog, Source
+from app.ingestion.ecs_normalizer import normalize_ecs_payload
 from app.parser.pipeline import parse_line
 from app.services.source_service import get_source_config_path, resolve_source_path, source_path_is_regex
 
 
 _MAX_LINES_PER_RUN = 10_000  # safety cap per source per ingestion cycle
 _BATCH_SIZE = 200         # rows bulk-inserted and released per partial flush
-_PATH_BASED_SOURCE_TYPES = {"file", "docker"}
+_PATH_BASED_SOURCE_TYPES = {"file", "syslog", "docker", "filebeat", "winlogbeat", "elastic_agent"}
 # If backlog is huge, skip ahead close to EOF to prioritize near-real-time data.
 _MAX_BACKLOG_BYTES_BEFORE_FAST_FORWARD = 20_000_000
 _FAST_FORWARD_TAIL_BYTES = 2_000_000
@@ -499,7 +500,11 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
                         "severity": "info",
                         "service": source.name,
                         "message": stripped,
+                        "ingest_parse_error": True,
+                        "ingest_parse_error_reason": "unparsed_line_fallback",
                     }
+
+                parsed = normalize_ecs_payload(parsed, raw_line=stripped)
 
                 ts_raw = parsed.get("timestamp")
                 if ts_raw and isinstance(ts_raw, str):

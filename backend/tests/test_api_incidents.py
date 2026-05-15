@@ -21,6 +21,10 @@ async def _seed_incident(db: AsyncSession, **kwargs) -> Incident:
         first_seen=kwargs.get("first_seen", now),
         last_seen=kwargs.get("last_seen", now),
         event_count=kwargs.get("event_count", 3),
+        mitre_techniques_json=kwargs.get("mitre_techniques_json"),
+        mitre_tactic=kwargs.get("mitre_tactic"),
+        confidence_score=kwargs.get("confidence_score"),
+        confidence_rationale=kwargs.get("confidence_rationale"),
         tags_json=[],
     )
     db.add(inc)
@@ -140,3 +144,81 @@ class TestIncidentsAPI:
         resp = await client.get(f"/api/v1/incidents/{inc.id}")
         assert resp.status_code == 200
         assert resp.json()["title"] == "disk full"
+
+    async def test_get_incident_returns_confidence_fields(self, client: AsyncClient, db_session: AsyncSession):
+        inc = await _seed_incident(
+            db_session,
+            title="powershell chain",
+            confidence_score=0.93,
+            confidence_rationale="threshold=2/1, sequence_completeness=1.00, signal_strength=0.95",
+        )
+        await db_session.commit()
+
+        resp = await client.get(f"/api/v1/incidents/{inc.id}")
+        assert resp.status_code == 200
+        assert resp.json()["confidence_score"] == 0.93
+        assert "sequence_completeness" in resp.json()["confidence_rationale"]
+
+    async def test_get_incident_returns_mitre_fields(self, client: AsyncClient, db_session: AsyncSession):
+        inc = await _seed_incident(
+            db_session,
+            title="mitre mapped incident",
+            mitre_techniques_json=["T1110", "T1078"],
+            mitre_tactic="credential-access",
+        )
+        await db_session.commit()
+
+        resp = await client.get(f"/api/v1/incidents/{inc.id}")
+        assert resp.status_code == 200
+        assert resp.json()["mitre_techniques"] == ["T1110", "T1078"]
+        assert resp.json()["mitre_tactic"] == "credential-access"
+
+    async def test_get_mitre_coverage_empty(self, client: AsyncClient):
+        resp = await client.get("/api/v1/incidents/mitre-coverage")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["items"] == []
+        assert body["mapped_rules"] == 0
+        assert body["mapped_incidents"] == 0
+
+    async def test_get_mitre_coverage_aggregates_counts(self, client: AsyncClient, db_session: AsyncSession):
+        create_rule_payload = {
+            "name": "MITRE Rule",
+            "description": "Mapped rule",
+            "condition": {"severity": "error"},
+            "mitre_techniques": ["T1110", "T1078"],
+            "mitre_tactic": "credential-access",
+            "threshold": 1,
+            "window_seconds": 300,
+            "severity": "warning",
+            "enabled": True,
+        }
+        rule_resp = await client.post("/api/v1/rules", json=create_rule_payload)
+        assert rule_resp.status_code == 201
+
+        await _seed_incident(
+            db_session,
+            title="mitre-incident-1",
+            mitre_techniques_json=["T1110"],
+            mitre_tactic="credential-access",
+        )
+        await _seed_incident(
+            db_session,
+            title="mitre-incident-2",
+            mitre_techniques_json=["T1110", "T1059.001"],
+            mitre_tactic="execution",
+        )
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/incidents/mitre-coverage")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["mapped_rules"] == 1
+        assert body["mapped_incidents"] == 2
+
+        by_technique = {item["technique_id"]: item for item in body["items"]}
+        assert by_technique["T1110"]["rule_count"] == 1
+        assert by_technique["T1110"]["incident_count"] == 2
+        assert by_technique["T1110"]["tactic"] == "credential-access"
+        assert by_technique["T1059.001"]["rule_count"] == 0
+        assert by_technique["T1059.001"]["incident_count"] == 1

@@ -1,12 +1,18 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getSources, createSource, testSource, patchSource, deleteSource, uploadImport, type SourceResponse, type SourceTestResponse, type UploadImportResponse } from '../lib/requests'
+import { getSources, createSource, testSource, patchSource, deleteSource, uploadImport, getSourceIngestionStatus, type SourceResponse, type SourceTestResponse, type UploadImportResponse, type SourceIngestionStatus } from '../lib/requests'
 import { useEffect, useRef, useState } from 'react'
 import { getApiBase } from '../lib/api'
 import HelpTip from '../components/HelpTip'
 import { getApiErrorMessage } from '../lib/errors'
+import dayjs from 'dayjs'
 
 type UploadResultState = UploadImportResponse | { error: string }
-type SourceKind = 'file' | 'journald'
+type SourceKind = 'file' | 'syslog' | 'journald' | 'docker' | 'filebeat' | 'winlogbeat' | 'elastic_agent'
+const PATH_BASED_SOURCE_TYPES = new Set(['file', 'syslog', 'docker', 'filebeat', 'winlogbeat', 'elastic_agent'])
+
+function isPathBasedSourceType(sourceType: string): boolean {
+  return PATH_BASED_SOURCE_TYPES.has(sourceType)
+}
 
 function isUploadError(result: UploadResultState): result is { error: string } {
   return 'error' in result
@@ -17,6 +23,29 @@ function describeSource(source: SourceResponse) {
     return source.config?.boot_only === false ? 'systemd-journal (alle Boots)' : 'systemd-journal (aktueller Boot)'
   }
   return source.config?.path ?? '-'
+}
+
+function formatSourceHealthAge(timestamp?: string | null): string {
+  if (!timestamp) return 'nie'
+  const seconds = Math.max(0, dayjs().diff(dayjs(timestamp), 'second'))
+  if (seconds < 60) return `${seconds}s`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`
+  return `${Math.floor(seconds / 86400)}d`
+}
+
+function sourceHealthTone(status?: SourceIngestionStatus): { bg: string; fg: string; text: string } {
+  if (!status?.last_seen_at) {
+    return { bg: 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))', fg: 'var(--danger-fg)', text: 'keine Events' }
+  }
+  const ageMs = Date.now() - dayjs(status.last_seen_at).valueOf()
+  if (ageMs > 24 * 3600_000) {
+    return { bg: 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))', fg: 'var(--danger-fg)', text: '>24h alt' }
+  }
+  if (ageMs > 2 * 3600_000) {
+    return { bg: 'color-mix(in srgb, var(--warning-fg) 16%, var(--surface))', fg: 'var(--warning-fg)', text: 'verzögert' }
+  }
+  return { bg: 'color-mix(in srgb, var(--success-fg) 16%, var(--surface))', fg: 'var(--success-fg)', text: 'aktuell' }
 }
 
 // ─── Edit Modal ───────────────────────────────────────────────────────────────
@@ -197,6 +226,17 @@ function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: (
 export default function SourcesPage() {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({ queryKey: ['sources'], queryFn: getSources })
+  const sources: SourceResponse[] = Array.isArray(data) ? data : []
+  const sourceIds = sources.map(source => source.id)
+  const sourceStatus = useQuery({
+    queryKey: ['sources-status', sourceIds.join('|')],
+    queryFn: () => getSourceIngestionStatus(sourceIds),
+    enabled: sourceIds.length > 0,
+    staleTime: 10_000,
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: true,
+  })
+  const sourceStatusById = new Map<string, SourceIngestionStatus>((sourceStatus.data ?? []).map(entry => [entry.source_id, entry]))
   const [showNew, setShowNew] = useState(false)
   const [sourceType, setSourceType] = useState<SourceKind>('file')
   const [name, setName] = useState('')
@@ -259,8 +299,6 @@ export default function SourcesPage() {
     qc.invalidateQueries({ queryKey: ['sources'] })
   }
 
-  const sources: SourceResponse[] = Array.isArray(data) ? data : []
-
   return (
     <div>
       {tailSource && <LiveTailModal source={tailSource} onClose={() => setTailSource(null)} />}
@@ -316,15 +354,20 @@ export default function SourcesPage() {
             <div style={styles.field}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                 <label style={styles.label}>Typ</label>
-                <HelpTip content="Datei liest klassische Logdateien vom Dateisystem. Journald liest ueber journalctl direkt aus dem systemd-Journal des Hosts." ariaLabel="Quelltyp erklaeren" />
+                <HelpTip content="Pfadbasierte Quellen lesen Logdateien vom Dateisystem (z.B. file, syslog, filebeat, winlogbeat). Journald liest ueber journalctl direkt aus dem systemd-Journal des Hosts." ariaLabel="Quelltyp erklaeren" />
               </div>
               <select value={sourceType} onChange={e => setSourceType(e.target.value as SourceKind)} style={styles.input}>
                 <option value="file">Datei</option>
+                <option value="syslog">Syslog-Datei</option>
+                <option value="docker">Docker-JSON-Log</option>
+                <option value="filebeat">Filebeat-Log</option>
+                <option value="winlogbeat">Winlogbeat-Log</option>
+                <option value="elastic_agent">Elastic Agent-Log</option>
                 <option value="journald">Journald</option>
               </select>
             </div>
           </div>
-          {sourceType === 'file' ? (
+          {sourceType !== 'journald' ? (
             <>
               <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
                 <div style={{ ...styles.field, flex: 1 }}>
@@ -347,7 +390,7 @@ export default function SourcesPage() {
             </label>
           )}
           <div style={styles.formActions}>
-            <button onClick={handleCreate} disabled={saving || !name || (sourceType === 'file' && !path)} style={styles.saveBtn}>
+            <button onClick={handleCreate} disabled={saving || !name || (sourceType !== 'journald' && !path)} style={styles.saveBtn}>
               {saving ? 'Speichere...' : 'Erstellen'}
             </button>
             {sourceType === 'file' && (
@@ -402,9 +445,9 @@ export default function SourcesPage() {
                 <div style={{ display: 'flex', gap: '0.4rem' }}>
                   <button
                     onClick={() => setTailSource(src)}
-                    disabled={src.type !== 'file'}
-                    style={src.type === 'file' ? styles.tailBtn : styles.tailBtnDisabled}
-                    title={src.type === 'file' ? 'Live-Tail oeffnen' : 'Live-Ansicht nur fuer Datei-Quellen'}
+                    disabled={!isPathBasedSourceType(src.type)}
+                    style={isPathBasedSourceType(src.type) ? styles.tailBtn : styles.tailBtnDisabled}
+                    title={isPathBasedSourceType(src.type) ? 'Live-Tail oeffnen' : 'Live-Ansicht nur fuer pfadbasierte Quellen'}
                   >
                     Live-Ansicht
                   </button>
@@ -426,6 +469,14 @@ export default function SourcesPage() {
                 </div>
               </div>
               <div style={styles.path}>{describeSource(src)}</div>
+              <div style={styles.healthGrid}>
+                <div style={{ ...styles.healthBadge, background: sourceHealthTone(sourceStatusById.get(src.id)).bg, color: sourceHealthTone(sourceStatusById.get(src.id)).fg }}>
+                  {sourceHealthTone(sourceStatusById.get(src.id)).text}
+                </div>
+                <div style={styles.healthMetric}>Events/min: {sourceStatusById.get(src.id)?.events_per_min ?? 0}</div>
+                <div style={styles.healthMetric}>Parse Errors: {sourceStatusById.get(src.id)?.parse_error_count ?? 0}</div>
+                <div style={styles.healthMetric}>Last Seen: {formatSourceHealthAge(sourceStatusById.get(src.id)?.last_seen_at)}</div>
+              </div>
               {testResults[src.id] && (
                 <div style={{ marginTop: '0.5rem', fontSize: '0.82rem', color: testResults[src.id].ok ? 'var(--success-fg)' : 'var(--danger-fg)' }}>
                   {testResults[src.id].ok
@@ -468,6 +519,9 @@ const styles: Record<string, React.CSSProperties> = {
   sectionTitle: { color: 'var(--muted-fg)', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' },
   list: { display: 'flex', flexDirection: 'column', gap: '0.75rem' },
   card: { background: 'var(--surface)', borderRadius: 10, padding: '1rem 1.25rem', border: '1px solid var(--border)' },
+  healthGrid: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', marginTop: '0.6rem' },
+  healthBadge: { borderRadius: 999, padding: '0.15rem 0.55rem', fontSize: '0.72rem', fontWeight: 700 },
+  healthMetric: { color: 'var(--muted-fg)', fontSize: '0.77rem' },
   cardTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.5rem' },
   srcName: { fontWeight: 600, fontSize: '0.95rem' },
   badge: { borderRadius: 4, padding: '0.12rem 0.5rem', fontSize: '0.72rem', fontWeight: 700, color: '#fff' },

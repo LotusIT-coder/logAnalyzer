@@ -60,6 +60,42 @@ class TestSyslogHeaderParsing:
 
 @pytest.mark.asyncio
 class TestSpecializedSourceIngestion:
+    async def test_filebeat_source_normalizes_ecs_fields(self, db_session, tmp_path):
+        log_path = tmp_path / "filebeat-json.log"
+        log_path.write_text(
+            json.dumps({
+                "@timestamp": "2026-05-06T10:02:00+00:00",
+                "event": {"code": "4625"},
+                "host": {"name": "srv-auth-02"},
+                "user": {"name": "admin"},
+                "process": {"command_line": "powershell.exe -enc AAAA"},
+                "source": {"ip": "10.0.0.8"},
+                "log": {"level": "warning"},
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        source = Source(
+            name="filebeat-auth",
+            type="filebeat",
+            config_json={"path": str(log_path)},
+            enabled=True,
+        )
+        db_session.add(source)
+        await db_session.flush()
+
+        stats = await ingest_source(db_session, source)
+
+        assert stats["events_created"] == 1
+        result = await db_session.execute(select(Event).where(Event.source_id == source.id))
+        event = result.scalar_one()
+        assert event.host == "srv-auth-02"
+        assert event.event_type == "4625"
+        assert event.fields_json["username"] == "admin"
+        assert event.fields_json["source_ip"] == "10.0.0.8"
+        assert event.fields_json["process_command_line"] == "powershell.exe -enc AAAA"
+        assert event.message
+
     async def test_docker_source_ingests_json_log_file(self, db_session, tmp_path):
         log_path = tmp_path / "container-json.log"
         log_path.write_text(

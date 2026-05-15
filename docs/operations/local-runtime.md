@@ -105,6 +105,22 @@ curl -i "http://localhost:8000/api/v1/events?limit=1&provider=elastic"
 
 Check response header `X-Events-Provider`.
 
+Seed deterministic demo sources and events for Elastic showcase:
+
+```bash
+./scripts/demo-seed-elastic-sources.sh
+```
+
+Prerequisite: backend API is running on `http://localhost:8000` (or set `LOGANALYZER_API_BASE`).
+
+Optional with token and custom API base URL:
+
+```bash
+LOGANALYZER_TOKEN=<token> LOGANALYZER_API_BASE=http://localhost:8000/api/v1 ./scripts/demo-seed-elastic-sources.sh
+```
+
+The script writes sample files under `backend/data/uploads/demo-seed-elastic/`, ensures the four sources exist (`filebeat`, `winlogbeat`, `syslog`, `elastic_agent`) and triggers `/api/v1/ingestion/run`.
+
 Backfill historical events into outbox:
 
 ```bash

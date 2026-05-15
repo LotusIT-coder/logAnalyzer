@@ -95,14 +95,25 @@ def test_source(source: Source) -> tuple[bool, str]:
 
 
 def get_source_config_path(source: Source) -> str:
+    paths = get_source_config_paths(source)
+    return paths[0] if paths else ""
+
+
+def get_source_config_paths(source: Source) -> list[str]:
     cfg = source.config_json or {}
-    return (
-        cfg.get("path")
-        or cfg.get("log_path")
-        or cfg.get("docker_log_path")
-        or cfg.get("journal_path")
-        or ""
-    )
+    values = [
+        cfg.get("path"),
+        cfg.get("log_path"),
+        cfg.get("docker_log_path"),
+        cfg.get("journal_path"),
+    ]
+    paths: list[str] = []
+    for value in values:
+        if not isinstance(value, str) or not value:
+            continue
+        if value not in paths:
+            paths.append(value)
+    return paths
 
 
 def source_path_is_regex(source: Source) -> bool:
@@ -117,40 +128,50 @@ def resolve_source_path(source: Source) -> tuple[Optional[str], Optional[str]]:
     filename inside its directory and the most recently modified matching file is
     returned.
     """
-    raw_path = get_source_config_path(source)
-    if not raw_path:
+    candidate_paths = get_source_config_paths(source)
+    if not candidate_paths:
         return None, "config.path is missing."
 
     if not source_path_is_regex(source):
-        if not os.path.exists(raw_path):
-            return None, f"File not found: {raw_path}"
-        return raw_path, None
+        for candidate_path in candidate_paths:
+            if os.path.exists(candidate_path):
+                return candidate_path, None
+        return None, f"File not found: {candidate_paths[0]}"
 
-    base_dir = os.path.dirname(raw_path) or "."
-    name_pattern = os.path.basename(raw_path)
-    if not name_pattern:
-        return None, f"Invalid regex path (missing filename pattern): {raw_path}"
-    if not os.path.isdir(base_dir):
-        return None, f"Directory not found: {base_dir}"
+    last_error: str | None = None
+    for raw_path in candidate_paths:
+        base_dir = os.path.dirname(raw_path) or "."
+        name_pattern = os.path.basename(raw_path)
+        if not name_pattern:
+            last_error = f"Invalid regex path (missing filename pattern): {raw_path}"
+            continue
+        if not os.path.isdir(base_dir):
+            last_error = f"Directory not found: {base_dir}"
+            continue
 
-    try:
-        compiled = re.compile(name_pattern)
-    except re.error as exc:
-        return None, f"Invalid regex in path '{raw_path}': {exc}"
+        try:
+            compiled = re.compile(name_pattern)
+        except re.error as exc:
+            last_error = f"Invalid regex in path '{raw_path}': {exc}"
+            continue
 
-    matches: list[tuple[str, float]] = []
-    try:
-        with os.scandir(base_dir) as entries:
-            for entry in entries:
-                if not entry.is_file():
-                    continue
-                if compiled.fullmatch(entry.name):
-                    matches.append((entry.path, entry.stat().st_mtime))
-    except OSError as exc:
-        return None, f"Failed to list directory '{base_dir}': {exc}"
+        matches: list[tuple[str, float]] = []
+        try:
+            with os.scandir(base_dir) as entries:
+                for entry in entries:
+                    if not entry.is_file():
+                        continue
+                    if compiled.fullmatch(entry.name):
+                        matches.append((entry.path, entry.stat().st_mtime))
+        except OSError as exc:
+            last_error = f"Failed to list directory '{base_dir}': {exc}"
+            continue
 
-    if not matches:
-        return None, f"No files match regex path: {raw_path}"
+        if not matches:
+            last_error = f"No files match regex path: {raw_path}"
+            continue
 
-    matches.sort(key=lambda item: (item[1], item[0]), reverse=True)
-    return matches[0][0], None
+        matches.sort(key=lambda item: (item[1], item[0]), reverse=True)
+        return matches[0][0], None
+
+    return None, last_error or f"No files match regex path: {candidate_paths[0]}"

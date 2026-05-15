@@ -7,7 +7,15 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
-SourceType = Literal["file", "syslog", "journald", "docker"]
+SourceType = Literal[
+    "file",
+    "syslog",
+    "journald",
+    "docker",
+    "filebeat",
+    "winlogbeat",
+    "elastic_agent",
+]
 
 
 class SourceResponse(BaseModel):
@@ -50,6 +58,9 @@ class SourceIngestionStatusResponse(BaseModel):
     last_ingested_at: Optional[datetime] = None
     last_event_timestamp: Optional[datetime] = None
     last_event_created_at: Optional[datetime] = None
+    last_seen_at: Optional[datetime] = None
+    events_per_min: int = 0
+    parse_error_count: int = 0
 
 
 class SourceIngestionStatusListResponse(BaseModel):

@@ -3,15 +3,17 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.db.session import get_session_factory
-from app.domain.models import Event, Source
+from app.domain.models import Event, Source, SourceIngestionStatus
 from app.schemas.source import (
     SourceCreateRequest,
     SourceIngestionStatusListResponse,
@@ -25,6 +27,90 @@ from app.services import source_service
 from app.services.source_service import DuplicateSourceNameError
 
 router = APIRouter(prefix="/sources", tags=["Sources"])
+_TAILABLE_PATH_SOURCE_TYPES = {"file", "syslog", "docker", "filebeat", "winlogbeat", "elastic_agent"}
+
+
+async def _compute_and_upsert_source_status(session: AsyncSession, source_id: str) -> None:
+    now = datetime.now(timezone.utc)
+    one_minute_ago = now - timedelta(minutes=1)
+    one_hour_ago = now - timedelta(hours=1)
+
+    last_event_timestamp_result = await session.execute(
+        select(Event.timestamp)
+        .where(Event.source_id == source_id)
+        .order_by(Event.timestamp.desc())
+        .limit(1)
+    )
+    last_event_timestamp = last_event_timestamp_result.scalar_one_or_none()
+
+    last_event_created_result = await session.execute(
+        select(Event.created_at)
+        .where(Event.source_id == source_id)
+        .order_by(Event.created_at.desc())
+        .limit(1)
+    )
+    last_event_created_at = last_event_created_result.scalar_one_or_none()
+
+    events_per_min_result = await session.execute(
+        select(func.count(Event.id)).where(
+            Event.source_id == source_id,
+            Event.timestamp >= one_minute_ago,
+        )
+    )
+    events_per_min = int(events_per_min_result.scalar_one() or 0)
+
+    parse_error_count_result = await session.execute(
+        select(func.count(Event.id)).where(
+            Event.source_id == source_id,
+            Event.timestamp >= one_hour_ago,
+            Event.fields_json.contains({"ingest_parse_error": True}),
+        )
+    )
+    parse_error_count = int(parse_error_count_result.scalar_one() or 0)
+
+    upsert_stmt = pg_insert(SourceIngestionStatus).values(
+        source_id=source_id,
+        last_ingested_at=now,
+        last_event_timestamp=last_event_timestamp,
+        last_event_created_at=last_event_created_at,
+        last_seen_at=last_event_timestamp,
+        events_per_min=events_per_min,
+        parse_error_count=parse_error_count,
+        updated_at=now,
+    )
+    upsert_stmt = upsert_stmt.on_conflict_do_update(
+        index_elements=[SourceIngestionStatus.source_id],
+        set_={
+            "last_ingested_at": now,
+            "last_event_timestamp": last_event_timestamp,
+            "last_event_created_at": last_event_created_at,
+            "last_seen_at": last_event_timestamp,
+            "events_per_min": events_per_min,
+            "parse_error_count": parse_error_count,
+            "updated_at": now,
+        },
+    )
+    await session.execute(upsert_stmt)
+
+
+async def _select_source_status_rows(session: AsyncSession, ids: list[str] | None):
+    stmt = (
+        select(
+            Source.id,
+            SourceIngestionStatus.last_ingested_at,
+            SourceIngestionStatus.last_event_timestamp,
+            SourceIngestionStatus.last_event_created_at,
+            SourceIngestionStatus.last_seen_at,
+            SourceIngestionStatus.events_per_min,
+            SourceIngestionStatus.parse_error_count,
+        )
+        .outerjoin(SourceIngestionStatus, SourceIngestionStatus.source_id == Source.id)
+        .order_by(Source.created_at)
+    )
+    if ids is not None:
+        stmt = stmt.where(Source.id.in_(ids))
+    result = await session.execute(stmt)
+    return list(result)
 
 
 @router.get("/status", response_model=SourceIngestionStatusListResponse)
@@ -40,34 +126,25 @@ async def source_status(
         if not ids:
             return SourceIngestionStatusListResponse(items=[])
 
-    # Correlated subquery keeps the plan index-friendly even for very large
-    # per-source partitions (e.g. syslog/journald with >100M rows).
-    last_event_ts = (
-        select(Event.timestamp)
-        .where(Event.source_id == Source.id)
-        .order_by(Event.timestamp.desc())
-        .limit(1)
-        .scalar_subquery()
-    )
+    rows = await _select_source_status_rows(session, ids)
+    missing_source_ids = [str(row.id) for row in rows if row.last_ingested_at is None]
+    if missing_source_ids:
+        for source_id in missing_source_ids:
+            await _compute_and_upsert_source_status(session, source_id)
+        await session.commit()
+        rows = await _select_source_status_rows(session, ids)
 
-    stmt = (
-        select(
-            Source.id,
-            last_event_ts.label("last_event_timestamp"),
-        )
-        .order_by(Source.created_at)
-    )
-    if ids is not None:
-        stmt = stmt.where(Source.id.in_(ids))
-
-    result = await session.execute(stmt)
     items = [
         SourceIngestionStatusResponse(
             source_id=str(row.id),
-            last_ingested_at=row.last_event_timestamp,
+            last_ingested_at=row.last_ingested_at,
             last_event_timestamp=row.last_event_timestamp,
+            last_event_created_at=row.last_event_created_at,
+            last_seen_at=row.last_seen_at,
+            events_per_min=int(row.events_per_min or 0),
+            parse_error_count=int(row.parse_error_count or 0),
         )
-        for row in result
+        for row in rows
     ]
     return SourceIngestionStatusListResponse(items=items)
 
@@ -149,14 +226,14 @@ async def tail_source(
         source = await source_service.get_source(session, source_id)
         if source is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found.")
-        if source.type == "file":
+        if source.type in _TAILABLE_PATH_SOURCE_TYPES:
             resolved_path, resolve_err = source_service.resolve_source_path(source)
         elif source.type == "journald":
             resolved_path, resolve_err = "", None
         else:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Live-tail only supported for file and journald sources.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Live-tail only supported for path-based and journald sources.")
     # Session is now closed — the generators below are stream-only.
-    if source.type == "file":
+    if source.type in _TAILABLE_PATH_SOURCE_TYPES:
         if resolve_err or not resolved_path:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=resolve_err or "File not found.")
         if not os.access(resolved_path, os.R_OK):
@@ -255,7 +332,7 @@ async def tail_source(
                     process.kill()
 
     return StreamingResponse(
-        _generator() if source.type == "file" else _journald_generator(),
+        _generator() if source.type in _TAILABLE_PATH_SOURCE_TYPES else _journald_generator(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

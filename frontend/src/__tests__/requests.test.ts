@@ -30,6 +30,7 @@ import {
   deleteSource,
   getEvents,
   getIncidents,
+  getMitreCoverage,
   patchIncident,
   getRules,
   createRule,
@@ -119,6 +120,20 @@ describe('getIncidents', () => {
     const result = await getIncidents()
     expect(mockGet).toHaveBeenCalledWith('/incidents', { params: undefined })
     expect(result).toEqual({ items: [] })
+  })
+})
+
+describe('getMitreCoverage', () => {
+  test('returns MITRE coverage summary', async () => {
+    mockGet.mockResolvedValueOnce(mockApiResponse({
+      items: [{ technique_id: 'T1110', tactic: 'credential-access', rule_count: 1, incident_count: 2 }],
+      mapped_rules: 1,
+      mapped_incidents: 2,
+    }))
+    const result = await getMitreCoverage()
+    expect(mockGet).toHaveBeenCalledWith('/incidents/mitre-coverage')
+    expect(result.mapped_rules).toBe(1)
+    expect(result.items[0].technique_id).toBe('T1110')
   })
 })
 

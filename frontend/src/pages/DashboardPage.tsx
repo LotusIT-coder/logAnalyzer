@@ -2,6 +2,7 @@ import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-qu
 import {
   getEvents,
   getErrorRate,
+  getMitreCoverage,
   getSocAnalystStatus,
   getSourceIngestionStatus,
   getTimeseries,
@@ -172,6 +173,7 @@ export default function DashboardPage() {
   const [ingestError, setIngestError] = useState<string | null>(null)
   const [socToggleBusy, setSocToggleBusy] = useState(false)
   const [socToggleError, setSocToggleError] = useState<string | null>(null)
+  const [manualRefreshing, setManualRefreshing] = useState(false)
   const [uploadResult, setUploadResult] = useState<UploadResultState | null>(null)
   const [topErrorsSeverities, setTopErrorsSeverities] = useState<string[]>(['error', 'critical'])
   const [topErrorDetail, setTopErrorDetail] = useState<TopErrorDetailTarget | null>(null)
@@ -210,7 +212,7 @@ export default function DashboardPage() {
           .filter(source => source.kind === 'preset' || source.kind === 'custom')
           .map(source => ({ path: source.path, origin: source.kind === 'preset' ? 'preset' as const : 'custom' as const })),
       })
-      refetchAll()
+      void refetchAll()
     } catch (error: unknown) {
       setIngestError(getApiErrorMessage(error, 'Ingestion fehlgeschlagen.'))
     } finally {
@@ -332,7 +334,32 @@ export default function DashboardPage() {
     refetchIntervalInBackground: true,
   })
 
-  function refetchAll() { ts.refetch(); errs.refetch(); svcs.refetch(); rate.refetch(); sourceStatus.refetch() }
+  async function refetchAll() {
+    setManualRefreshing(true)
+    try {
+      await Promise.allSettled([
+        ts.refetch(),
+        errs.refetch(),
+        svcs.refetch(),
+        rate.refetch(),
+        sourceStatus.refetch(),
+        mitreCoverage.refetch(),
+        socAnalyst.refetch(),
+      ])
+    } finally {
+      setManualRefreshing(false)
+    }
+  }
+
+  const mitreCoverage = useQuery({
+    queryKey: ['mitre-coverage'],
+    queryFn: getMitreCoverage,
+    enabled: selectedSources.length > 0,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+    refetchInterval: drilldownRefreshMs,
+    refetchIntervalInBackground: true,
+  })
 
   async function toggleSocAnalystMonitoring() {
     const currentlyEnabled = !!socAnalyst.data?.enabled
@@ -393,7 +420,7 @@ export default function DashboardPage() {
     return () => window.clearInterval(timer)
   }, [])
 
-  const isAnyQueryLoading = ts.isLoading || errs.isLoading || svcs.isLoading || rate.isLoading || sourceStatus.isLoading
+  const isAnyQueryLoading = ts.isLoading || errs.isLoading || svcs.isLoading || rate.isLoading || sourceStatus.isLoading || mitreCoverage.isLoading || socAnalyst.isLoading
 
   void clockTick
 
@@ -412,8 +439,8 @@ export default function DashboardPage() {
           <h2 style={styles.h2}>Dashboard</h2>
           <HelpTip content="Hier waehlst du Quellen und Zeitfenster fuer den aktuellen Analysekontext. Alle Metriken auf dieser Seite reagieren direkt auf diese Auswahl." ariaLabel="Dashboard erklaeren" />
         </div>
-        <button onClick={refetchAll} disabled={isAnyQueryLoading} style={styles.refBtn}>
-          {isAnyQueryLoading ? 'Aktualisiere...' : 'Aktualisieren'}
+        <button onClick={() => void refetchAll()} disabled={isAnyQueryLoading || manualRefreshing} style={styles.refBtn}>
+          {(isAnyQueryLoading || manualRefreshing) ? 'Aktualisiere...' : 'Aktualisieren'}
         </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
@@ -690,6 +717,40 @@ export default function DashboardPage() {
                   {!svcs.data.items.length && <div style={{ color: 'var(--muted-fg)', fontSize: '0.85rem' }}>Keine Service-Daten</div>}
                 </ol>
               ) : <Spinner />}
+            </Panel>
+
+            <Panel title="MITRE Coverage" help="Zeigt, welche MITRE-Techniken aktuell durch Regeln und Incidents abgedeckt sind.">
+              {mitreCoverage.data ? (
+                <>
+                  <div style={styles.panelMetaRow}>
+                    <span style={styles.panelMetaLabel}>Mapped Rules:</span>
+                    <span style={styles.panelMetaValue}>{mitreCoverage.data.mapped_rules}</span>
+                  </div>
+                  <div style={styles.panelMetaRow}>
+                    <span style={styles.panelMetaLabel}>Mapped Incidents:</span>
+                    <span style={styles.panelMetaValue}>{mitreCoverage.data.mapped_incidents}</span>
+                  </div>
+                  <ol style={styles.ol}>
+                    {mitreCoverage.data.items.slice(0, 8).map(item => (
+                      <li key={item.technique_id} style={styles.li}>
+                        <span style={styles.count}>{item.incident_count}</span>
+                        <span style={styles.msg}>
+                          {item.technique_id}
+                          {item.tactic ? ` (${item.tactic})` : ''}
+                          {` · rules ${item.rule_count}`}
+                        </span>
+                      </li>
+                    ))}
+                    {!mitreCoverage.data.items.length && (
+                      <div style={{ color: 'var(--muted-fg)', fontSize: '0.85rem' }}>Keine MITRE-Mappings</div>
+                    )}
+                  </ol>
+                </>
+              ) : mitreCoverage.isError ? (
+                <PanelError error={mitreCoverage.error} />
+              ) : (
+                <Spinner />
+              )}
             </Panel>
           </div>
         </>

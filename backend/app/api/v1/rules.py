@@ -38,6 +38,10 @@ async def create_rule(
         name=body.name,
         description=body.description,
         condition_json=body.condition,
+        sequence_json=body.sequence,
+        group_by_entity=body.group_by_entity,
+        mitre_techniques_json=body.mitre_techniques,
+        mitre_tactic=body.mitre_tactic,
         threshold=body.threshold,
         window_seconds=body.window_seconds,
         severity=body.severity,
@@ -66,6 +70,14 @@ async def patch_rule(
         rule.description = body.description
     if body.condition is not None:
         rule.condition_json = body.condition
+    if body.sequence is not None:
+        rule.sequence_json = body.sequence
+    if body.group_by_entity is not None:
+        rule.group_by_entity = body.group_by_entity
+    if body.mitre_techniques is not None:
+        rule.mitre_techniques_json = body.mitre_techniques
+    if body.mitre_tactic is not None:
+        rule.mitre_tactic = body.mitre_tactic
     if body.threshold is not None:
         rule.threshold = body.threshold
     if body.window_seconds is not None:

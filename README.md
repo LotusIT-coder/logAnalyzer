@@ -108,6 +108,20 @@ Empfehlung fuer den Demo-Fluss:
 3. Outbox-Indexer schreibt nach Elasticsearch
 4. Event ist in Elasticsearch (und optional Kibana) sichtbar
 
+Deterministischer One-Command-Seed fuer Demo-Daten (filebeat, winlogbeat, syslog, elastic_agent):
+
+```bash
+./scripts/demo-seed-elastic-sources.sh
+```
+
+Voraussetzung: Backend-API laeuft auf `http://localhost:8000` (oder `LOGANALYZER_API_BASE` setzen).
+
+Optional mit Auth-Token oder anderem API-Endpoint:
+
+```bash
+LOGANALYZER_TOKEN=<token> LOGANALYZER_API_BASE=http://localhost:8000/api/v1 ./scripts/demo-seed-elastic-sources.sh
+```
+
 ### 2) Detection Correlation zeigen (sehr wichtig)
 
 Nicht nur Einzel-Events, sondern Ketten und Sequenzen zeigen:
@@ -124,6 +138,16 @@ Das bringt in Reviews einen starken Pluspunkt. Empfohlene Bildserie:
 1. Discover-Ansicht mit gefilterten Security-Events
 2. Dashboard mit Zeitreihe + Top Hosts/Services
 3. Drilldown von Dashboard zu konkreten Event-Dokumenten
+
+Optional bereitgestellt (Sprint C-01):
+
+- Saved Objects Export: `docs/kibana/loganalyzer-security-demo.ndjson`
+- Import-Anleitung: `docs/operations/kibana-saved-objects.md`
+
+Optional bereitgestellt (Sprint C-02/C-03):
+
+- Incident -> Kibana Discover Deep-Link in der Incidents-Ansicht (aktivierbar via `VITE_KIBANA_BASE_URL` oder `localStorage['kibana.baseUrl']`)
+- Screenshot-Runbook: `docs/operations/kibana-demo-screenshots.md`
 
 ### 4) MITRE Mapping als Kette darstellen
 
@@ -752,6 +776,20 @@ Recommended demo flow:
 2. Event is persisted in LogAnalyzer (PostgreSQL + outbox)
 3. Outbox indexer writes to Elasticsearch
 4. Event is visible in Elasticsearch (and optionally Kibana)
+
+Deterministic one-command demo seed for filebeat, winlogbeat, syslog, and elastic_agent:
+
+```bash
+./scripts/demo-seed-elastic-sources.sh
+```
+
+Prerequisite: backend API is running on `http://localhost:8000` (or set `LOGANALYZER_API_BASE`).
+
+Optional with auth token or custom API endpoint:
+
+```bash
+LOGANALYZER_TOKEN=<token> LOGANALYZER_API_BASE=http://localhost:8000/api/v1 ./scripts/demo-seed-elastic-sources.sh
+```
 
 ### 2) Detection correlation (critical)
 

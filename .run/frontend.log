@@ -3,6 +3,7 @@
 > vite --host 127.0.0.1 --port 5173
 
 
-  VITE v8.0.10  ready in 325 ms
+  VITE v8.0.10  ready in 452 ms
 
   ➜  Local:   http://127.0.0.1:5173/
+22:06:40 [vite] (client) hmr update /src/pages/DashboardPage.tsx

@@ -97,7 +97,17 @@ async def lifespan(app: FastAPI):
     # Start SOC analyst (optional – can be toggled at runtime via API)
     soc_analyst: SOCAnalystService | None = None
     if app.state.soc_analyst_enabled:
-        model_ok, installed_models = await is_ollama_model_available(settings.soc_analyst_model)
+        try:
+            model_ok, installed_models = await is_ollama_model_available(settings.soc_analyst_model)
+        except Exception:
+            app.state.soc_analyst_enabled = False
+            app.state.soc_analyst = None
+            logger.warning(
+                "soc_analyst_model_check_failed",
+                configured_model=settings.soc_analyst_model,
+                exc_info=True,
+            )
+            model_ok, installed_models = False, []
         if not model_ok:
             app.state.soc_analyst_enabled = False
             app.state.soc_analyst = None

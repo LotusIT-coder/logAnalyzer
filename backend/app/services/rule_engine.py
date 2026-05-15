@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import structlog
 from sqlalchemy import func, or_, select
@@ -17,6 +17,162 @@ logger = structlog.get_logger(__name__)
 # Safety cap: never load more than this many Event ORM objects per rule evaluation.
 # Only used when a rule has a JSONB "field" condition that cannot be pushed to SQL.
 _RULE_EVENT_LIMIT = 10_000
+
+
+def _event_group_value(event: Event, group_by_entity: str | None) -> str:
+    if not group_by_entity:
+        return "__all__"
+
+    values: list[str] = []
+    for raw_key in str(group_by_entity).split(","):
+        key = raw_key.strip()
+        if not key:
+            continue
+        if hasattr(event, key):
+            value = getattr(event, key)
+        else:
+            value = (event.fields_json or {}).get(key)
+        values.append(str(value) if value not in {None, ""} else "__missing__")
+
+    return "|".join(values) if values else "__all__"
+
+
+def _evaluate_sequence_matches(
+    events: list[Event],
+    sequence: list[dict[str, Any]],
+    group_by_entity: str | None,
+) -> tuple[int, datetime | None, datetime | None]:
+    if not sequence:
+        return 0, None, None
+
+    grouped: dict[str, list[Event]] = {}
+    for event in sorted(events, key=lambda item: item.timestamp):
+        grouped.setdefault(_event_group_value(event, group_by_entity), []).append(event)
+
+    matched_sequences: list[list[Event]] = []
+    for grouped_events in grouped.values():
+        step_index = 0
+        current_sequence: list[Event] = []
+
+        for event in grouped_events:
+            current_condition = sequence[step_index]
+            if _matches_condition(event, current_condition):
+                current_sequence.append(event)
+                step_index += 1
+                if step_index == len(sequence):
+                    matched_sequences.append(list(current_sequence))
+                    current_sequence = []
+                    step_index = 0
+                continue
+
+            if current_sequence and _matches_condition(event, sequence[0]):
+                current_sequence = [event]
+                step_index = 1
+
+    if not matched_sequences:
+        return 0, None, None
+
+    first_seen = min(sequence_events[0].timestamp for sequence_events in matched_sequences)
+    last_seen = max(sequence_events[-1].timestamp for sequence_events in matched_sequences)
+    return len(matched_sequences), first_seen, last_seen
+
+
+def _evaluate_geo_anomaly_matches(
+    events: list[Event],
+    condition: dict[str, Any],
+) -> tuple[int, datetime | None, datetime | None]:
+    entity_field = str(condition.get("entity_field") or "username")
+    location_fields = condition.get("location_fields") or ["country", "asn"]
+    if not isinstance(location_fields, list) or not location_fields:
+        location_fields = ["country", "asn"]
+
+    min_history_events = int(condition.get("min_history_events") or 3)
+    min_distinct_locations = int(condition.get("min_distinct_locations") or 1)
+    baseline_exclude_recent = int(condition.get("baseline_exclude_recent") or 1)
+
+    grouped: dict[str, list[Event]] = {}
+    for event in sorted(events, key=lambda item: item.timestamp):
+        entity_value = (event.fields_json or {}).get(entity_field)
+        if entity_value in {None, ""}:
+            continue
+        grouped.setdefault(str(entity_value), []).append(event)
+
+    anomalies: list[Event] = []
+    for grouped_events in grouped.values():
+        if len(grouped_events) < max(min_history_events + baseline_exclude_recent, min_history_events + 1):
+            continue
+
+        baseline_events = grouped_events[:-baseline_exclude_recent] if baseline_exclude_recent > 0 else grouped_events[:-1]
+        recent_events = grouped_events[-baseline_exclude_recent:] if baseline_exclude_recent > 0 else grouped_events[-1:]
+
+        if len(baseline_events) < min_history_events:
+            continue
+
+        baseline_locations: set[str] = set()
+        for baseline in baseline_events:
+            parts: list[str] = []
+            for field in location_fields:
+                value = (baseline.fields_json or {}).get(str(field))
+                parts.append(str(value) if value not in {None, ""} else "__missing__")
+            baseline_locations.add("|".join(parts))
+
+        if len(baseline_locations) < min_distinct_locations:
+            continue
+
+        for recent in recent_events:
+            parts: list[str] = []
+            for field in location_fields:
+                value = (recent.fields_json or {}).get(str(field))
+                parts.append(str(value) if value not in {None, ""} else "__missing__")
+            location_key = "|".join(parts)
+            if location_key not in baseline_locations:
+                anomalies.append(recent)
+
+    if not anomalies:
+        return 0, None, None
+
+    return len(anomalies), min(event.timestamp for event in anomalies), max(event.timestamp for event in anomalies)
+
+
+def _calculate_correlation_confidence(rule: Rule, matched_count: int) -> tuple[float, str]:
+    threshold_factor = min(1.0, matched_count / max(rule.threshold, 1))
+
+    if rule.sequence_json:
+        sequence_completeness = 1.0
+    elif isinstance(rule.condition_json, dict) and rule.condition_json.get("type") == "geo_anomaly":
+        sequence_completeness = 0.9
+    else:
+        sequence_completeness = 0.6
+
+    severity_weight = {
+        "critical": 1.0,
+        "high": 0.9,
+        "warning": 0.7,
+        "medium": 0.7,
+        "low": 0.5,
+        "info": 0.4,
+    }
+    signal_strength = severity_weight.get(str(rule.severity).lower(), 0.6)
+
+    condition = rule.condition_json if isinstance(rule.condition_json, dict) else {}
+    if isinstance(condition.get("message_contains_any"), list) and len(condition["message_contains_any"]) >= 3:
+        signal_strength = min(1.0, signal_strength + 0.1)
+    if rule.sequence_json and len(rule.sequence_json) >= 3:
+        signal_strength = min(1.0, signal_strength + 0.1)
+    if rule.group_by_entity:
+        signal_strength = min(1.0, signal_strength + 0.05)
+
+    confidence = round(
+        (0.35 * threshold_factor) + (0.35 * sequence_completeness) + (0.30 * signal_strength),
+        2,
+    )
+
+    rationale = (
+        f"threshold={matched_count}/{rule.threshold}, "
+        f"sequence_completeness={sequence_completeness:.2f}, "
+        f"signal_strength={signal_strength:.2f}"
+    )
+    return confidence, rationale
 
 
 def _build_condition_clauses(condition: dict) -> list:
@@ -122,6 +278,52 @@ async def evaluate_rule(
     now = reference_time or datetime.now(timezone.utc)
     window_start = now - timedelta(seconds=rule.window_seconds)
 
+    if isinstance(rule.condition_json, dict) and rule.condition_json.get("type") == "geo_anomaly":
+        stmt = (
+            select(Event)
+            .where(Event.timestamp >= window_start, Event.timestamp <= now)
+            .order_by(Event.timestamp.asc())
+            .limit(_RULE_EVENT_LIMIT)
+        )
+        result = await session.execute(stmt)
+        events = result.scalars().all()
+
+        if len(events) == _RULE_EVENT_LIMIT:
+            logger.warning(
+                "rule_event_limit_reached",
+                rule_id=rule.id,
+                rule_name=rule.name,
+                limit=_RULE_EVENT_LIMIT,
+            )
+
+        matched_count, _, _ = _evaluate_geo_anomaly_matches(events, rule.condition_json)
+        return matched_count, matched_count >= rule.threshold
+
+    if rule.sequence_json:
+        stmt = (
+            select(Event)
+            .where(Event.timestamp >= window_start, Event.timestamp <= now)
+            .order_by(Event.timestamp.asc())
+            .limit(_RULE_EVENT_LIMIT)
+        )
+        result = await session.execute(stmt)
+        events = result.scalars().all()
+
+        if len(events) == _RULE_EVENT_LIMIT:
+            logger.warning(
+                "rule_event_limit_reached",
+                rule_id=rule.id,
+                rule_name=rule.name,
+                limit=_RULE_EVENT_LIMIT,
+            )
+
+        matched_count, _, _ = _evaluate_sequence_matches(
+            events,
+            rule.sequence_json,
+            rule.group_by_entity,
+        )
+        return matched_count, matched_count >= rule.threshold
+
     sql_clauses = _build_condition_clauses(rule.condition_json)
     stmt = (
         select(Event)
@@ -152,6 +354,8 @@ async def fire_incident_if_needed(
     event_count: int,
     first_seen: datetime,
     last_seen: datetime,
+    confidence_score: float | None = None,
+    confidence_rationale: str | None = None,
 ) -> Optional[Incident]:
     """Create an Incident if the rule threshold is reached and no open incident exists."""
     # Check for existing open/investigating incident for this rule
@@ -172,6 +376,11 @@ async def fire_incident_if_needed(
         last_seen=last_seen,
         event_count=event_count,
         rule_id=rule.id,
+        mitre_techniques_json=rule.mitre_techniques_json,
+        mitre_tactic=rule.mitre_tactic,
+        confidence_score=confidence_score,
+        confidence_rationale=confidence_rationale,
+        summary=confidence_rationale,
         tags_json=[],
     )
     session.add(incident)
@@ -194,24 +403,11 @@ async def run_rule_engine(session: AsyncSession) -> list[dict]:
 
     for rule in rules:
         window_start = now - timedelta(seconds=rule.window_seconds)
-        sql_clauses = _build_condition_clauses(rule.condition_json)
-        has_field_condition = "field" in rule.condition_json
-
-        if not has_field_condition:
-            # Pure SQL path: COUNT + MIN(ts) + MAX(ts) — no ORM objects loaded.
-            stmt = select(
-                func.count(),
-                func.min(Event.timestamp),
-                func.max(Event.timestamp),
-            ).where(Event.timestamp >= window_start, Event.timestamp <= now, *sql_clauses)
-            result = await session.execute(stmt)
-            row = result.one()
-            matched_count, first_seen, last_seen = row[0], row[1], row[2]
-        else:
-            # JSONB field condition: load events with LIMIT + Python filter.
+        if isinstance(rule.condition_json, dict) and rule.condition_json.get("type") == "geo_anomaly":
             stmt = (
                 select(Event)
-                .where(Event.timestamp >= window_start, Event.timestamp <= now, *sql_clauses)
+                .where(Event.timestamp >= window_start, Event.timestamp <= now)
+                .order_by(Event.timestamp.asc())
                 .limit(_RULE_EVENT_LIMIT)
             )
             result = await session.execute(stmt)
@@ -223,18 +419,73 @@ async def run_rule_engine(session: AsyncSession) -> list[dict]:
                     rule_name=rule.name,
                     limit=_RULE_EVENT_LIMIT,
                 )
-            matched_events = [e for e in events if _matches_condition(e, rule.condition_json)]
-            matched_count = len(matched_events)
-            first_seen = min((e.timestamp for e in matched_events), default=now)
-            last_seen = max((e.timestamp for e in matched_events), default=now)
+            matched_count, first_seen, last_seen = _evaluate_geo_anomaly_matches(events, rule.condition_json)
+        elif rule.sequence_json:
+            stmt = (
+                select(Event)
+                .where(Event.timestamp >= window_start, Event.timestamp <= now)
+                .order_by(Event.timestamp.asc())
+                .limit(_RULE_EVENT_LIMIT)
+            )
+            result = await session.execute(stmt)
+            events = result.scalars().all()
+            if len(events) == _RULE_EVENT_LIMIT:
+                logger.warning(
+                    "rule_event_limit_reached",
+                    rule_id=rule.id,
+                    rule_name=rule.name,
+                    limit=_RULE_EVENT_LIMIT,
+                )
+            matched_count, first_seen, last_seen = _evaluate_sequence_matches(
+                events,
+                rule.sequence_json,
+                rule.group_by_entity,
+            )
+        else:
+            sql_clauses = _build_condition_clauses(rule.condition_json)
+            has_field_condition = "field" in rule.condition_json
+
+            if not has_field_condition:
+                # Pure SQL path: COUNT + MIN(ts) + MAX(ts) — no ORM objects loaded.
+                stmt = select(
+                    func.count(),
+                    func.min(Event.timestamp),
+                    func.max(Event.timestamp),
+                ).where(Event.timestamp >= window_start, Event.timestamp <= now, *sql_clauses)
+                result = await session.execute(stmt)
+                row = result.one()
+                matched_count, first_seen, last_seen = row[0], row[1], row[2]
+            else:
+                # JSONB field condition: load events with LIMIT + Python filter.
+                stmt = (
+                    select(Event)
+                    .where(Event.timestamp >= window_start, Event.timestamp <= now, *sql_clauses)
+                    .limit(_RULE_EVENT_LIMIT)
+                )
+                result = await session.execute(stmt)
+                events = result.scalars().all()
+                if len(events) == _RULE_EVENT_LIMIT:
+                    logger.warning(
+                        "rule_event_limit_reached",
+                        rule_id=rule.id,
+                        rule_name=rule.name,
+                        limit=_RULE_EVENT_LIMIT,
+                    )
+                matched_events = [e for e in events if _matches_condition(e, rule.condition_json)]
+                matched_count = len(matched_events)
+                first_seen = min((e.timestamp for e in matched_events), default=now)
+                last_seen = max((e.timestamp for e in matched_events), default=now)
 
         fired = matched_count >= rule.threshold
         incident = None
 
         if fired:
+            confidence_score, confidence_rationale = _calculate_correlation_confidence(rule, matched_count)
             incident = await fire_incident_if_needed(
                 session, rule, matched_count,
                 first_seen or now, last_seen or now,
+                confidence_score=confidence_score,
+                confidence_rationale=confidence_rationale,
             )
 
         results.append({

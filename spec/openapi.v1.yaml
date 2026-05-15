@@ -106,6 +106,31 @@ paths:
               schema:
                 $ref: '#/components/schemas/Source'
 
+  /api/v1/sources/status:
+    get:
+      tags: [Sources]
+      summary: Get ingestion health metrics per source
+      parameters:
+        - name: source_ids
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Comma-separated source IDs to limit the response.
+      responses:
+        "200":
+          description: Source ingestion health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SourceIngestionStatus'
+                required: [items]
+
   /api/v1/sources/{id}:
     patch:
       tags: [Sources]
@@ -398,7 +423,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [open, investigating, resolved, false_positive]
+            enum: [open, investigating, resolved, false_positive, archived]
         - name: severity
           in: query
           schema:
@@ -416,6 +441,18 @@ paths:
                     items:
                       $ref: '#/components/schemas/Incident'
                 required: [items]
+
+  /api/v1/incidents/mitre-coverage:
+    get:
+      tags: [Incidents]
+      summary: MITRE technique coverage across mapped rules and incidents
+      responses:
+        "200":
+          description: MITRE coverage summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MitreCoverageResponse'
 
   /api/v1/incidents/{id}:
     get:
@@ -1507,7 +1544,7 @@ components:
           type: string
         type:
           type: string
-          enum: [file, syslog, journald, docker, netflow, sflow, socket_observer, packet_capture]
+          enum: [file, syslog, journald, docker, filebeat, winlogbeat, elastic_agent, netflow, sflow, socket_observer, packet_capture]
         config:
           type: object
           additionalProperties: true
@@ -1528,7 +1565,7 @@ components:
           type: string
         type:
           type: string
-          enum: [file, syslog, journald, docker, netflow, sflow, socket_observer, packet_capture]
+          enum: [file, syslog, journald, docker, filebeat, winlogbeat, elastic_agent, netflow, sflow, socket_observer, packet_capture]
         config:
           type: object
           additionalProperties: true
@@ -1544,12 +1581,42 @@ components:
           type: string
         type:
           type: string
-          enum: [file, syslog, journald, docker, netflow, sflow, socket_observer, packet_capture]
+          enum: [file, syslog, journald, docker, filebeat, winlogbeat, elastic_agent, netflow, sflow, socket_observer, packet_capture]
         config:
           type: object
           additionalProperties: true
         enabled:
           type: boolean
+
+    SourceIngestionStatus:
+      type: object
+      properties:
+        source_id:
+          type: string
+          format: uuid
+        last_ingested_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_event_timestamp:
+          type: string
+          format: date-time
+          nullable: true
+        last_event_created_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+        events_per_min:
+          type: integer
+          minimum: 0
+        parse_error_count:
+          type: integer
+          minimum: 0
+      required: [source_id, events_per_min, parse_error_count]
 
     NetworkFlow:
       type: object
@@ -2074,6 +2141,37 @@ components:
         condition:
           type: object
           additionalProperties: true
+          description: |
+            Rule condition object. Supports standard field-based matching and
+            specialized detectors like geo anomaly.
+            Geo anomaly example:
+            {
+              "type": "geo_anomaly",
+              "entity_field": "username",
+              "location_fields": ["country", "asn"],
+              "min_history_events": 3,
+              "min_distinct_locations": 1,
+              "baseline_exclude_recent": 1
+            }
+        sequence:
+          type: array
+          nullable: true
+          items:
+            type: object
+            additionalProperties: true
+        group_by_entity:
+          type: string
+          nullable: true
+        mitre_techniques:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: MITRE ATT&CK technique IDs (for example T1059.001).
+        mitre_tactic:
+          type: string
+          nullable: true
+          description: MITRE ATT&CK tactic label (for example execution).
         threshold:
           type: integer
           minimum: 1
@@ -2096,6 +2194,37 @@ components:
         condition:
           type: object
           additionalProperties: true
+          description: |
+            Rule condition object. Supports standard field-based matching and
+            specialized detectors like geo anomaly.
+            Geo anomaly example:
+            {
+              "type": "geo_anomaly",
+              "entity_field": "username",
+              "location_fields": ["country", "asn"],
+              "min_history_events": 3,
+              "min_distinct_locations": 1,
+              "baseline_exclude_recent": 1
+            }
+        sequence:
+          type: array
+          nullable: true
+          items:
+            type: object
+            additionalProperties: true
+        group_by_entity:
+          type: string
+          nullable: true
+        mitre_techniques:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: MITRE ATT&CK technique IDs (for example T1059.001).
+        mitre_tactic:
+          type: string
+          nullable: true
+          description: MITRE ATT&CK tactic label (for example execution).
         threshold:
           type: integer
           minimum: 1
@@ -2119,6 +2248,37 @@ components:
         condition:
           type: object
           additionalProperties: true
+          description: |
+            Rule condition object. Supports standard field-based matching and
+            specialized detectors like geo anomaly.
+            Geo anomaly example:
+            {
+              "type": "geo_anomaly",
+              "entity_field": "username",
+              "location_fields": ["country", "asn"],
+              "min_history_events": 3,
+              "min_distinct_locations": 1,
+              "baseline_exclude_recent": 1
+            }
+        sequence:
+          type: array
+          nullable: true
+          items:
+            type: object
+            additionalProperties: true
+        group_by_entity:
+          type: string
+          nullable: true
+        mitre_techniques:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: MITRE ATT&CK technique IDs (for example T1059.001).
+        mitre_tactic:
+          type: string
+          nullable: true
+          description: MITRE ATT&CK tactic label (for example execution).
         threshold:
           type: integer
           minimum: 1
@@ -2140,7 +2300,7 @@ components:
           type: string
         status:
           type: string
-          enum: [open, investigating, resolved, false_positive]
+          enum: [open, investigating, resolved, false_positive, archived]
         severity:
           type: string
         first_seen:
@@ -2154,6 +2314,21 @@ components:
         rule_id:
           type: string
           format: uuid
+          nullable: true
+        mitre_techniques:
+          type: array
+          nullable: true
+          items:
+            type: string
+        mitre_tactic:
+          type: string
+          nullable: true
+        confidence_score:
+          type: number
+          format: float
+          nullable: true
+        confidence_rationale:
+          type: string
           nullable: true
         summary:
           type: string
@@ -2172,7 +2347,7 @@ components:
       properties:
         status:
           type: string
-          enum: [open, investigating, resolved, false_positive]
+          enum: [open, investigating, resolved, false_positive, archived]
         summary:
           type: string
         assignee:
@@ -2181,6 +2356,33 @@ components:
           type: array
           items:
             type: string
+
+    MitreCoverageItem:
+      type: object
+      properties:
+        technique_id:
+          type: string
+        tactic:
+          type: string
+          nullable: true
+        rule_count:
+          type: integer
+        incident_count:
+          type: integer
+      required: [technique_id, rule_count, incident_count]
+
+    MitreCoverageResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MitreCoverageItem'
+        mapped_rules:
+          type: integer
+        mapped_incidents:
+          type: integer
+      required: [items, mapped_rules, mapped_incidents]
 
     AIModel:
       type: object

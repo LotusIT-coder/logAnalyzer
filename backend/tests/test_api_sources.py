@@ -104,6 +104,19 @@ class TestSourcesCRUD:
         resp = await client.post("/api/v1/sources", json=payload)
         assert resp.status_code == 422
 
+    @pytest.mark.parametrize("source_type", ["syslog", "docker", "filebeat", "winlogbeat", "elastic_agent"])
+    async def test_create_source_extended_types(self, client: AsyncClient, source_type: str):
+        payload = {
+            "name": f"src-{source_type}",
+            "type": source_type,
+            "config": {"path": f"/var/log/{source_type}.log"},
+            "enabled": True,
+        }
+        resp = await client.post("/api/v1/sources", json=payload)
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["type"] == source_type
+
     async def test_source_test_supports_regex_path(self, client: AsyncClient, tmp_path):
         logs_dir = tmp_path / "lotus-logs"
         logs_dir.mkdir()
@@ -153,7 +166,7 @@ class TestSourcesCRUD:
                 message="status event",
                 service="svc",
                 host="host",
-                fields_json={},
+                fields_json={"ingest_parse_error": True},
             )
         )
         await db_session.commit()
@@ -165,6 +178,9 @@ class TestSourcesCRUD:
         assert items[0]["source_id"] == str(src.id)
         assert items[0]["last_ingested_at"] is not None
         assert items[0]["last_event_timestamp"] is not None
+        assert items[0]["last_seen_at"] is not None
+        assert items[0]["events_per_min"] >= 1
+        assert items[0]["parse_error_count"] >= 1
 
     async def test_source_test_supports_real_journald_source(self, client: AsyncClient, monkeypatch):
         def fake_run(*args, **kwargs):
@@ -186,3 +202,24 @@ class TestSourcesCRUD:
         body = tested.json()
         assert body["ok"] is True
         assert "journalctl accessible" in (body.get("details") or "")
+
+
+async def test_resolve_source_path_uses_alternate_config_path(tmp_path):
+    host_missing = tmp_path / "missing.log"
+    alternate = tmp_path / "available.log"
+    alternate.write_text("hello\n", encoding="utf-8")
+
+    source = Source(
+        name="demo-seed",
+        type="filebeat",
+        config_json={
+            "path": str(host_missing),
+            "log_path": str(alternate),
+        },
+        enabled=True,
+    )
+
+    path, error = source_service.resolve_source_path(source)
+
+    assert error is None
+    assert path == str(alternate)
