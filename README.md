@@ -99,15 +99,17 @@ Die Plattform setzt nicht nur auf KI, sondern auf eine Kombination aus klassisch
 
 ## Demo-Screenshots
 
-Die README sollte idealerweise um echte Screenshots ergänzt werden. Sinnvolle Motive sind:
+Die wichtigsten Ansichten aus der laufenden Anwendung:
 
-- Dashboard
-- Detection Alerts
-- Pattern Recognition
-- Threat Classification
-- Terminal Output
+![Dashboard](docs/screenshots/dashboard.png)
 
-Wenn du die Screenshots später ergänzen willst, kannst du sie z. B. unter `docs/` ablegen und hier verlinken.
+![Events](docs/screenshots/events.png)
+
+![Incidents](docs/screenshots/incidents.png)
+
+![AI Chat](docs/screenshots/ai-chat.png)
+
+![Sources](docs/screenshots/sources.png)
 
 ## Beispiel-Logs
 
@@ -590,6 +592,20 @@ The platform does not rely on AI alone. It combines classical security analytics
 - Baselines for normal behavior
 - Heuristics for prioritization and triage
 - Scoring to estimate signal strength and relevance
+
+## Demo Screenshots
+
+Key views from the running application:
+
+![Dashboard](docs/screenshots/dashboard.png)
+
+![Events](docs/screenshots/events.png)
+
+![Incidents](docs/screenshots/incidents.png)
+
+![AI Chat](docs/screenshots/ai-chat.png)
+
+![Sources](docs/screenshots/sources.png)
 
 ## Demo Data
 
