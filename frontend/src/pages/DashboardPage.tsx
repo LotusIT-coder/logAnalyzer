@@ -850,6 +850,10 @@ function TopErrorDetailModal({
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    // Reset Filter / Auswahl nur, wenn das Modal-Target wechselt (anderer Service /
+    // andere Top-Fehlermeldung). NICHT auf Aenderungen von initialFrom/initialTo
+    // reagieren - die werden vom Dashboard-Auto-Refresh staendig neu berechnet
+    // und wuerden sonst das aufgeklappte Detail-Panel im Sekundentakt zuklappen.
     const nextFrom = toDateTimeLocalInput(initialFrom)
     const nextTo = toDateTimeLocalInput(initialTo)
     setFromInput(nextFrom)
@@ -858,7 +862,8 @@ function TopErrorDetailModal({
     setAppliedToInput(nextTo)
     setLocalSearch('')
     setExpanded({})
-  }, [target.query, target.service, initialFrom, initialTo])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target.query, target.service])
 
   const fromIso = toIsoFromDateTimeLocal(appliedFromInput)
   const toIso = toIsoFromDateTimeLocal(appliedToInput)
