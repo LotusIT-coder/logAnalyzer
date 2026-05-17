@@ -123,7 +123,7 @@ export function SourcePicker({
   }
 
   const label = selected.length === 0
-    ? t('sourcePicker.allConfigured')
+    ? t('events.sourcesDefault')
     : selected.length === 1
       ? selected[0].label
       : t('sourcePicker.selectedCount', { count: selected.length })

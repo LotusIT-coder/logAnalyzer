@@ -75,7 +75,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
 
         logger = structlog.get_logger()
-        logger.info("request_started", method=request.method, path=request.url.path)
+        query_string = request.url.query or None
+        logger.info(
+            "request_started",
+            method=request.method,
+            path=request.url.path,
+            query_string=query_string,
+        )
 
         response: Response = await call_next(request)
         response.headers["X-Trace-Id"] = trace_id
@@ -84,6 +90,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             "request_finished",
             method=request.method,
             path=request.url.path,
+            query_string=query_string,
             status_code=response.status_code,
         )
         return response

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -19,11 +19,51 @@ from app.db.session import get_session_factory
 from app.dependencies import get_db
 from app.domain.models import Event
 from app.schemas.event import EventListResponse, EventResponse
-from app.services.event_search import EventSearchQuery, search_events_elastic, search_events_postgres
+from app.services.event_search import EventSearchQuery, EventSearchResult, search_events_elastic, search_events_postgres
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
 _STREAM_POLL_LIMIT = 500
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _is_short_realtime_window(query: EventSearchQuery) -> bool:
+    if query.from_ts is None:
+        return False
+    upper_bound = _as_utc(query.to_ts) if query.to_ts is not None else datetime.now(timezone.utc)
+    lower_bound = _as_utc(query.from_ts)
+    return (upper_bound - lower_bound) <= timedelta(minutes=5)
+
+
+def _should_fallback_to_postgres_for_freshness(query: EventSearchQuery, result: EventSearchResult) -> bool:
+    """Detect likely stale Elastic reads for short near-real-time windows.
+
+    For very short windows (<= 5 min), empty or clearly outdated hits are
+    usually caused by indexing lag. In that case we switch to PostgreSQL,
+    which is the ingestion source of truth.
+    """
+    if query.from_ts is None:
+        return False
+
+    upper_bound = _as_utc(query.to_ts) if query.to_ts is not None else datetime.now(timezone.utc)
+    lower_bound = _as_utc(query.from_ts)
+    window = upper_bound - lower_bound
+    if window > timedelta(minutes=5):
+        return False
+
+    if not result.items:
+        return True
+
+    freshest_created = max((_as_utc(item.created_at) for item in result.items), default=None)
+    if freshest_created is None:
+        return True
+
+    return freshest_created < (upper_bound - timedelta(minutes=1))
 
 
 async def _stream_start_seen_ids(session: AsyncSession, event_type: Optional[str] = None) -> set[str]:
@@ -124,6 +164,9 @@ async def list_events(
         limit=limit,
         cursor=cursor,
     )
+    short_realtime_window = _is_short_realtime_window(query)
+    if short_realtime_window:
+        query.use_created_at_window_only = True
 
     elastic_available = bool(getattr(request.app.state, "elastic_available", False))
     if provider_mode == "postgres":
@@ -134,8 +177,14 @@ async def list_events(
         except RuntimeError as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     else:
+        if short_realtime_window:
+            result = await search_events_postgres(session, query)
+            response.headers["X-Events-Provider"] = result.provider_used
+            return EventListResponse(items=result.items, next_cursor=result.next_cursor)
         try:
             result = await search_events_elastic(session, query, elastic_is_available=elastic_available)
+            if _should_fallback_to_postgres_for_freshness(query, result):
+                result = await search_events_postgres(session, query)
         except Exception:
             result = await search_events_postgres(session, query)
 

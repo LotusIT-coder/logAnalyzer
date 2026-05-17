@@ -20,7 +20,7 @@ function isUploadError(result: UploadResultState): result is { error: string } {
 
 function describeSource(source: SourceResponse) {
   if (source.type === 'journald' && !source.config?.path) {
-    return source.config?.boot_only === false ? 'systemd-journal (alle Boots)' : 'systemd-journal (aktueller Boot)'
+    return 'systemd-journal'
   }
   return source.config?.path ?? '-'
 }
@@ -53,7 +53,6 @@ function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse;
   const [name, setName] = useState(source.name ?? '')
   const [path, setPath] = useState(source.config?.path ?? '')
   const [pathRegex, setPathRegex] = useState(Boolean(source.config?.path_regex))
-  const [bootOnly, setBootOnly] = useState(source.config?.boot_only !== false)
   const [enabled, setEnabled] = useState(source.enabled ?? true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -63,10 +62,11 @@ function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse;
     setSaving(true)
     setError('')
     try {
+      const { boot_only: _bootOnly, ...journaldConfig } = source.config ?? {}
       await patchSource(source.id, {
         name,
         config: isJournald
-          ? { ...source.config, boot_only: bootOnly }
+          ? journaldConfig
           : { ...source.config, path, path_regex: pathRegex },
         enabled,
       })
@@ -88,12 +88,7 @@ function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse;
             <label style={styles.label}>Name</label>
             <input value={name} onChange={e => setName(e.target.value)} style={styles.input} />
           </div>
-          {isJournald ? (
-            <label style={styles.inlineCheckbox}>
-              <input type="checkbox" checked={bootOnly} onChange={e => setBootOnly(e.target.checked)} />
-              Nur aktuellen Boot aus dem systemd-Journal lesen
-            </label>
-          ) : (
+          {isJournald ? null : (
             <>
               <div style={styles.field}>
                 <label style={styles.label}>Dateipfad</label>
@@ -242,7 +237,6 @@ export default function SourcesPage() {
   const [name, setName] = useState('')
   const [path, setPath] = useState('')
   const [pathRegex, setPathRegex] = useState(false)
-  const [bootOnly, setBootOnly] = useState(true)
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [testResults, setTestResults] = useState<Record<string, SourceTestResponse>>({})
@@ -258,7 +252,7 @@ export default function SourcesPage() {
       await createSource({
         name,
         type: sourceType,
-        config: sourceType === 'journald' ? { boot_only: bootOnly } : { path, path_regex: pathRegex },
+        config: sourceType === 'journald' ? {} : { path, path_regex: pathRegex },
         enabled: true,
       })
       qc.invalidateQueries({ queryKey: ['sources'] })
@@ -267,7 +261,6 @@ export default function SourcesPage() {
       setName('')
       setPath('')
       setPathRegex(false)
-      setBootOnly(true)
     } finally {
       setSaving(false)
     }
@@ -367,7 +360,7 @@ export default function SourcesPage() {
               </select>
             </div>
           </div>
-          {sourceType !== 'journald' ? (
+          {sourceType !== 'journald' && (
             <>
               <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
                 <div style={{ ...styles.field, flex: 1 }}>
@@ -383,11 +376,6 @@ export default function SourcesPage() {
                 Dateipfad als Regex behandeln (Dateiname)
               </label>
             </>
-          ) : (
-            <label style={styles.inlineCheckbox}>
-              <input type="checkbox" checked={bootOnly} onChange={e => setBootOnly(e.target.checked)} />
-              Nur aktuellen Boot aus dem systemd-Journal lesen
-            </label>
           )}
           <div style={styles.formActions}>
             <button onClick={handleCreate} disabled={saving || !name || (sourceType !== 'journald' && !path)} style={styles.saveBtn}>

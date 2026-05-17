@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -24,6 +24,7 @@ class EventSearchQuery:
     q: str | None
     limit: int
     cursor: str | None
+    use_created_at_window_only: bool = False
 
 
 @dataclass(slots=True)
@@ -49,12 +50,27 @@ def _parse_cursor(cursor: str | None) -> datetime | None:
 
 
 async def search_events_postgres(session: AsyncSession, query: EventSearchQuery) -> EventSearchResult:
-    stmt = select(Event).order_by(Event.timestamp.desc()).limit(query.limit + 1)
+    stmt = select(Event).order_by(Event.created_at.desc()).limit(query.limit + 1)
 
-    if query.from_ts:
-        stmt = stmt.where(Event.timestamp >= query.from_ts)
-    if query.to_ts:
-        stmt = stmt.where(Event.timestamp <= query.to_ts)
+    if query.use_created_at_window_only:
+        if query.from_ts and query.to_ts:
+            stmt = stmt.where(Event.created_at.between(query.from_ts, query.to_ts))
+        elif query.from_ts:
+            stmt = stmt.where(Event.created_at >= query.from_ts)
+        elif query.to_ts:
+            stmt = stmt.where(Event.created_at <= query.to_ts)
+    else:
+        if query.from_ts and query.to_ts:
+            stmt = stmt.where(
+                or_(
+                    Event.timestamp.between(query.from_ts, query.to_ts),
+                    Event.created_at.between(query.from_ts, query.to_ts),
+                )
+            )
+        elif query.from_ts:
+            stmt = stmt.where(or_(Event.timestamp >= query.from_ts, Event.created_at >= query.from_ts))
+        elif query.to_ts:
+            stmt = stmt.where(or_(Event.timestamp <= query.to_ts, Event.created_at <= query.to_ts))
     if query.resolved_source_ids is not None:
         stmt = stmt.where(Event.source_id.in_(query.resolved_source_ids))
 
@@ -71,7 +87,7 @@ async def search_events_postgres(session: AsyncSession, query: EventSearchQuery)
 
     cursor_ts = _parse_cursor(query.cursor)
     if cursor_ts:
-        stmt = stmt.where(Event.timestamp < cursor_ts)
+        stmt = stmt.where(Event.created_at < cursor_ts)
 
     result = await session.execute(stmt)
     rows = list(result.scalars().all())
@@ -79,7 +95,7 @@ async def search_events_postgres(session: AsyncSession, query: EventSearchQuery)
     next_cursor: str | None = None
     if len(rows) > query.limit:
         rows = rows[:query.limit]
-        next_cursor = rows[-1].timestamp.isoformat()
+        next_cursor = rows[-1].created_at.isoformat()
 
     return EventSearchResult(
         items=[EventResponse.model_validate(row) for row in rows],

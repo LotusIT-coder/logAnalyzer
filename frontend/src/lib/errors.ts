@@ -3,12 +3,22 @@ export function getApiErrorMessage(error: unknown, fallback = 'Unbekannter Fehle
 
   const candidate = error as {
     message?: unknown
+    code?: unknown
     response?: {
+      status?: unknown
       data?: {
+        code?: unknown
         detail?: unknown
         message?: unknown
       }
     }
+  }
+
+  const status = candidate.response?.status
+  const apiCode = candidate.response?.data?.code
+  const ownCode = candidate.code
+  if (status === 504 || apiCode === 'HTTP_504' || ownCode === 'ECONNABORTED') {
+    return 'Die Abfrage hat das Server-Zeitlimit erreicht. Bitte kleineres Zeitfenster oder weniger Quellen waehlen.'
   }
 
   const detail = candidate.response?.data?.detail

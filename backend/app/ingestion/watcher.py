@@ -13,15 +13,13 @@ Design goals:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import structlog
-from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db.session import get_session_factory
-from app.domain.models import Event, SourceIngestionStatus
 from app.ingestion.file_reader import ingest_source
+from app.services.source_status import refresh_source_status
 from app.services.source_service import list_sources
 
 logger = structlog.get_logger(__name__)
@@ -29,70 +27,11 @@ logger = structlog.get_logger(__name__)
 # Hard cap on the total number of lines ingested across ALL sources in a single
 # tick. Prevents a burst of log data from many sources simultaneously from
 # exhausting memory before the batch can be flushed and released.
-_MAX_LINES_TOTAL_PER_TICK = 50_000
-_PARSE_ERROR_WINDOW = timedelta(hours=1)
-
-
-async def _refresh_source_status(session, source_id: str, touched_at: datetime) -> None:
-    one_minute_ago = touched_at - timedelta(minutes=1)
-    one_hour_ago = touched_at - _PARSE_ERROR_WINDOW
-
-    last_event_timestamp_result = await session.execute(
-        select(Event.timestamp)
-        .where(Event.source_id == source_id)
-        .order_by(Event.timestamp.desc())
-        .limit(1)
-    )
-    last_event_timestamp = last_event_timestamp_result.scalar_one_or_none()
-
-    last_event_created_result = await session.execute(
-        select(Event.created_at)
-        .where(Event.source_id == source_id)
-        .order_by(Event.created_at.desc())
-        .limit(1)
-    )
-    last_event_created_at = last_event_created_result.scalar_one_or_none()
-
-    events_per_min_result = await session.execute(
-        select(func.count(Event.id)).where(
-            Event.source_id == source_id,
-            Event.timestamp >= one_minute_ago,
-        )
-    )
-    events_per_min = int(events_per_min_result.scalar_one() or 0)
-
-    parse_error_count_result = await session.execute(
-        select(func.count(Event.id)).where(
-            Event.source_id == source_id,
-            Event.timestamp >= one_hour_ago,
-            Event.fields_json.contains({"ingest_parse_error": True}),
-        )
-    )
-    parse_error_count = int(parse_error_count_result.scalar_one() or 0)
-
-    upsert_stmt = pg_insert(SourceIngestionStatus).values(
-        source_id=source_id,
-        last_ingested_at=touched_at,
-        last_event_timestamp=last_event_timestamp,
-        last_event_created_at=last_event_created_at,
-        last_seen_at=last_event_timestamp,
-        events_per_min=events_per_min,
-        parse_error_count=parse_error_count,
-        updated_at=touched_at,
-    )
-    upsert_stmt = upsert_stmt.on_conflict_do_update(
-        index_elements=[SourceIngestionStatus.source_id],
-        set_={
-            "last_ingested_at": touched_at,
-            "last_event_timestamp": last_event_timestamp,
-            "last_event_created_at": last_event_created_at,
-            "last_seen_at": last_event_timestamp,
-            "events_per_min": events_per_min,
-            "parse_error_count": parse_error_count,
-            "updated_at": touched_at,
-        },
-    )
-    await session.execute(upsert_stmt)
+_MAX_LINES_TOTAL_PER_TICK = 10_000
+_SOURCE_INGEST_TIMEOUT_SECONDS = 5.0
+_REALTIME_SOURCE_INGEST_TIMEOUT_SECONDS = 20.0
+_LOW_PRIORITY_SOURCES_PER_TICK = 1
+_REALTIME_SOURCE_NAMES = {"syslog", "auth.log", "kern.log"}
 
 
 class WatcherService:
@@ -116,6 +55,13 @@ class WatcherService:
         self.tick_count: int = 0
         self._tick_running: bool = False  # backpressure guard
         self._last_tick_lines: int = 0
+        self._low_priority_rr_index: int = 0
+
+    @staticmethod
+    def _is_realtime_source(source) -> bool:
+        if source.type == "journald":
+            return True
+        return (source.name or "").lower() in _REALTIME_SOURCE_NAMES
 
     @property
     def running(self) -> bool:
@@ -169,19 +115,25 @@ class WatcherService:
         """Inner tick logic (called only when no tick is already in progress)."""
         factory = get_session_factory()
         async with factory() as session:
-            tick_now = datetime.now(timezone.utc)
             try:
                 sources = await list_sources(session)
             except Exception:
                 logger.exception("watcher_list_sources_failed")
                 return
 
-            # Process journald first so near-real-time system events stay fresh
-            # even when other sources have a large backlog.
-            ordered_sources = sorted(
-                sources,
-                key=lambda source: (0 if source.type == "journald" else 1),
-            )
+            realtime_sources = [source for source in sources if self._is_realtime_source(source)]
+            low_priority_sources = [source for source in sources if not self._is_realtime_source(source)]
+            # Keep near-real-time sources on every tick. Process only a small,
+            # rotating slice of low-priority sources per tick so one long tick
+            # cannot delay the next realtime pass by many seconds.
+            selected_low_priority: list = []
+            if low_priority_sources and _LOW_PRIORITY_SOURCES_PER_TICK > 0:
+                start = self._low_priority_rr_index % len(low_priority_sources)
+                for i in range(min(_LOW_PRIORITY_SOURCES_PER_TICK, len(low_priority_sources))):
+                    selected_low_priority.append(low_priority_sources[(start + i) % len(low_priority_sources)])
+                self._low_priority_rr_index = (start + len(selected_low_priority)) % len(low_priority_sources)
+
+            ordered_sources = realtime_sources + selected_low_priority
 
             total_lines = 0
             self._last_tick_lines = 0
@@ -196,8 +148,20 @@ class WatcherService:
                     )
                     break
                 try:
-                    stats = await ingest_source(session, source)
-                    await _refresh_source_status(session, str(source.id), touched_at=tick_now)
+                    source_timeout = (
+                        _REALTIME_SOURCE_INGEST_TIMEOUT_SECONDS
+                        if self._is_realtime_source(source)
+                        else _SOURCE_INGEST_TIMEOUT_SECONDS
+                    )
+                    # Guard every source ingestion so one blocking source
+                    # cannot freeze the whole watcher tick indefinitely.
+                    stats = await asyncio.wait_for(
+                        ingest_source(session, source),
+                        timeout=source_timeout,
+                    )
+                    # Use per-source timestamps so status freshness reflects the
+                    # actual processing time within a potentially long tick.
+                    await refresh_source_status(session, str(source.id), touched_at=datetime.now(timezone.utc))
                     ingested = stats.get("lines_ingested", 0)
                     total_lines += ingested
                     if ingested or stats.get("events_created", 0):
@@ -206,13 +170,20 @@ class WatcherService:
                             source_id=source.id,
                             **{k: v for k, v in stats.items() if k != "source_id"},
                         )
+                    try:
+                        await session.commit()
+                    except Exception:
+                        logger.exception("watcher_commit_failed", source_id=source.id)
+                        await session.rollback()
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "watcher_source_timeout",
+                        source_id=source.id,
+                        timeout_seconds=source_timeout,
+                    )
+                    await session.rollback()
                 except Exception:
                     logger.exception("watcher_source_error", source_id=source.id)
-
-            try:
-                await session.commit()
-            except Exception:
-                logger.exception("watcher_commit_failed")
-                await session.rollback()
+                    await session.rollback()
 
             self._last_tick_lines = total_lines

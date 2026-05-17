@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.model_validation import is_ollama_model_available
@@ -13,7 +14,7 @@ from app.api.source_filters import resolve_source_ids
 from app.dependencies import get_db
 
 from app.config import get_settings
-from app.domain.models import Incident
+from app.domain.models import Incident, Source, SourceIngestionStatus
 from app.services.soc_analyst import SOCAnalystService
 from app.services.soc_analyst_runtime import save_soc_analyst_runtime_state
 
@@ -47,6 +48,13 @@ def _build_soc_status_payload(request: Request) -> dict:
     }
 
 
+def _age_seconds(value: datetime | None, now: datetime) -> int | None:
+    if value is None:
+        return None
+    normalized = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return max(0, int((now - normalized.astimezone(timezone.utc)).total_seconds()))
+
+
 @router.get("/health")
 async def health(request: Request):
     ollama_available = getattr(request.app.state, "ollama_available", False)
@@ -77,9 +85,76 @@ async def version():
     }
 
 
+@router.get("/system/now")
+async def get_server_time():
+    """Return current server time in UTC. Used for time-range calculations.
+    
+    Prevents time-skew bugs where client Date.now() differs from server 
+    datetime.now(timezone.utc), causing events to fall outside filter ranges.
+    """
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "unix_ms": int(datetime.now(timezone.utc).timestamp() * 1000),
+    }
+
+
 @router.get("/system/soc-analyst")
 async def soc_analyst_status(request: Request):
     return _build_soc_status_payload(request)
+
+
+@router.get("/system/ingestion-diagnostics")
+async def ingestion_diagnostics(session: AsyncSession = Depends(get_db)):
+    now = datetime.now(timezone.utc)
+
+    stmt = (
+        select(
+            Source.id,
+            Source.name,
+            Source.type,
+            Source.enabled,
+            SourceIngestionStatus.last_ingested_at,
+            SourceIngestionStatus.last_event_timestamp,
+            SourceIngestionStatus.last_event_created_at,
+            SourceIngestionStatus.events_per_min,
+            SourceIngestionStatus.parse_error_count,
+        )
+        .outerjoin(SourceIngestionStatus, SourceIngestionStatus.source_id == Source.id)
+        .order_by(Source.created_at)
+    )
+    rows = (await session.execute(stmt)).all()
+
+    items: list[dict] = []
+    for row in rows:
+        freshest_created = row.last_event_created_at
+        freshest_ts = row.last_event_timestamp
+
+        items.append(
+            {
+                "source_id": str(row.id),
+                "name": row.name,
+                "type": row.type,
+                "enabled": bool(row.enabled),
+                "status_last_ingested_at": row.last_ingested_at,
+                "status_last_event_created_at": freshest_created,
+                "status_last_event_timestamp": freshest_ts,
+                "freshest_event_created_at": freshest_created,
+                "freshest_event_timestamp": freshest_ts,
+                "events_per_min": int(row.events_per_min or 0),
+                "parse_error_count": int(row.parse_error_count or 0),
+                "age_last_ingest_seconds": _age_seconds(row.last_ingested_at, now),
+                "age_freshest_created_seconds": _age_seconds(freshest_created, now),
+                "age_freshest_timestamp_seconds": _age_seconds(freshest_ts, now),
+                "fresh_within_60s": bool((_age_seconds(freshest_created, now) or 10**9) <= 60),
+            }
+        )
+
+    return {
+        "generated_at": now,
+        "source_count": len(items),
+        "fresh_sources_60s": sum(1 for item in items if item["fresh_within_60s"]),
+        "items": items,
+    }
 
 
 @router.put("/system/soc-analyst")

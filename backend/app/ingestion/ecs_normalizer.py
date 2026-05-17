@@ -46,6 +46,14 @@ def normalize_ecs_payload(parsed: dict[str, Any], raw_line: str) -> dict[str, An
         if ecs_host:
             normalized["host"] = ecs_host
 
+    # ECS often carries service as an object, e.g. {"name": "svc_iis"}.
+    # Our Event model stores service as TEXT, so coerce to a plain string.
+    service_value = normalized.get("service")
+    if not isinstance(service_value, str) or not service_value:
+        ecs_service = _coerce_text(_get_nested_value(normalized, "service.name"))
+        if ecs_service:
+            normalized["service"] = ecs_service
+
     event_code = _get_nested_value(normalized, "event.code")
     if not _is_populated(normalized.get("event_type")) and _is_populated(event_code):
         normalized["event_type"] = str(event_code)

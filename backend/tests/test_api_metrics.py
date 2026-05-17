@@ -8,7 +8,7 @@ a fallback; the implementation must handle both gracefully.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,10 +40,12 @@ def _make_event(
     event_type: str = "log",
     fields: dict | None = None,
     ts: datetime | None = None,
+    created_at: datetime | None = None,
 ) -> Event:
     e = Event(
         source_id=source.id,
         timestamp=ts or datetime.now(timezone.utc),
+        created_at=created_at,
         severity=severity,
         message=message,
         service=service,
@@ -96,6 +98,26 @@ class TestTimeseries:
         total = sum(p["count"] for p in resp.json()["points"])
         assert total == 1
 
+    async def test_recent_window_uses_event_timestamp_for_historical_events(self, client, db_session):
+        src = _make_source(db_session, name="recent-ingest-src")
+        db_session.add(src)
+        await db_session.flush()
+        now = datetime.now(timezone.utc)
+        _make_event(
+            db_session,
+            src,
+            message="historical-log-fresh-ingest",
+            ts=now - timedelta(hours=12),
+            created_at=now,
+        )
+        await db_session.commit()
+
+        from_ts = (now - timedelta(minutes=1)).isoformat()
+        to_ts = (now + timedelta(seconds=1)).isoformat()
+        resp = await client.get(f"/api/v1/metrics/timeseries?from={from_ts}&to={to_ts}&bucket=1m")
+        assert resp.status_code == 200
+        assert sum(point["count"] for point in resp.json()["points"]) == 0
+
 
 # ---------------------------------------------------------------------------
 # /metrics/top-errors
@@ -134,6 +156,27 @@ class TestTopErrors:
         resp = await client.get("/api/v1/metrics/top-errors")
         assert resp.json()["items"] == []
 
+    async def test_top_errors_recent_window_uses_event_timestamp(self, client, db_session):
+        src = _make_source(db_session, name="top-errors-recent-src")
+        db_session.add(src)
+        await db_session.flush()
+        now = datetime.now(timezone.utc)
+        _make_event(
+            db_session,
+            src,
+            severity="error",
+            message="late arriving error",
+            ts=now - timedelta(hours=6),
+            created_at=now,
+        )
+        await db_session.commit()
+
+        from_ts = (now - timedelta(minutes=1)).isoformat()
+        to_ts = (now + timedelta(seconds=1)).isoformat()
+        resp = await client.get("/api/v1/metrics/top-errors", params={"from": from_ts, "to": to_ts})
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []
+
 
 # ---------------------------------------------------------------------------
 # /metrics/top-services
@@ -159,6 +202,28 @@ class TestTopServices:
         items = {i["service"]: i["count"] for i in resp.json()["items"]}
         assert items["nginx"] == 3
         assert items["sshd"] == 1
+
+    async def test_top_services_recent_window_uses_event_timestamp(self, client, db_session):
+        src = _make_source(db_session, name="svc-recent-src")
+        db_session.add(src)
+        await db_session.flush()
+        now = datetime.now(timezone.utc)
+        _make_event(
+            db_session,
+            src,
+            service="late-service",
+            message="late event",
+            ts=now - timedelta(hours=3),
+            created_at=now,
+        )
+        await db_session.commit()
+
+        from_ts = (now - timedelta(minutes=1)).isoformat()
+        to_ts = (now + timedelta(seconds=1)).isoformat()
+        resp = await client.get("/api/v1/metrics/top-services", params={"from": from_ts, "to": to_ts})
+        assert resp.status_code == 200
+        items = {item["service"]: item["count"] for item in resp.json()["items"]}
+        assert "late-service" not in items
 
 
 # ---------------------------------------------------------------------------
@@ -188,3 +253,64 @@ class TestErrorRate:
         data = resp.json()
         assert data["total_events"] == 4
         assert abs(data["error_rate"] - 0.5) < 0.01
+
+    async def test_error_rate_recent_window_uses_event_timestamp(self, client, db_session):
+        src = _make_source(db_session, name="rate-recent-src")
+        db_session.add(src)
+        await db_session.flush()
+        now = datetime.now(timezone.utc)
+        _make_event(
+            db_session,
+            src,
+            severity="error",
+            message="recent error by ingest",
+            ts=now - timedelta(hours=5),
+            created_at=now,
+        )
+        await db_session.commit()
+
+        from_ts = (now - timedelta(minutes=1)).isoformat()
+        to_ts = (now + timedelta(seconds=1)).isoformat()
+        resp = await client.get("/api/v1/metrics/error-rate", params={"from": from_ts, "to": to_ts})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_events"] == 0
+        assert data["error_events"] == 0
+
+
+# ---------------------------------------------------------------------------
+# /metrics/volume-check
+# ---------------------------------------------------------------------------
+
+class TestVolumeCheck:
+    async def test_returns_no_confirmation_below_threshold(self, client, db_session):
+        src = _make_source(db_session, name="volume-check-src")
+        db_session.add(src)
+        await db_session.flush()
+        _make_event(db_session, src, message="v1")
+        _make_event(db_session, src, message="v2")
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/metrics/volume-check?threshold=5")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["threshold"] == 5
+        assert data["checked_events"] == 2
+        assert data["requires_confirmation"] is False
+        assert data["capped"] is False
+
+    async def test_requires_confirmation_above_threshold(self, client, db_session):
+        src = _make_source(db_session, name="volume-check-over")
+        db_session.add(src)
+        await db_session.flush()
+        for idx in range(4):
+            _make_event(db_session, src, message=f"v-over-{idx}")
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/metrics/volume-check?threshold=3")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["threshold"] == 3
+        assert data["checked_events"] == 4
+        assert data["requires_confirmation"] is True
+        assert data["capped"] is True

@@ -16,10 +16,11 @@ export const TIME_PRESETS: { label: string; hours: number }[] = [
 
 interface Props {
   value: number
-  onChange: (hours: number) => void
+  onChange: (hours: number) => void | Promise<void>
+  disabled?: boolean
 }
 
-export function TimeRangePicker({ value, onChange }: Props) {
+export function TimeRangePicker({ value, onChange, disabled = false }: Props) {
   const { t } = useI18n()
   return (
     <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
@@ -30,15 +31,17 @@ export function TimeRangePicker({ value, onChange }: Props) {
             key={p.label}
             type="button"
             onClick={() => onChange(p.hours)}
+            disabled={disabled}
             style={{
               padding: '0.25rem 0.6rem',
               fontSize: '0.8rem',
               borderRadius: '0.375rem',
               border: '1px solid',
-              cursor: 'pointer',
+              cursor: disabled ? 'not-allowed' : 'pointer',
               background: active ? 'var(--accent)' : 'var(--surface)',
               color: active ? '#fff' : 'var(--muted-fg)',
               borderColor: active ? 'var(--accent)' : 'var(--border)',
+              opacity: disabled ? 0.6 : 1,
             }}
           >
             {p.label.startsWith('time.') ? t(p.label) : p.label}

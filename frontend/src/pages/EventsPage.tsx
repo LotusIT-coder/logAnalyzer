@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { getEvents, getSources, type EventResponse, type SourceResponse } from '../lib/requests'
+import { getEvents, getSources, getServerTime, type EventResponse, type SourceResponse } from '../lib/requests'
 import dayjs from 'dayjs'
 import { getApiBase } from '../lib/api'
 import HelpTip from '../components/HelpTip'
@@ -11,6 +11,7 @@ import { TimeRangePicker } from '../components/TimeRangePicker'
 import { type SourceOption } from '../ctx/SourceFilterContext.shared'
 import { useSourceFilter } from '../ctx/useSourceFilter'
 import { AnsiText, FormattedMessage } from '../components/FormattedMessage'
+import { useI18n } from '../ctx/I18nContext'
 
 const SEV_COLOR: Record<string, string> = {
   critical: '#ef4444',
@@ -28,6 +29,10 @@ const REQUIRE_SOURCE_SELECTION =
   (import.meta.env.VITE_EVENTS_REQUIRE_SOURCE_SELECTION ?? 'true').toString().toLowerCase() !== 'false'
 
 const SEVERITIES = ['debug', 'info', 'warning', 'error', 'critical']
+
+function getEventObservedAt(event: EventResponse) {
+  return event.created_at ?? event.timestamp
+}
 
 function parseSeverityCsv(value: string) {
   return value
@@ -53,6 +58,13 @@ function formatDateRange(fromTime: string, toTime: string) {
   return `${fromLabel} - ${toLabel}`
 }
 
+function parseCsvValues(value: string) {
+  return value
+    .split(',')
+    .map(entry => entry.trim())
+    .filter(Boolean)
+}
+
 function buildContextItems(params: {
   sourceId: string
   sourceIdsCsv: string
@@ -64,6 +76,7 @@ function buildContextItems(params: {
   host: string
   service: string
   search: string
+  searchLabel: string
   sources: SourceResponse[]
 }) {
   const items: string[] = []
@@ -72,31 +85,31 @@ function buildContextItems(params: {
   const sourcePaths = params.sourcePathsCsv ? params.sourcePathsCsv.split(',').map(value => value.trim()).filter(Boolean) : []
   const rangeLabel = formatDateRange(params.fromTime, params.toTime)
 
-  if (source) items.push(`Quelle: ${source.name}`)
-  else if (params.sourceId) items.push(`Quelle: ${params.sourceId}`)
+  if (source) items.push(`Source: ${source.name}`)
+  else if (params.sourceId) items.push(`Source: ${params.sourceId}`)
   if (sourceIds.length === 1) {
     const srcName = params.sources.find(s => s.id === sourceIds[0])?.name ?? sourceIds[0]
-    items.push(`Quelle: ${srcName}`)
+    items.push(`Source: ${srcName}`)
   } else if (sourceIds.length > 1) {
-    items.push(`Quellen: ${sourceIds.length}`)
+    items.push(`Sources: ${sourceIds.length}`)
     const names = sourceIds.map(id => params.sources.find(s => s.id === id)?.name ?? id)
-    items.push(`Mehrfachauswahl: ${names.join(', ')}`)
+    items.push(`Multi-select: ${names.join(', ')}`)
   }
   if (sourcePaths.length === 1) {
-    items.push(`Pfad: ${sourcePaths[0].split('/').pop() ?? sourcePaths[0]}`)
+    items.push(`Path: ${sourcePaths[0].split('/').pop() ?? sourcePaths[0]}`)
   } else if (sourcePaths.length > 1) {
-    items.push(`Pfade: ${sourcePaths.length}`)
+    items.push(`Paths: ${sourcePaths.length}`)
     const pathNames = sourcePaths.map(p => p.split('/').pop() ?? p)
-    items.push(`Mehrfachauswahl: ${pathNames.join(', ')}`)
+    items.push(`Multi-select: ${pathNames.join(', ')}`)
   }
-  if (rangeLabel) items.push(`Zeitraum: ${rangeLabel}`)
+  if (rangeLabel) items.push(`Range: ${rangeLabel}`)
   if (params.severityCsv) {
     const labels = params.severityCsv.split(',').map(value => value.trim()).filter(Boolean)
     if (labels.length) items.push(`Severity: ${labels.join(', ')}`)
   }
   if (params.host) items.push(`Host: ${params.host}`)
   if (params.service) items.push(`Service: ${params.service}`)
-  if (params.search) items.push(`Suche: ${params.search}`)
+  if (params.search) items.push(`${params.searchLabel}: ${params.search}`)
   if (params.provider) items.push(`Provider: ${params.provider}`)
 
   return items
@@ -123,16 +136,17 @@ const REFRESH_INTERVAL_OPTIONS: { value: number; label: string }[] = [
 ]
 
 const ANSI_LEGEND_ROWS: Array<{ sample: string; code: string; meaning: string }> = [
-  { sample: 'var(--ansi-fg-31)', code: '31 / 91', meaning: 'Error, kritisch, fehlgeschlagen' },
-  { sample: 'var(--ansi-fg-32)', code: '32 / 92', meaning: 'Info, erfolgreich, ingested' },
-  { sample: 'var(--ansi-fg-33)', code: '33 / 93', meaning: 'Warnung, Hinweis, degradiert' },
-  { sample: 'var(--ansi-fg-34)', code: '34 / 94', meaning: 'Host, Pfad, ID, Quelle' },
-  { sample: 'var(--ansi-fg-35)', code: '35 / 95', meaning: 'Counter, Metriken, Mengen' },
-  { sample: 'var(--ansi-fg-36)', code: '36 / 96', meaning: 'Ablauf, Status, Marker' },
-  { sample: 'var(--ansi-fg-90)', code: '90', meaning: 'Gedimmt / sekundar' },
+  { sample: 'var(--ansi-fg-31)', code: '31 / 91', meaning: 'Error, critical, failed' },
+  { sample: 'var(--ansi-fg-32)', code: '32 / 92', meaning: 'Info, success, ingested' },
+  { sample: 'var(--ansi-fg-33)', code: '33 / 93', meaning: 'Warning, hint, degraded' },
+  { sample: 'var(--ansi-fg-34)', code: '34 / 94', meaning: 'Host, path, ID, source' },
+  { sample: 'var(--ansi-fg-35)', code: '35 / 95', meaning: 'Counter, metrics, totals' },
+  { sample: 'var(--ansi-fg-36)', code: '36 / 96', meaning: 'Flow, status, marker' },
+  { sample: 'var(--ansi-fg-90)', code: '90', meaning: 'Dimmed / secondary' },
 ]
 
 function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClose: () => void }) {
+  const { t } = useI18n()
   const [lines, setLines] = useState<TailLine[]>([])
   const [connected, setConnected] = useState<Record<string, boolean>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -170,7 +184,7 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
         })
       }
       es.onerror = () => {
-        setErrors(prev => ({ ...prev, [source.id]: 'Verbindung unterbrochen.' }))
+        setErrors(prev => ({ ...prev, [source.id]: t('events.livetail.connected.none') }))
         setConnected(prev => ({ ...prev, [source.id]: false }))
         es.close()
       }
@@ -195,7 +209,9 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
     .filter(([id]) => sources.find(s => s.id === id))
     .reverse() // Show newest errors at the top
   const showSourceTag = sources.length > 1
-  const title = sources.length === 1 ? `Live-Tail: ${sources[0].name}` : `Live-Tail: ${sources.length} Quellen`
+  const title = sources.length === 1
+    ? t('events.livetail.titleSingle', { name: sources[0].name })
+    : t('events.livetail.titleMulti', { count: sources.length })
 
   function getLineColor(text: string) {
     const isError = /error|crit|fatal|emerg/i.test(text)
@@ -217,32 +233,36 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
             <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>{title}</span>
             <span style={{ ...modal.dot, background: allConnected ? '#22c55e' : anyConnected ? '#fbbf24' : '#ef4444' }} />
             <span style={{ fontSize: '0.75rem', color: 'var(--muted-fg)' }}>
-              {allConnected ? 'alle verbunden' : anyConnected ? `${sources.filter(s => connected[s.id]).length}/${sources.length} verbunden` : 'getrennt'}
+              {allConnected
+                ? t('events.livetail.connected.all')
+                : anyConnected
+                  ? t('events.livetail.connected.partial', { connected: sources.filter(s => connected[s.id]).length, total: sources.length })
+                  : t('events.livetail.connected.none')}
             </span>
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
             {showSourceTag && (
               <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)} style={modal.filterInput}>
-                <option value="">Alle Quellen</option>
+                <option value="">{t('events.livetail.allSources')}</option>
                 {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             )}
             <input
               value={filter}
               onChange={e => setFilter(e.target.value)}
-              placeholder="Zeilen filtern..."
+              placeholder={t('events.livetail.filterLines')}
               style={modal.filterInput}
             />
             <button
               onClick={() => setAlertFocusMode(v => !v)}
               style={alertFocusMode ? modal.ctrlBtnActive : modal.ctrlBtn}
-              title="Hebt nur Warnung/Fehler farbig hervor und zeigt den Rest neutral"
+              title={t('events.livetail.alertFocusHint')}
             >
-              {alertFocusMode ? 'Warn/Error Fokus: AN' : 'Warn/Error Fokus: AUS'}
+              {alertFocusMode ? t('events.livetail.alertFocusOn') : t('events.livetail.alertFocusOff')}
             </button>
-            <button onClick={() => setPaused(v => !v)} style={modal.ctrlBtn}>{paused ? 'Weiter' : 'Pause'}</button>
-            <button onClick={() => setLines([])} style={modal.ctrlBtn}>Leeren</button>
-            <button onClick={onClose} style={{ ...modal.ctrlBtn, color: 'var(--danger-fg)' }}>x Schliessen</button>
+            <button onClick={() => setPaused(v => !v)} style={modal.ctrlBtn}>{paused ? t('events.livetail.resume') : t('events.livetail.pause')}</button>
+            <button onClick={() => setLines([])} style={modal.ctrlBtn}>{t('events.livetail.clear')}</button>
+            <button onClick={onClose} style={{ ...modal.ctrlBtn, color: 'var(--danger-fg)' }}>x {t('events.livetail.close')}</button>
           </div>
         </div>
 
@@ -284,12 +304,12 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
               {line.text}
             </div>
           ))}
-          {!displayed.length && <div style={{ color: 'var(--muted-fg)', padding: '1rem' }}>{anyConnected ? 'Warte auf neue Zeilen...' : 'Keine Daten'}</div>}
+          {!displayed.length && <div style={{ color: 'var(--muted-fg)', padding: '1rem' }}>{anyConnected ? t('events.livetail.waiting') : t('events.livetail.noData')}</div>}
           <div ref={bottomRef} />
         </div>
 
         <div style={modal.footer}>
-          {displayed.length} Zeilen{sources.length === 1 && sources[0].config?.path ? ` | ${sources[0].config.path}` : ''}
+          {t('events.livetail.lines', { count: displayed.length })}{sources.length === 1 && sources[0].config?.path ? ` | ${sources[0].config.path}` : ''}
         </div>
       </div>
     </div>
@@ -297,22 +317,23 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
 }
 
 function ColorLegendModal({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n()
   return (
     <div style={modal.overlay} onClick={onClose}>
       <div style={legendModal.box} onClick={e => e.stopPropagation()}>
         <div style={legendModal.header}>
           <div>
-            <div style={legendModal.title}>ANSI-Farben in Log-Nachrichten</div>
-            <div style={legendModal.subtitle}>Die Farben kommen direkt aus den Log-Sequenzen wie [31m, [32m, [36m und [0m.</div>
+            <div style={legendModal.title}>{t('events.legend.title')}</div>
+            <div style={legendModal.subtitle}>{t('events.legend.subtitle')}</div>
           </div>
-          <button onClick={onClose} style={legendModal.closeBtn}>x Schliessen</button>
+          <button onClick={onClose} style={legendModal.closeBtn}>x {t('events.livetail.close')}</button>
         </div>
 
         <div style={legendModal.content}>
           <div style={legendModal.tableHeader}>
-            <span style={{ width: 80 }}>Farbe</span>
+            <span style={{ width: 80 }}>{t('events.legend.color')}</span>
             <span style={{ width: 110 }}>ANSI Code</span>
-            <span style={{ flex: 1 }}>Bedeutung</span>
+            <span style={{ flex: 1 }}>{t('events.legend.meaning')}</span>
           </div>
           {ANSI_LEGEND_ROWS.map(row => (
             <div key={row.code} style={legendModal.tableRow}>
@@ -325,7 +346,7 @@ function ColorLegendModal({ onClose }: { onClose: () => void }) {
           ))}
 
           <div style={legendModal.note}>
-            Hinweis: Der Severity-Badge links ist eine separate UI-Farbe und nicht Teil der ANSI-Sequenz im Nachrichtentext.
+            {t('events.legend.note')}
           </div>
         </div>
       </div>
@@ -334,6 +355,7 @@ function ColorLegendModal({ onClose }: { onClose: () => void }) {
 }
 
 export default function EventsPage() {
+  const { t } = useI18n()
   const { filter: globalFilter, setFilter: setGlobalFilter, selectedSources, setSelectedSources, customSources, setCustomSources } = useSourceFilter()
   const [searchParams] = useSearchParams()
   const [sourceId, setSourceId] = useState(() => getInitialFilterValue(searchParams, 'source_id'))
@@ -348,10 +370,10 @@ export default function EventsPage() {
   const [search, setSearch] = useState(() => getInitialFilterValue(searchParams, 'q'))
   const [searchInput, setSearchInput] = useState(() => getInitialFilterValue(searchParams, 'q'))
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-  const [refreshTick, setRefreshTick] = useState(0)
   const [tailSources, setTailSources] = useState<SourceResponse[] | null>(null)
   const [uploadResult, setUploadResult] = useState<UploadResultState | null>(null)
   const [showColorLegend, setShowColorLegend] = useState(false)
+  const [serverTimeOffset, setServerTimeOffset] = useState<number>(0)
   const [refreshIntervalMs, setRefreshIntervalMs] = useState<number>(() => {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem(EVENTS_REFRESH_INTERVAL_KEY) : null
     const parsed = stored ? Number(stored) : NaN
@@ -363,6 +385,25 @@ export default function EventsPage() {
     if (typeof window === 'undefined') return
     window.localStorage.setItem(EVENTS_REFRESH_INTERVAL_KEY, String(refreshIntervalMs))
   }, [refreshIntervalMs])
+
+  // Synchronize client time with server time to fix time-skew bugs
+  // where events fall outside the filter range due to time differences
+  useEffect(() => {
+    const syncServerTime = async () => {
+      try {
+        const response = await getServerTime()
+        const clientNowMs = Date.now()
+        const serverNowMs = response.unix_ms
+        const offset = serverNowMs - clientNowMs
+        setServerTimeOffset(offset)
+      } catch (error) {
+        console.warn('Failed to sync server time:', error)
+        // Gracefully fall back to client time (offset = 0)
+        setServerTimeOffset(0)
+      }
+    }
+    void syncServerTime()
+  }, [])
 
   const { data: sources = [] } = useQuery({ queryKey: ['sources'], queryFn: getSources })
   const globalSourceIdsCsv = globalFilter.sourceIds.join(',')
@@ -378,7 +419,42 @@ export default function EventsPage() {
     (globalSingleSourcePath && !sourceId && sourcePathsCsv === globalSingleSourcePath)
   )
   const effectiveSourceIdsCsv = sourceIdsCsv || (!sourceId ? globalSourceIdsCsv : '')
-  const effectiveSourcePathsCsv = sourcePathsCsv || (!sourceId ? globalSourcePathsCsv : '')
+  const effectiveSourcePathsCsvRaw = sourcePathsCsv || (!sourceId ? globalSourcePathsCsv : '')
+  const effectiveSourcePathsCsv = useMemo(() => {
+    const explicitSourceIds = [
+      ...(sourceId ? [sourceId] : []),
+      ...parseCsvValues(effectiveSourceIdsCsv),
+    ]
+    if (explicitSourceIds.length === 0 || !effectiveSourcePathsCsvRaw) return effectiveSourcePathsCsvRaw
+
+    const allowedPaths = new Set(
+      explicitSourceIds
+        .map(id => sources.find(source => source.id === id)?.config?.path)
+        .filter((path): path is string => Boolean(path)),
+    )
+
+    return parseCsvValues(effectiveSourcePathsCsvRaw)
+      .filter(path => allowedPaths.has(path))
+      .join(',')
+  }, [sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsvRaw, sources])
+
+  useEffect(() => {
+    if (!sourcePathsCsv || sourcePathsCsv === effectiveSourcePathsCsv) return
+    setSourcePathsCsv(effectiveSourcePathsCsv)
+  }, [sourcePathsCsv, effectiveSourcePathsCsv])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const url = new URL(window.location.href)
+    const currentSourcePaths = url.searchParams.get('source_paths') ?? ''
+    if (currentSourcePaths === effectiveSourcePathsCsv) return
+
+    if (effectiveSourcePathsCsv) url.searchParams.set('source_paths', effectiveSourcePathsCsv)
+    else url.searchParams.delete('source_paths')
+
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`
+    window.history.replaceState(window.history.state, '', nextUrl)
+  }, [effectiveSourcePathsCsv])
 
   const effectiveSourceIdCount = effectiveSourceIdsCsv ? effectiveSourceIdsCsv.split(',').filter(Boolean).length : 0
   const effectiveSourcePathCount = effectiveSourcePathsCsv ? effectiveSourcePathsCsv.split(',').filter(Boolean).length : 0
@@ -388,7 +464,7 @@ export default function EventsPage() {
   const selectedSeveritiesCsv = selectedSeverities.join(',')
 
   // Apply global rangeHours when no explicit from/to is set.
-  // Memoized to keep query keys stable across re-renders.
+  // Keep key inputs stable; the actual live window is resolved in queryFn per fetch.
   const rangeHours = globalFilter.rangeHours
   const effectiveWindow = useMemo(() => {
     if (fromTime || toTime) {
@@ -402,14 +478,32 @@ export default function EventsPage() {
       return { from: undefined, to: undefined }
     }
 
-    const now = Date.now()
+    // Use server-synchronized time instead of client Date.now()
+    const now = Date.now() + serverTimeOffset
     return {
       from: new Date(now - rangeHours * 3600_000).toISOString(),
       to: new Date(now).toISOString(),
     }
-  }, [fromTime, toTime, rangeHours, refreshTick])
+  }, [fromTime, toTime, rangeHours, serverTimeOffset])
   const effectiveFrom = effectiveWindow.from
   const effectiveTo = effectiveWindow.to
+
+  function resolveQueryWindow() {
+    if (fromTime || toTime) {
+      return {
+        from: fromTime || undefined,
+        to: toTime || undefined,
+      }
+    }
+    if (rangeHours <= 0) return { from: undefined, to: undefined }
+    // Use server-synchronized time instead of client Date.now()
+    // to ensure events don't fall outside filter ranges due to time skew
+    const now = Date.now() + serverTimeOffset
+    return {
+      from: new Date(now - rangeHours * 3600_000).toISOString(),
+      to: new Date(now).toISOString(),
+    }
+  }
 
   function handleRangeHoursChange(nextRangeHours: number) {
     setGlobalFilter({
@@ -452,13 +546,15 @@ export default function EventsPage() {
   // Infinite query: loads events page by page
   const hasAnySourceSelection = Boolean(sourceId || effectiveSourceIdsCsv || effectiveSourcePathsCsv)
   const eventsQueryEnabled = !REQUIRE_SOURCE_SELECTION || hasAnySourceSelection
-  const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage, isFetching } = useInfiniteQuery({
-    queryKey: ['events', sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, effectiveFrom, effectiveTo, selectedSeveritiesCsv, provider, host, service, search, refreshTick],
-    queryFn: ({ pageParam }: { pageParam?: string }) => getEvents({
+  const { data, isLoading, isFetched, hasNextPage, fetchNextPage, isFetchingNextPage, isFetching, refetch } = useInfiniteQuery({
+    queryKey: ['events', sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, fromTime, toTime, rangeHours, selectedSeveritiesCsv, provider, host, service, search],
+    queryFn: ({ pageParam }: { pageParam?: string }) => {
+      const queryWindow = resolveQueryWindow()
+      return getEvents({
       limit: 50,
       cursor: pageParam,
-      ...(effectiveFrom ? { from: effectiveFrom } : {}),
-      ...(effectiveTo ? { to: effectiveTo } : {}),
+      ...(queryWindow.from ? { from: queryWindow.from } : {}),
+      ...(queryWindow.to ? { to: queryWindow.to } : {}),
       ...(sourceId ? { source_id: sourceId } : {}),
       ...(effectiveSourceIdsCsv ? { source_ids: effectiveSourceIdsCsv } : {}),
       ...(effectiveSourcePathsCsv ? { source_paths: effectiveSourcePathsCsv } : {}),
@@ -467,17 +563,19 @@ export default function EventsPage() {
       ...(host ? { host } : {}),
       ...(service ? { service } : {}),
       ...(search ? { q: search } : {}),
-    }),
+      })
+    },
     initialPageParam: undefined,
     getNextPageParam: (lastPage) => lastPage.next_cursor,
     staleTime: 30_000,
     refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
-    refetchIntervalInBackground: false,
+    refetchIntervalInBackground: true,
     enabled: eventsQueryEnabled,
   })
 
   // Flatten all pages into single events array
   const allEvents = eventsQueryEnabled ? (data?.pages.flatMap(page => page.items) ?? []) : []
+  const showInitialLoading = isLoading && !isFetched
 
   useEffect(() => {
     const container = tableContainerRef.current
@@ -541,7 +639,7 @@ export default function EventsPage() {
 
   function refreshLatest() {
     setExpanded({})
-    setRefreshTick(v => v + 1)
+    void refetch()
   }
 
   const hasFilters = sourceId || sourceIdsCsv || sourcePathsCsv || effectiveFrom || effectiveTo || selectedSeveritiesCsv || host || service || search
@@ -556,6 +654,7 @@ export default function EventsPage() {
     host,
     service,
     search,
+    searchLabel: t('events.context.searchLabel'),
     sources,
   })
 
@@ -567,10 +666,10 @@ export default function EventsPage() {
       <div style={styles.header}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <h2 style={styles.h2}>Events</h2>
-          <HelpTip content="Die Eventliste zeigt Rohereignisse mit allen aktiven Filtern. Ein Klick auf eine Zeile oeffnet die Detailansicht des jeweiligen Events." ariaLabel="Events erklaeren" />
+          <HelpTip content="The event list shows raw events with all active filters. Click a row to open detailed event fields." ariaLabel="Explain events" />
         </div>
         <button onClick={refreshLatest} disabled={isFetching} style={styles.refBtn}>
-          {isFetching ? 'Aktualisiere...' : 'Aktualisieren'}
+          {isFetching ? t('events.refreshing') : t('events.refresh')}
         </button>
       </div>
 
@@ -591,33 +690,30 @@ export default function EventsPage() {
           customSources={customSources}
           onRemoveCustom={removeCustomSource}
         />
-        <HelpTip content="Wähle eine oder mehrere Quellen für die Eventliste. Die Auswahl steuert auch den globalen Kontext für den AI-Chat." ariaLabel="Quellenfilter erklaeren" />
-        <button onClick={refreshLatest} disabled={isFetching} style={styles.refBtn}>
-          {isFetching ? 'Aktualisiere...' : 'Aktualisieren'}
-        </button>
+        <HelpTip content="Choose one or more sources for the event list. This selection also controls the global context for AI chat." ariaLabel="Explain source filter" />
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-          <span style={{ color: 'var(--muted-fg)', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Live</span>
+          <span style={{ color: 'var(--muted-fg)', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{t('events.live')}</span>
           <select
             value={String(refreshIntervalMs)}
             onChange={e => setRefreshIntervalMs(Number(e.target.value))}
             style={styles.intervalSelect}
-            aria-label="Aktualisierungsintervall"
+            aria-label="Refresh interval"
           >
             {REFRESH_INTERVAL_OPTIONS.map(opt => (
               <option key={opt.value} value={String(opt.value)}>{opt.label}</option>
             ))}
           </select>
-          <HelpTip content="Die Eventliste aktualisiert sich automatisch im gewaehlten Intervall mit den aktuellen Filtern. 'Aus' pausiert die Live-Aktualisierung." ariaLabel="Live-Aktualisierung erklaeren" />
+          <HelpTip content="The event list refreshes automatically with the selected interval and current filters. 'Off' pauses live updates." ariaLabel="Explain live refresh" />
         </div>
 
         <TimeRangePicker value={rangeHours} onChange={handleRangeHoursChange} />
-        <HelpTip content="Das Zeitfenster gilt fuer Eventliste und Dashboard gleichzeitig. Aenderungen werden zwischen den Reitern synchronisiert." ariaLabel="Zeitfenster erklaeren" />
+        <HelpTip content="The time window is shared by Events and Dashboard. Changes stay synchronized between tabs." ariaLabel="Explain time window" />
 
         <details style={styles.severityDropdown}>
           <summary style={styles.severitySummary}>
             {selectedSeverities.length > 0
-              ? `${selectedSeverities.length} Schweregrade`
-              : 'Alle Schweregrade'}
+              ? t('events.severity.selected', { count: selectedSeverities.length })
+              : t('events.severity.all')}
           </summary>
           <div style={styles.severityMenu}>
             {SEVERITIES.map(level => {
@@ -647,7 +743,7 @@ export default function EventsPage() {
                   setSelectedSeverities(SEVERITIES)
                 }}
               >
-                Alle
+                {t('events.severity.allButton')}
               </button>
               <button
                 type="button"
@@ -656,12 +752,12 @@ export default function EventsPage() {
                   setSelectedSeverities([])
                 }}
               >
-                Keine
+                {t('events.severity.noneButton')}
               </button>
             </div>
           </div>
         </details>
-        <HelpTip content="Schweregrade helfen beim Priorisieren. Fehler und kritische Events deuten auf unmittelbaren Handlungsbedarf hin, waehrend Info- und Debug-Events meist Kontext liefern." ariaLabel="Severity-Filter erklaeren" />
+        <HelpTip content="Severities help with prioritization. Error and critical events often need immediate action, while info and debug events usually add context." ariaLabel="Explain severity filter" />
         <select
           value={provider}
           onChange={e => setProvider(normalizeProvider(e.target.value))}
@@ -669,138 +765,137 @@ export default function EventsPage() {
           aria-label="Event-Provider"
           title="Diagnose-Provider fuer die Event-Suche"
         >
-          <option value="">Provider: auto</option>
-          <option value="postgres">Provider: postgres</option>
-          <option value="elastic">Provider: elastic</option>
+          <option value="">{t('events.provider.auto')}</option>
+          <option value="postgres">{t('events.provider.postgres')}</option>
+          <option value="elastic">{t('events.provider.elastic')}</option>
         </select>
         <span style={styles.providerHint}>
           {provider === 'postgres'
-            ? 'Erzwingt PostgreSQL'
+            ? t('events.provider.postgresHint')
             : provider === 'elastic'
-              ? 'Erzwingt Elasticsearch'
-              : 'Auto: Elastic mit PostgreSQL-Fallback'}
+              ? t('events.provider.elasticHint')
+              : t('events.provider.autoHint')}
         </span>
         <input
           value={host}
           onChange={e => setHost(e.target.value)}
-          placeholder="Host filtern..."
+          placeholder={t('events.filterHost')}
           style={{ ...styles.search, flex: '0 0 140px' }}
         />
         <input
           value={service}
           onChange={e => setService(e.target.value)}
-          placeholder="Service filtern..."
+          placeholder={t('events.filterService')}
           style={{ ...styles.search, flex: '0 0 140px' }}
         />
         <input
           value={searchInput}
           onChange={e => setSearchInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && applySearch()}
-          placeholder="Nachricht suchen..."
+          placeholder={t('events.searchMessage')}
           style={styles.search}
         />
-        <HelpTip content="Die Textsuche durchsucht die Eventnachricht. Host- und Service-Felder grenzen dagegen strukturierte Metadaten ein." ariaLabel="Textsuche erklaeren" />
-        <button onClick={applySearch} style={styles.btn}>Suchen</button>
+        <HelpTip content="Text search scans the event message, while host and service fields filter structured metadata." ariaLabel="Explain text search" />
+        <button onClick={applySearch} style={styles.btn}>{t('events.search')}</button>
         {hasFilters && (
-          <button onClick={resetFilters} style={styles.resetBtn}>Filter zurücksetzen</button>
+          <button onClick={resetFilters} style={styles.resetBtn}>{t('events.resetFilters')}</button>
         )}
       </div>
 
       {contextItems.length > 0 && (
         <div aria-label="Aktiver Kontext" style={styles.contextBar}>
-          <span style={styles.contextLabel}>Aktiver Kontext</span>
-          <HelpTip content="Diese Chips zeigen, welche Quelle, Zeit- oder Inhaltsfilter aktuell aktiv sind. So erkennst du sofort, warum die Eventliste gerade so eingeschraenkt ist." ariaLabel="Aktiven Kontext erklaeren" />
+          <span style={styles.contextLabel}>{t('events.context.active')}</span>
+          <HelpTip content="These chips show which source, time, and content filters are currently active." ariaLabel="Explain active context" />
           {contextItems.map(item => (
             <span key={item} style={styles.contextChip}>{item}</span>
           ))}
         </div>
       )}
 
-      {isLoading ? (
-        <div style={{ color: 'var(--muted-fg)', padding: '2rem' }}>Lade...</div>
-      ) : (
-        <>
-          <div style={styles.resultsMeta}>
-            <span>{allEvents.length} Einträge geladen (neueste zuerst)</span>
-            {hasNextPage && <span style={{ color: 'var(--muted-fg)' }}>↓ Scrollen zum Laden von mehr</span>}
-            <HelpTip content="Die Liste ist standardmaessig absteigend nach Zeit sortiert. Scrolle nach unten um weitere Events zu laden. Ein Klick auf eine Zeile klappt die vollstaendigen Felder aus." ariaLabel="Eventliste erklaeren" />
-          </div>
-          <div ref={tableContainerRef} style={styles.tableContainer}>
-            <div style={styles.table}>
-              <div style={styles.theader}>
-                <span style={{ width: 150 }}>Zeitstempel</span>
-                <span style={{ width: 75 }}>Severity</span>
-                {showSourceColumn && <span style={{ width: 140 }}>Quelle</span>}
-                <span style={{ width: 110 }}>Host</span>
-                <span style={{ width: 120 }}>Service</span>
-                <span style={{ flex: 1 }}>Nachricht</span>
-              </div>
-              {allEvents.map((event: EventResponse) => (
-                <div key={event.id}>
-                  <div
-                    style={{ ...styles.row, cursor: 'pointer', background: expanded[event.id] ? 'var(--table-row-alt-bg)' : undefined }}
-                    onClick={() => toggleExpand(event.id)}
-                    title="Klicken zum Expandieren"
-                  >
-                    <span style={{ width: 150, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.78rem' }}>
-                      {dayjs(event.timestamp).format('DD.MM.YY HH:mm:ss')}
+      <>
+        <div style={styles.resultsMeta}>
+          <span>{t('events.results.loaded', { count: allEvents.length })}</span>
+          {hasNextPage && <span style={{ color: 'var(--muted-fg)' }}>↓ {t('events.results.scrollMore')}</span>}
+          <HelpTip content="Events are sorted by receive time (newest first). The original log timestamp remains visible in details. Scroll down to load more and click rows to expand." ariaLabel="Explain event list" />
+        </div>
+        <div ref={tableContainerRef} style={styles.tableContainer}>
+          <div style={styles.table}>
+            <div style={styles.theader}>
+              <span style={{ width: 150 }}>{t('events.table.received')}</span>
+              <span style={{ width: 75 }}>Severity</span>
+              {showSourceColumn && <span style={{ width: 140 }}>{t('events.table.source')}</span>}
+              <span style={{ width: 110 }}>Host</span>
+              <span style={{ width: 120 }}>Service</span>
+              <span style={{ flex: 1 }}>{t('events.table.message')}</span>
+            </div>
+            {allEvents.map((event: EventResponse) => (
+              <div key={event.id}>
+                <div
+                  style={{ ...styles.row, cursor: 'pointer', background: expanded[event.id] ? 'var(--table-row-alt-bg)' : undefined }}
+                  onClick={() => toggleExpand(event.id)}
+                  title={t('events.row.expand')}
+                >
+                  <span style={{ width: 150, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.78rem' }}>
+                    {dayjs(getEventObservedAt(event)).format('DD.MM.YY HH:mm:ss')}
+                  </span>
+                  <span style={{ width: 75, flexShrink: 0 }}>
+                    <span style={{ ...styles.badge, background: SEV_COLOR[event.severity] ?? '#475569' }}>
+                      {event.severity}
                     </span>
-                    <span style={{ width: 75, flexShrink: 0 }}>
-                      <span style={{ ...styles.badge, background: SEV_COLOR[event.severity] ?? '#475569' }}>
-                        {event.severity}
-                      </span>
+                  </span>
+                  {showSourceColumn && (
+                    <span style={{ width: 140, color: 'var(--accent)', flexShrink: 0, fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={event.source_id ?? ''}>
+                      {event.source_id ? (sourceNameById.get(event.source_id) ?? event.source_id.slice(0, 8)) : '-'}
                     </span>
-                    {showSourceColumn && (
-                      <span style={{ width: 140, color: 'var(--accent)', flexShrink: 0, fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={event.source_id ?? ''}>
-                        {event.source_id ? (sourceNameById.get(event.source_id) ?? event.source_id.slice(0, 8)) : '-'}
-                      </span>
-                    )}
-                    <span style={{ width: 110, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {event.host ?? '-'}
-                    </span>
-                    <span style={{ width: 120, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {event.service ?? '-'}
-                    </span>
-                    <span style={{ flex: 1, overflow: 'hidden', fontSize: '0.84rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', lineHeight: '1.4' }}>
-                      <AnsiText message={event.message} inline />
-                    </span>
-                  </div>
-                  {expanded[event.id] && (
-                    <div style={styles.detail}>
-                      <div style={styles.detailGrid}>
-                        <span style={styles.detailLabel}>ID</span><span style={styles.detailVal}>{event.id}</span>
-                        <span style={styles.detailLabel}>Quelle</span><span style={styles.detailVal}>{event.source_id ? `${sourceNameById.get(event.source_id) ?? event.source_id} (${event.source_id})` : '-'}</span>
-                        <span style={styles.detailLabel}>Zeitstempel</span><span style={styles.detailVal}>{dayjs(event.timestamp).format('DD.MM.YYYY HH:mm:ss.SSS')}</span>
-                        <span style={styles.detailLabel}>Host</span><span style={styles.detailVal}>{event.host ?? '-'}</span>
-                        <span style={styles.detailLabel}>Service</span><span style={styles.detailVal}>{event.service ?? '-'}</span>
-                        <span style={styles.detailLabel}>Severity</span><span style={styles.detailVal}>{event.severity}</span>
-                      </div>
-                      <div style={{ marginTop: '0.5rem' }}>
-                        <span style={styles.detailLabel}>Nachricht:</span>
-                        <div style={{ marginTop: '0.25rem' }}>
-                          <FormattedMessage message={event.message} />
-                        </div>
+                  )}
+                  <span style={{ width: 110, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {event.host ?? '-'}
+                  </span>
+                  <span style={{ width: 120, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {event.service ?? '-'}
+                  </span>
+                  <span style={{ flex: 1, overflow: 'hidden', fontSize: '0.84rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', lineHeight: '1.4' }}>
+                    <AnsiText message={event.message} inline />
+                  </span>
+                </div>
+                {expanded[event.id] && (
+                  <div style={styles.detail}>
+                    <div style={styles.detailGrid}>
+                      <span style={styles.detailLabel}>ID</span><span style={styles.detailVal}>{event.id}</span>
+                      <span style={styles.detailLabel}>{t('events.table.source')}</span><span style={styles.detailVal}>{event.source_id ? `${sourceNameById.get(event.source_id) ?? event.source_id} (${event.source_id})` : '-'}</span>
+                      <span style={styles.detailLabel}>Empfangen</span><span style={styles.detailVal}>{dayjs(getEventObservedAt(event)).format('DD.MM.YYYY HH:mm:ss.SSS')}</span>
+                      <span style={styles.detailLabel}>{t('events.detail.logTimestamp')}</span><span style={styles.detailVal}>{dayjs(event.timestamp).format('DD.MM.YYYY HH:mm:ss.SSS')}</span>
+                      <span style={styles.detailLabel}>Host</span><span style={styles.detailVal}>{event.host ?? '-'}</span>
+                      <span style={styles.detailLabel}>Service</span><span style={styles.detailVal}>{event.service ?? '-'}</span>
+                      <span style={styles.detailLabel}>Severity</span><span style={styles.detailVal}>{event.severity}</span>
+                    </div>
+                    <div style={{ marginTop: '0.5rem' }}>
+                      <span style={styles.detailLabel}>{t('events.detail.message')}:</span>
+                      <div style={{ marginTop: '0.25rem' }}>
+                        <FormattedMessage message={event.message} />
                       </div>
                     </div>
-                  )}
-                </div>
-              ))}
-              {!allEvents.length && (
-                <div style={{ padding: '2rem', color: 'var(--muted-fg)', textAlign: 'center' }}>
-                  {REQUIRE_SOURCE_SELECTION && !hasAnySourceSelection
-                    ? 'Keine Quelle ausgewählt – bitte oben eine oder mehrere Quellen wählen, um Events anzuzeigen.'
-                    : 'Keine Events gefunden'}
-                </div>
-              )}
-              {isFetchingNextPage && (
-                <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--muted-fg)', fontSize: '0.85rem' }}>
-                  Lade weitere Events...
-                </div>
-              )}
-            </div>
+                  </div>
+                )}
+              </div>
+            ))}
+            {!allEvents.length && (
+              <div style={{ padding: '2rem', color: 'var(--muted-fg)', textAlign: 'center' }}>
+                {showInitialLoading
+                  ? t('events.empty.loading')
+                  : REQUIRE_SOURCE_SELECTION && !hasAnySourceSelection
+                    ? t('events.empty.noSource')
+                    : t('events.empty.noEvents')}
+              </div>
+            )}
+            {isFetchingNextPage && (
+              <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--muted-fg)', fontSize: '0.85rem' }}>
+                {t('events.loadingMore')}
+              </div>
+            )}
           </div>
-        </>
-      )}
+        </div>
+      </>
     </div>
   )
 }

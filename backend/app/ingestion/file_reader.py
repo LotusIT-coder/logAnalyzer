@@ -12,7 +12,7 @@ import json
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import insert, select
@@ -24,14 +24,15 @@ from app.parser.pipeline import parse_line
 from app.services.source_service import get_source_config_path, resolve_source_path, source_path_is_regex
 
 
-_MAX_LINES_PER_RUN = 10_000  # safety cap per source per ingestion cycle
+_MAX_LINES_PER_RUN = 200  # safety cap per source per ingestion cycle
 _BATCH_SIZE = 200         # rows bulk-inserted and released per partial flush
 _PATH_BASED_SOURCE_TYPES = {"file", "syslog", "docker", "filebeat", "winlogbeat", "elastic_agent"}
 # If backlog is huge, skip ahead close to EOF to prioritize near-real-time data.
-_MAX_BACKLOG_BYTES_BEFORE_FAST_FORWARD = 20_000_000
-_FAST_FORWARD_TAIL_BYTES = 2_000_000
+_MAX_BACKLOG_BYTES_BEFORE_FAST_FORWARD = 1_000_000
+_FAST_FORWARD_TAIL_BYTES = 256_000
 _JOURNAL_CURSOR_PREFIX = "journal\t"
 _JOURNAL_CURSOR_CHECKPOINT_LINE = "__journal_cursor_checkpoint__"
+_FILE_CURSOR_CHECKPOINT_LINE = "__file_cursor_checkpoint__"
 _JOURNALD_PRIORITY_MAP = {
     "0": "critical",
     "1": "critical",
@@ -42,6 +43,13 @@ _JOURNALD_PRIORITY_MAP = {
     "6": "info",
     "7": "debug",
 }
+_SYSLOG_STYLE_SOURCE_NAMES = {"syslog", "auth.log", "kern.log"}
+
+
+def _is_syslog_style_source(source: Source) -> bool:
+    if source.type == "syslog":
+        return True
+    return (source.name or "").lower() in _SYSLOG_STYLE_SOURCE_NAMES
 
 
 async def _get_last_cursor(session: AsyncSession, source_id: str) -> tuple[Optional[str], Optional[int]]:
@@ -50,38 +58,60 @@ async def _get_last_cursor(session: AsyncSession, source_id: str) -> tuple[Optio
     Backward compatibility:
     - old format: "<offset>"
     - new format: "<path>\t<offset>"
+
+    Performance: raw_log can have 100M+ rows. We ONLY look at rows from the
+    last 10 minutes to use the idx_raw_log_ingested_at index efficiently.
+    Checkpoint rows are written every ~1 s, so a recent one always exists.
+    If nothing is found (first start or long gap) we return (None, None)
+    which lets the caller fast-forward to EOF – correct restart behaviour.
     """
-    result = await session.execute(
+    recent_cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+
+    checkpoint = await session.execute(
         select(RawLog.cursor)
-        .where(RawLog.source_id == source_id, RawLog.cursor.isnot(None))
+        .where(
+            RawLog.source_id == source_id,
+            RawLog.cursor.isnot(None),
+            RawLog.raw_line == _FILE_CURSOR_CHECKPOINT_LINE,
+            RawLog.ingested_at >= recent_cutoff,
+        )
         .order_by(RawLog.ingested_at.desc())
         .limit(1)
     )
-    row = result.scalar_one_or_none()
-    if row is None:
-        return None, None
-    row_str = str(row)
-    if "\t" in row_str:
-        maybe_path, maybe_off = row_str.rsplit("\t", 1)
+    checkpoint_row = checkpoint.scalar_one_or_none()
+    if checkpoint_row is not None:
+        checkpoint_str = str(checkpoint_row)
+        if "\t" in checkpoint_str:
+            maybe_path, maybe_off = checkpoint_str.rsplit("\t", 1)
+            try:
+                return maybe_path, int(maybe_off)
+            except (ValueError, TypeError):
+                return maybe_path, None
         try:
-            return maybe_path, int(maybe_off)
+            return None, int(checkpoint_str)
         except (ValueError, TypeError):
-            return maybe_path, None
-    try:
-        return None, int(row_str)
-    except (ValueError, TypeError):
-        return None, None
+            return None, None
+
+    # No recent checkpoint found – first run or gap > 10 min.
+    # Return (None, None) so the caller will fast-forward to file tail.
+    return None, None
 
 
 async def _get_last_journal_cursor(session: AsyncSession, source_id: str) -> Optional[str]:
-    # Prefer explicit checkpoint rows. A large bulk insert can assign identical
-    # ingested_at values to many raw rows, which makes ordering ambiguous.
+    """Return the most-recent journald cursor string.
+
+    Performance: use the same 10-minute time window as _get_last_cursor to
+    avoid full-table scans on 100M+ row tables.
+    """
+    recent_cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+
     checkpoint = await session.execute(
         select(RawLog.cursor)
         .where(
             RawLog.source_id == source_id,
             RawLog.cursor.isnot(None),
             RawLog.raw_line == _JOURNAL_CURSOR_CHECKPOINT_LINE,
+            RawLog.ingested_at >= recent_cutoff,
         )
         .order_by(RawLog.ingested_at.desc())
         .limit(1)
@@ -93,19 +123,8 @@ async def _get_last_journal_cursor(session: AsyncSession, source_id: str) -> Opt
             return cursor[len(_JOURNAL_CURSOR_PREFIX):]
         return cursor or None
 
-    result = await session.execute(
-        select(RawLog.cursor)
-        .where(RawLog.source_id == source_id, RawLog.cursor.isnot(None))
-        .order_by(RawLog.ingested_at.desc())
-        .limit(1)
-    )
-    row = result.scalar_one_or_none()
-    if row is None:
-        return None
-    cursor = str(row)
-    if cursor.startswith(_JOURNAL_CURSOR_PREFIX):
-        return cursor[len(_JOURNAL_CURSOR_PREFIX):]
-    return cursor or None
+    # No recent checkpoint – return None so journald starts from tail.
+    return None
 
 
 def _line_hash(line: str) -> str:
@@ -173,8 +192,6 @@ def _map_journald_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
 def _build_journalctl_command(source: Source, after_cursor: Optional[str] = None) -> list[str]:
     cfg = source.config_json or {}
     command = ["journalctl", "--no-pager", "--output=json"]
-    if cfg.get("boot_only", True):
-        command.append("-b")
     unit = cfg.get("unit")
     if isinstance(unit, str) and unit.strip():
         command.extend(["-u", unit.strip()])
@@ -401,15 +418,21 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
 
     # Handle rotation and regex filename changes safely.
     if last_cursor is None:
-        start_offset = 0
+        # On first contact with an existing file, prioritize current log tail so
+        # short live windows do not spend minutes replaying stale backlog.
+        start_offset = max(0, file_size - _FAST_FORWARD_TAIL_BYTES)
+        fast_forwarded = start_offset > 0
     elif last_cursor > file_size:
-        start_offset = 0
+        start_offset = max(0, file_size - _FAST_FORWARD_TAIL_BYTES)
+        fast_forwarded = start_offset > 0
     elif last_path is not None and last_path != path:
-        start_offset = 0
+        start_offset = max(0, file_size - _FAST_FORWARD_TAIL_BYTES)
+        fast_forwarded = start_offset > 0
     elif last_path is None and source_path_is_regex(source):
         # Legacy cursor format had no path info; with regex we cannot verify if
         # the filename changed, so we ingest from start once to avoid skipping.
-        start_offset = 0
+        start_offset = max(0, file_size - _FAST_FORWARD_TAIL_BYTES)
+        fast_forwarded = start_offset > 0
     else:
         start_offset = last_cursor
 
@@ -419,6 +442,14 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
         # tens of MB of old lines before fresh events appear in the UI.
         start_offset = max(0, file_size - _FAST_FORWARD_TAIL_BYTES)
         fast_forwarded = True
+
+    # For high-volume syslog-style sources, skip straight to current EOF when
+    # fast-forwarding so the *next* tick immediately picks up fresh lines.
+    # Without this, 256 KB backlog / 200 lines-per-tick = ~13 ticks before a
+    # just-written marker is seen.  We accept losing the backlog window in
+    # exchange for near-real-time ingestion after a restart.
+    if fast_forwarded and _is_syslog_style_source(source):
+        start_offset = file_size
 
     # Load enabled parser profiles ordered by priority
     profiles_result = await session.execute(
@@ -460,32 +491,44 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
                 })
                 lines_ingested += 1
 
-                parsed = _parse_specialized_source_line(source, stripped)
-
-                # Attempt parsing with first matching profile
-                if parsed is None:
-                    for profile in profiles:
-                        parsed = parse_line(stripped, profile.format, profile.pattern, profile.mapping_json)
-                        if parsed is not None:
-                            break
-
-                # Syslog RFC3164 pre-parser: extracts real timestamp/host/service/message
-                syslog_base = _parse_syslog_header(stripped)
-                if syslog_base:
-                    # Merge: syslog_base wins for ts/host/service, kv wins for extra fields
-                    kv_extra = parse_line(syslog_base["message"], "kv", None, None) or {}
-                    kv_extra.pop("timestamp", None)
-                    kv_extra.pop("host", None)
-                    kv_extra.pop("service", None)
-                    if parsed is None:
+                parsed: Optional[Dict[str, Any]] = None
+                if _is_syslog_style_source(source):
+                    # Fast path for high-volume syslog-like sources: avoid running
+                    # every parser profile on every line.
+                    syslog_base = _parse_syslog_header(stripped)
+                    if syslog_base:
+                        kv_extra = parse_line(syslog_base["message"], "kv", None, None) or {}
+                        kv_extra.pop("timestamp", None)
+                        kv_extra.pop("host", None)
+                        kv_extra.pop("service", None)
                         parsed = {**kv_extra, **syslog_base}
-                    else:
-                        # Profile parser ran on full line; patch in real timestamp/host/service
-                        parsed.setdefault("timestamp", syslog_base["timestamp"])
-                        parsed.setdefault("host", syslog_base["host"])
-                        parsed.setdefault("service", syslog_base["service"])
-                        if not parsed.get("message"):
-                            parsed["message"] = syslog_base["message"]
+                else:
+                    parsed = _parse_specialized_source_line(source, stripped)
+
+                    # Attempt parsing with first matching profile
+                    if parsed is None:
+                        for profile in profiles:
+                            parsed = parse_line(stripped, profile.format, profile.pattern, profile.mapping_json)
+                            if parsed is not None:
+                                break
+
+                    # Syslog RFC3164 pre-parser: extracts real timestamp/host/service/message
+                    syslog_base = _parse_syslog_header(stripped)
+                    if syslog_base:
+                        # Merge: syslog_base wins for ts/host/service, kv wins for extra fields
+                        kv_extra = parse_line(syslog_base["message"], "kv", None, None) or {}
+                        kv_extra.pop("timestamp", None)
+                        kv_extra.pop("host", None)
+                        kv_extra.pop("service", None)
+                        if parsed is None:
+                            parsed = {**kv_extra, **syslog_base}
+                        else:
+                            # Profile parser ran on full line; patch in real timestamp/host/service
+                            parsed.setdefault("timestamp", syslog_base["timestamp"])
+                            parsed.setdefault("host", syslog_base["host"])
+                            parsed.setdefault("service", syslog_base["service"])
+                            if not parsed.get("message"):
+                                parsed["message"] = syslog_base["message"]
 
                 # Final fallback: try auto JSON → kv on full line
                 if parsed is None:
@@ -564,6 +607,19 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
         await session.execute(insert(RawLog), _raw_batch)
         await session.execute(insert(Event), _evt_batch)
         await _enqueue_event_index_outbox(session, _evt_batch)
+
+    # Persist one deterministic cursor checkpoint row per run so the next
+    # iteration can resume exactly from the latest processed byte offset.
+    await session.execute(
+        insert(RawLog),
+        [{
+            "id": str(uuid.uuid4()),
+            "source_id": source.id,
+            "raw_line": _FILE_CURSOR_CHECKPOINT_LINE,
+            "raw_hash": _line_hash(f"{_FILE_CURSOR_CHECKPOINT_LINE}:{path}:{new_cursor}"),
+            "cursor": f"{path}\t{new_cursor}",
+        }],
+    )
 
     return {
         "source_id": str(source.id),

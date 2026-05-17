@@ -102,6 +102,26 @@ describe('EventsPage', () => {
     expect(screen.getByText('Host: app01')).toBeInTheDocument()
   })
 
+  test('drops stale source paths that do not belong to the selected source id', async () => {
+    renderPage('/events?source_ids=source-123&source_paths=/var/log/auth.log,/var/log/syslog')
+
+    await waitFor(() => {
+      expect(mockGetEvents).toHaveBeenLastCalledWith({
+        limit: 50,
+        cursor: undefined,
+        from: undefined,
+        to: undefined,
+        source_id: undefined,
+        source_ids: 'source-123',
+        source_paths: '/var/log/syslog',
+        severity: undefined,
+        host: undefined,
+        service: undefined,
+        q: undefined,
+      })
+    })
+  })
+
   test('passes provider query param through to the event request', async () => {
     renderPage('/events?provider=postgres&q=db01')
 

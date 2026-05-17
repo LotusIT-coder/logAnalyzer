@@ -6,7 +6,7 @@ for SQLite the ORM falls back to JSON/TEXT columns automatically.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import subprocess
 
 import pytest
@@ -141,6 +141,7 @@ class TestSourcesCRUD:
         assert "File accessible:" in (body.get("details") or "")
 
     async def test_source_status_contains_ingestion_and_event_timestamps(self, client: AsyncClient, db_session):
+        now = datetime.now(timezone.utc)
         src = Source(
             name="status-src",
             type="file",
@@ -161,7 +162,8 @@ class TestSourcesCRUD:
         db_session.add(
             Event(
                 source_id=src.id,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=now - timedelta(hours=4),
+                created_at=now,
                 severity="info",
                 message="status event",
                 service="svc",
@@ -178,6 +180,7 @@ class TestSourcesCRUD:
         assert items[0]["source_id"] == str(src.id)
         assert items[0]["last_ingested_at"] is not None
         assert items[0]["last_event_timestamp"] is not None
+        assert items[0]["last_event_created_at"] is not None
         assert items[0]["last_seen_at"] is not None
         assert items[0]["events_per_min"] >= 1
         assert items[0]["parse_error_count"] >= 1

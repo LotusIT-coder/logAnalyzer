@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import re
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -20,6 +21,7 @@ from app.dependencies import get_db
 from app.domain.models import Source
 from app.ingestion.file_reader import ingest_source
 from app.parser.pipeline import parse_line
+from app.services.source_status import refresh_source_status
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
@@ -149,6 +151,7 @@ async def upload_and_import(
     stats = await ingest_source(session, source)
     if stats.get("skipped"):
         raise HTTPException(status_code=400, detail=stats.get("reason", "Upload ingest failed."))
+    await refresh_source_status(session, str(source.id), touched_at=datetime.now(timezone.utc))
 
     return UploadImportResponse(
         source_id=source.id,

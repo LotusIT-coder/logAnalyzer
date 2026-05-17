@@ -135,6 +135,27 @@ class Event(Base):
     )
 
 
+class EventTimeseriesRollup(Base):
+    __tablename__ = "event_timeseries_rollup_15m"
+
+    source_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("source.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    bucket_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    source: Mapped["Source"] = relationship()
+
+
 class EventIndexOutbox(Base):
     __tablename__ = "event_index_outbox"
 

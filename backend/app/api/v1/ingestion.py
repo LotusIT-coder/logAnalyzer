@@ -1,6 +1,7 @@
 """Ingestion endpoints – POST /api/v1/ingestion/run."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends
@@ -8,8 +9,9 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.ingestion.file_reader import ingest_source, run_ingestion
+from app.ingestion.file_reader import ingest_source
 from app.domain.models import Source
+from app.services.source_status import refresh_source_status
 
 router = APIRouter(prefix="/ingestion", tags=["Ingestion"])
 
@@ -55,6 +57,8 @@ async def trigger_ingestion(
 
     for source in sources:
         stats = await ingest_source(session, source)
+        if not stats.get("skipped"):
+            await refresh_source_status(session, str(source.id), touched_at=datetime.now(timezone.utc))
         results.append(stats)
 
     # --- extra paths: ensure these are ingested as real (persisted) sources ---
@@ -107,6 +111,8 @@ async def trigger_ingestion(
                     await session.flush()
 
             stats = await ingest_source(session, source)
+            if not stats.get("skipped"):
+                await refresh_source_status(session, str(source.id), touched_at=datetime.now(timezone.utc))
             stats["source_path"] = path
             stats["source_name"] = source.name
             stats["source_origin"] = origin

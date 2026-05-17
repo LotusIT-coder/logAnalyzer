@@ -224,6 +224,13 @@ class ErrorRateResponse(BaseModel):
     error_rate: float
 
 
+class EventVolumeCheckResponse(BaseModel):
+    threshold: int
+    checked_events: int
+    requires_confirmation: bool
+    capped: bool
+
+
 # ---------------------------------------------------------------------------
 # Audit
 # ---------------------------------------------------------------------------

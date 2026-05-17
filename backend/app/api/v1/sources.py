@@ -3,17 +3,15 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.db.session import get_session_factory
-from app.domain.models import Event, Source, SourceIngestionStatus
+from app.domain.models import Source, SourceIngestionStatus
 from app.schemas.source import (
     SourceCreateRequest,
     SourceIngestionStatusListResponse,
@@ -24,73 +22,11 @@ from app.schemas.source import (
     SourceTestResponse,
 )
 from app.services import source_service
+from app.services.source_status import refresh_source_status
 from app.services.source_service import DuplicateSourceNameError
 
 router = APIRouter(prefix="/sources", tags=["Sources"])
 _TAILABLE_PATH_SOURCE_TYPES = {"file", "syslog", "docker", "filebeat", "winlogbeat", "elastic_agent"}
-
-
-async def _compute_and_upsert_source_status(session: AsyncSession, source_id: str) -> None:
-    now = datetime.now(timezone.utc)
-    one_minute_ago = now - timedelta(minutes=1)
-    one_hour_ago = now - timedelta(hours=1)
-
-    last_event_timestamp_result = await session.execute(
-        select(Event.timestamp)
-        .where(Event.source_id == source_id)
-        .order_by(Event.timestamp.desc())
-        .limit(1)
-    )
-    last_event_timestamp = last_event_timestamp_result.scalar_one_or_none()
-
-    last_event_created_result = await session.execute(
-        select(Event.created_at)
-        .where(Event.source_id == source_id)
-        .order_by(Event.created_at.desc())
-        .limit(1)
-    )
-    last_event_created_at = last_event_created_result.scalar_one_or_none()
-
-    events_per_min_result = await session.execute(
-        select(func.count(Event.id)).where(
-            Event.source_id == source_id,
-            Event.timestamp >= one_minute_ago,
-        )
-    )
-    events_per_min = int(events_per_min_result.scalar_one() or 0)
-
-    parse_error_count_result = await session.execute(
-        select(func.count(Event.id)).where(
-            Event.source_id == source_id,
-            Event.timestamp >= one_hour_ago,
-            Event.fields_json.contains({"ingest_parse_error": True}),
-        )
-    )
-    parse_error_count = int(parse_error_count_result.scalar_one() or 0)
-
-    upsert_stmt = pg_insert(SourceIngestionStatus).values(
-        source_id=source_id,
-        last_ingested_at=now,
-        last_event_timestamp=last_event_timestamp,
-        last_event_created_at=last_event_created_at,
-        last_seen_at=last_event_timestamp,
-        events_per_min=events_per_min,
-        parse_error_count=parse_error_count,
-        updated_at=now,
-    )
-    upsert_stmt = upsert_stmt.on_conflict_do_update(
-        index_elements=[SourceIngestionStatus.source_id],
-        set_={
-            "last_ingested_at": now,
-            "last_event_timestamp": last_event_timestamp,
-            "last_event_created_at": last_event_created_at,
-            "last_seen_at": last_event_timestamp,
-            "events_per_min": events_per_min,
-            "parse_error_count": parse_error_count,
-            "updated_at": now,
-        },
-    )
-    await session.execute(upsert_stmt)
 
 
 async def _select_source_status_rows(session: AsyncSession, ids: list[str] | None):
@@ -130,7 +66,7 @@ async def source_status(
     missing_source_ids = [str(row.id) for row in rows if row.last_ingested_at is None]
     if missing_source_ids:
         for source_id in missing_source_ids:
-            await _compute_and_upsert_source_status(session, source_id)
+            await refresh_source_status(session, source_id)
         await session.commit()
         rows = await _select_source_status_rows(session, ids)
 
@@ -242,8 +178,6 @@ async def tail_source(
     def _build_journald_tail_command() -> list[str]:
         cfg = source.config_json or {}
         command = ["journalctl", "--no-pager", "--output=short-iso"]
-        if cfg.get("boot_only", True):
-            command.append("-b")
         unit = cfg.get("unit")
         if isinstance(unit, str) and unit.strip():
             command.extend(["-u", unit.strip()])

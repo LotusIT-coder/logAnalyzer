@@ -50,6 +50,7 @@ export interface EventResponse extends JsonObject {
   id: string
   source_id?: string | null
   timestamp: string
+  created_at?: string | null
   severity: string
   host?: string | null
   service?: string | null
@@ -136,6 +137,11 @@ export interface SOCAnalystStatusResponse {
   tick_count: number
 }
 
+export interface ServerTimeResponse {
+  timestamp: string
+  unix_ms: number
+}
+
 export interface TimeseriesPoint {
   ts: string
   count: number
@@ -170,6 +176,13 @@ export interface ErrorRateResponse {
   total_events: number
   error_events: number
   error_rate: number
+}
+
+export interface EventVolumeCheckResponse {
+  threshold: number
+  checked_events: number
+  requires_confirmation: boolean
+  capped: boolean
 }
 
 export interface UploadImportResponse {
@@ -310,6 +323,12 @@ export async function getErrorRate(range?: TimeRange, filter?: MetricsFilter) {
   return r.data as ErrorRateResponse
 }
 
+export async function getEventVolumeCheck(range?: TimeRange, filter?: MetricsFilter, threshold = 5_000_000) {
+  const params = withMetricsFilter({ threshold }, range, filter)
+  const r = await api.get('/metrics/volume-check', { params })
+  return r.data as EventVolumeCheckResponse
+}
+
 export async function aiChat(model: string, message: string) {
   const r = await api.post('/ai/chat', { message, model })
   return r.data as { answer: string; references: string[] }
@@ -404,4 +423,9 @@ export async function setSocAnalystStatus(params: {
     source_paths: params.sourcePaths ?? [],
   })
   return r.data as SOCAnalystStatusResponse
+}
+
+export async function getServerTime(): Promise<ServerTimeResponse> {
+  const r = await api.get('/system/now')
+  return r.data as ServerTimeResponse
 }

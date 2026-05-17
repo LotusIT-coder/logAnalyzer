@@ -198,14 +198,32 @@ class ElasticClient:
     ) -> tuple[list[dict[str, Any]], str | None]:
         filters: list[dict[str, Any]] = []
         if from_ts or to_ts or cursor:
-            range_clause: dict[str, Any] = {}
-            if from_ts:
-                range_clause["gte"] = from_ts.isoformat()
-            if to_ts:
-                range_clause["lte"] = to_ts.isoformat()
+            time_should: list[dict[str, Any]] = []
+
+            if from_ts or to_ts:
+                timestamp_range: dict[str, Any] = {}
+                created_range: dict[str, Any] = {}
+                if from_ts:
+                    timestamp_range["gte"] = from_ts.isoformat()
+                    created_range["gte"] = from_ts.isoformat()
+                if to_ts:
+                    timestamp_range["lte"] = to_ts.isoformat()
+                    created_range["lte"] = to_ts.isoformat()
+                time_should.extend([
+                    {"range": {"timestamp": timestamp_range}},
+                    {"range": {"created_at": created_range}},
+                ])
+
+            if time_should:
+                filters.append({
+                    "bool": {
+                        "should": time_should,
+                        "minimum_should_match": 1,
+                    }
+                })
+
             if cursor:
-                range_clause["lt"] = cursor.isoformat()
-            filters.append({"range": {"timestamp": range_clause}})
+                filters.append({"range": {"created_at": {"lt": cursor.isoformat()}}})
 
         if source_ids is not None:
             filters.append({"terms": {"source_id": source_ids}})
@@ -222,7 +240,7 @@ class ElasticClient:
 
         body: dict[str, Any] = {
             "size": limit + 1,
-            "sort": [{"timestamp": "desc"}, {"event_id": "desc"}],
+            "sort": [{"created_at": "desc"}, {"event_id": "desc"}],
             "query": {
                 "bool": {
                     "filter": filters,
@@ -247,7 +265,7 @@ class ElasticClient:
             next_cursor: str | None = None
             if len(rows) > limit:
                 rows = rows[:limit]
-                next_cursor = rows[-1].get("timestamp")
+                next_cursor = rows[-1].get("created_at") or rows[-1].get("timestamp")
             return rows, next_cursor
         except Exception as exc:  # noqa: BLE001
             logger.warning("elastic_search_failed", error=str(exc), index_pattern=index_pattern)

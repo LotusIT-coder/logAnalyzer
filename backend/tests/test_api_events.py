@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +33,7 @@ async def _seed_event(db: AsyncSession, source_id: str, **kwargs) -> Event:
         event_type=kwargs.get("event_type", None),
         fields_json=kwargs.get("fields_json", {}),
         fingerprint=kwargs.get("fingerprint", None),
+        created_at=kwargs.get("created_at"),
     )
     db.add(e)
     await db.flush()
@@ -148,6 +149,50 @@ class TestEventsAPI:
         resp = await client.get("/api/v1/events?limit=3")
         assert resp.status_code == 200
         assert len(resp.json()["items"]) == 3
+
+    async def test_time_range_includes_recently_ingested_events_with_historical_log_timestamps(self, client: AsyncClient, db_session: AsyncSession):
+        src = await _seed_source(db_session)
+        now = datetime.now(timezone.utc)
+        await _seed_event(
+            db_session,
+            src.id,
+            message="historical timestamp, fresh ingest",
+            timestamp=now - timedelta(hours=12),
+            created_at=now,
+        )
+        await db_session.commit()
+
+        from_ts = (now - timedelta(minutes=1)).isoformat()
+        to_ts = (now + timedelta(seconds=1)).isoformat()
+        resp = await client.get(f"/api/v1/events?from={from_ts}&to={to_ts}")
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["message"] == "historical timestamp, fresh ingest"
+
+    async def test_events_are_sorted_by_ingest_time_for_recent_views(self, client: AsyncClient, db_session: AsyncSession):
+        src = await _seed_source(db_session)
+        now = datetime.now(timezone.utc)
+        await _seed_event(
+            db_session,
+            src.id,
+            message="older ingest",
+            timestamp=now,
+            created_at=now - timedelta(seconds=30),
+        )
+        await _seed_event(
+            db_session,
+            src.id,
+            message="newer ingest",
+            timestamp=now - timedelta(hours=1),
+            created_at=now,
+        )
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/events")
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert [item["message"] for item in items[:2]] == ["newer ingest", "older ingest"]
 
     async def test_get_event_by_id(self, client: AsyncClient, db_session: AsyncSession):
         src = await _seed_source(db_session)
