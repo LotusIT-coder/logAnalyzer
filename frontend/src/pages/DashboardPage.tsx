@@ -2,10 +2,12 @@ import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-qu
 import {
   getEvents,
   getErrorRate,
+  getEventVolumeCheck,
   getIncidents,
   getMitreCoverage,
   getSocAnalystStatus,
   getSourceIngestionStatus,
+  getServerTime,
   getTimeseries,
   getTopErrors,
   getTopServices,
@@ -20,7 +22,7 @@ import {
   type TopErrorItem,
   type TopServiceItem,
 } from '../lib/requests'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import dayjs from 'dayjs'
 import { getApiErrorMessage } from '../lib/errors'
 import HelpTip from '../components/HelpTip'
@@ -29,6 +31,7 @@ import { SourcePicker, type UploadResultState, isUploadError } from '../componen
 import { TimeRangePicker, TIME_PRESETS } from '../components/TimeRangePicker'
 import { type SourceOption } from '../ctx/SourceFilterContext.shared'
 import { useSourceFilter } from '../ctx/useSourceFilter'
+import { useI18n } from '../ctx/I18nContext'
 
 // ─── Time range presets ───────────────────────────────────────────────────────
 // (TIME_PRESETS comes from the shared TimeRangePicker module.)
@@ -82,6 +85,7 @@ function resolveChartBucket(rangeHours: number) {
 const AUTO_REFRESH_TARGET_EVENTS_KEY = 'dashboard:auto-refresh-target-events'
 const AUTO_REFRESH_PROFILE_KEY = 'dashboard:auto-refresh-profile'
 const DEFAULT_AUTO_REFRESH_TARGET_EVENTS = 5
+const RANGE_CONFIRMATION_THRESHOLD = 5_000_000
 
 type AutoRefreshProfile = 'conservative' | 'balanced' | 'aggressive'
 
@@ -101,6 +105,20 @@ function resolveAutoRefreshTargetEvents(profile: AutoRefreshProfile) {
   return AUTO_REFRESH_PROFILES.find(item => item.value === profile)?.targetEvents ?? DEFAULT_AUTO_REFRESH_TARGET_EVENTS
 }
 
+// Periodisches Tick-Intervall (in ms), das den globalen refreshTick im Dashboard
+// hochzaehlt. Steuert, wie oft activeTimeRange (to=now) neu berechnet wird und
+// damit die queryKeys von rate/ts/errs/svcs wechseln -> Live-Refetch.
+function resolveBaseTickMs(profile: AutoRefreshProfile): number {
+  switch (profile) {
+    case 'aggressive':
+      return 3_000
+    case 'conservative':
+      return 30_000
+    default:
+      return 10_000
+  }
+}
+
 function formatAgeLabel(updatedAt?: number) {
   if (!updatedAt) return 'wird geladen...'
   const elapsedSeconds = Math.max(0, Math.floor((Date.now() - updatedAt) / 1000))
@@ -112,9 +130,10 @@ function formatAgeLabel(updatedAt?: number) {
   return `vor ${hours} h`
 }
 
-function buildTimeRange(rangeHours: number): TimeRange | undefined {
+function buildTimeRange(rangeHours: number, serverTimeOffset: number = 0): TimeRange | undefined {
   if (rangeHours === 0) return undefined
-  const now = new Date()
+  // Use server-synchronized time to fix time-skew bugs
+  const now = new Date(Date.now() + serverTimeOffset)
   return {
     from: new Date(now.getTime() - rangeHours * 3600_000).toISOString(),
     to: now.toISOString(),
@@ -145,6 +164,10 @@ function formatMetaValue(value: unknown) {
   }
 }
 
+function getEventObservedAt(event: EventResponse) {
+  return event.created_at ?? event.timestamp
+}
+
 interface TopErrorDetailTarget {
   query: string
   label: string
@@ -164,6 +187,7 @@ interface MitreTechniqueDetailTarget {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
+  const { t } = useI18n()
   const { filter, setFilter: setGlobalSourceFilter, selectedSources, setSelectedSources, customSources, setCustomSources } = useSourceFilter()
   // Single source of truth: global filter.rangeHours. Changes from any tab
   // propagate via context so this page stays in sync.
@@ -191,6 +215,34 @@ export default function DashboardPage() {
   const [topErrorsSeverities, setTopErrorsSeverities] = useState<string[]>(['error', 'critical'])
   const [topErrorDetail, setTopErrorDetail] = useState<TopErrorDetailTarget | null>(null)
   const [mitreDetail, setMitreDetail] = useState<MitreTechniqueDetailTarget | null>(null)
+  const [serverTimeOffset, setServerTimeOffset] = useState<number>(0)
+  const [rangeCheckBusy, setRangeCheckBusy] = useState(false)
+  // Live-Tick: zwingt activeTimeRange.to auf 'jetzt' und triggert via queryKey
+  // Refetches in allen relevanten Dashboard-Queries.
+  const [refreshTick, setRefreshTick] = useState(0)
+
+  useEffect(() => {
+    const tickMs = resolveBaseTickMs(autoRefreshProfile)
+    const id = window.setInterval(() => setRefreshTick(v => v + 1), tickMs)
+    return () => window.clearInterval(id)
+  }, [autoRefreshProfile])
+
+  // Synchronize client time with server time to fix time-skew bugs
+  useEffect(() => {
+    const syncServerTime = async () => {
+      try {
+        const response = await getServerTime()
+        const clientNowMs = Date.now()
+        const serverNowMs = response.unix_ms
+        const offset = serverNowMs - clientNowMs
+        setServerTimeOffset(offset)
+      } catch (error) {
+        console.warn('Failed to sync server time:', error)
+        setServerTimeOffset(0)
+      }
+    }
+    void syncServerTime()
+  }, [])
 
   useEffect(() => {
     window.localStorage.setItem(AUTO_REFRESH_PROFILE_KEY, autoRefreshProfile)
@@ -242,7 +294,47 @@ export default function DashboardPage() {
     void handleIngest(resolvedSelectedSources)
   }
 
-  function handleRangeHoursChange(nextRangeHours: number) {
+  async function handleRangeHoursChange(nextRangeHours: number) {
+    if (nextRangeHours === rangeHours) return
+
+    const nextSelectedSourceIds = selectedSources
+      .filter(source => source.kind === 'configured')
+      .map(source => source.id.replace('source:', ''))
+    const nextSelectedSourcePaths = selectedSources
+      .filter(source => source.kind === 'preset' || source.kind === 'custom')
+      .map(source => source.path)
+
+    const nextMetricsFilter: MetricsFilter | undefined = selectedSources.length > 0
+      ? { sourceIds: nextSelectedSourceIds, sourcePaths: nextSelectedSourcePaths }
+      : undefined
+
+    setRangeCheckBusy(true)
+    try {
+      const volume = await getEventVolumeCheck(
+        buildTimeRange(nextRangeHours, serverTimeOffset),
+        nextMetricsFilter,
+        RANGE_CONFIRMATION_THRESHOLD,
+      )
+      if (volume.requires_confirmation) {
+        const checkedEvents = volume.checked_events.toLocaleString('de-DE')
+        const thresholdLabel = volume.threshold.toLocaleString('de-DE')
+        const rangeLabel = TIME_PRESETS.find(p => p.hours === nextRangeHours)?.label ?? `${nextRangeHours} h`
+        const confirmed = window.confirm(
+          `Die Auswahl ${rangeLabel} umfasst mindestens ${checkedEvents} Eintraege und liegt damit ueber der Grenze von ${thresholdLabel}.\n\nTrotzdem laden?`,
+        )
+        if (!confirmed) return
+      }
+    } catch (error) {
+      console.warn('Volume check failed, continuing without confirmation guard:', error)
+    } finally {
+      setRangeCheckBusy(false)
+    }
+
+    if (nextRangeHours === 0) {
+      const typedConfirmation = window.prompt('Sicherheitsabfrage: Tippe ALLE, um den kompletten Datenbestand zu laden.')
+      if (typedConfirmation !== 'ALLE') return
+    }
+
     syncGlobalFilter(selectedSources, nextRangeHours)
   }
 
@@ -260,7 +352,14 @@ export default function DashboardPage() {
   const metricsFilter: MetricsFilter | undefined = selectedSources.length > 0
     ? { sourceIds: selectedSourceIds, sourcePaths: selectedSourcePaths, severities: topErrorsSeverities }
     : undefined
-  const activeTimeRange = buildTimeRange(rangeHours)
+  const activeTimeRange = useMemo(
+    () => buildTimeRange(rangeHours, serverTimeOffset),
+    // refreshTick ist Absicht: zwingt eine neue 'to=now'-Berechnung bei jedem Tick,
+    // damit die queryKeys der nachgelagerten Queries wechseln und Live-Refetches
+    // mit aktuellem Zeitfenster ausgeloest werden.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rangeHours, refreshTick, serverTimeOffset],
+  )
 
   const sourceKey = `${selectedSourceIds.join('|')}::${selectedSourcePaths.join('|')}`
 
@@ -268,7 +367,7 @@ export default function DashboardPage() {
 
   const rate = useQuery({
     queryKey: ['error-rate', rangeHours, sourceKey],
-    queryFn: () => getErrorRate(buildTimeRange(rangeHours), metricsFilter),
+    queryFn: () => getErrorRate(buildTimeRange(rangeHours, serverTimeOffset), metricsFilter),
     enabled: selectedSources.length > 0,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
@@ -286,7 +385,7 @@ export default function DashboardPage() {
   const ts = useQuery({
     queryKey: ['timeseries', rangeHours, sourceKey, chartBucketMode, chartBucket, autoRefreshTargetEvents],
     queryFn: () => {
-      const timeRange = buildTimeRange(rangeHours)
+      const timeRange = buildTimeRange(rangeHours, serverTimeOffset)
       return getTimeseries({
         bucket: chartBucket,
         ...(timeRange ? { from: timeRange.from, to: timeRange.to } : {}),
@@ -314,7 +413,7 @@ export default function DashboardPage() {
     : Math.max(chartBucketToMs(chartBucket), 15_000)
 
   const errs = useQuery({
-    queryKey: ['top-errors', rangeHours, sourceKey, topErrorsSeverities.join(',')],
+    queryKey: ['top-errors', rangeHours, sourceKey, topErrorsSeverities.join(','), activeTimeRange?.to ?? ''],
     queryFn: () => getTopErrors(activeTimeRange, metricsFilter),
     enabled: selectedSources.length > 0 && topErrorsSeverities.length > 0,
     staleTime: 60_000,
@@ -323,7 +422,7 @@ export default function DashboardPage() {
     refetchIntervalInBackground: true,
   })
   const svcs = useQuery({
-    queryKey: ['top-services', rangeHours, sourceKey],
+    queryKey: ['top-services', rangeHours, sourceKey, activeTimeRange?.to ?? ''],
     queryFn: () => getTopServices(activeTimeRange, metricsFilter),
     enabled: selectedSources.length > 0,
     staleTime: 60_000,
@@ -336,8 +435,10 @@ export default function DashboardPage() {
     queryKey: ['source-status', selectedSourceIds.join('|')],
     queryFn: () => getSourceIngestionStatus(selectedSourceIds),
     enabled: selectedSourceIds.length > 0,
-    staleTime: 15_000,
+    staleTime: 5_000,
     placeholderData: keepPreviousData,
+    refetchInterval: resolveBaseTickMs(autoRefreshProfile),
+    refetchIntervalInBackground: true,
   })
 
   const socAnalyst = useQuery({
@@ -439,8 +540,9 @@ export default function DashboardPage() {
   void clockTick
 
   function sourceStatusTone(status?: SourceIngestionStatus) {
-    if (!status?.last_event_timestamp) return { bg: 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))', fg: 'var(--danger-fg)', text: 'keine Events' }
-    const ageMs = Date.now() - dayjs(status.last_event_timestamp).valueOf()
+    const freshestSeenAt = status?.last_event_created_at ?? status?.last_event_timestamp
+    if (!freshestSeenAt) return { bg: 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))', fg: 'var(--danger-fg)', text: 'keine Events' }
+    const ageMs = Date.now() - dayjs(freshestSeenAt).valueOf()
     if (ageMs > 24 * 3600_000) return { bg: 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))', fg: 'var(--danger-fg)', text: '>24h alt' }
     if (ageMs > 2 * 3600_000) return { bg: 'color-mix(in srgb, var(--warning-fg) 16%, var(--surface))', fg: 'var(--warning-fg)', text: 'verzögert' }
     return { bg: 'color-mix(in srgb, var(--success-fg) 16%, var(--surface))', fg: 'var(--success-fg)', text: 'aktuell' }
@@ -458,7 +560,8 @@ export default function DashboardPage() {
         </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
-            <TimeRangePicker value={rangeHours} onChange={handleRangeHoursChange} />
+            <TimeRangePicker value={rangeHours} onChange={handleRangeHoursChange} disabled={rangeCheckBusy} />
+            {/* Loading text for volume check removed: check is now always fast */}
             <HelpTip content="Das Zeitfenster steuert, wie weit die Metriken in die Vergangenheit schauen. 'Alle' verwendet den kompletten verfuegbaren Datenbestand." ariaLabel="Zeitfenster erklaeren" />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
@@ -566,14 +669,14 @@ export default function DashboardPage() {
         <div style={{ ...styles.ingestInfo, background: isUploadError(uploadResult) ? 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))' : 'color-mix(in srgb, var(--success-fg) 16%, var(--surface))', color: isUploadError(uploadResult) ? 'var(--danger-fg)' : 'var(--success-fg)', position: 'relative' }}>
           <button onClick={() => setUploadResult(null)} style={{ position: 'absolute', top: '0.4rem', right: '0.5rem', background: 'none', border: 'none', color: 'var(--muted-fg)', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
           {isUploadError(uploadResult) ? (
-            <div>Upload-Fehler: {uploadResult.error}</div>
+            <div>{t('dashboard.uploadError', { message: uploadResult.error })}</div>
           ) : (
             <>
               <div style={{ fontWeight: 600, marginBottom: '0.4rem' }}>
-                📄 Importiert: {uploadResult.lines_ingested} Zeilen · {uploadResult.events_created} Events
+                📄 {t('dashboard.imported', { lines: uploadResult.lines_ingested, events: uploadResult.events_created })}
               </div>
               <div style={{ fontSize: '0.82rem', color: 'var(--fg)' }}>
-                Quelle: {uploadResult.source_name} ({uploadResult.source_id})
+                {t('dashboard.source')}: {uploadResult.source_name} ({uploadResult.source_id})
               </div>
             </>
           )}
@@ -582,9 +685,9 @@ export default function DashboardPage() {
 
       {selectedSourceIds.length > 0 && (
         <div style={styles.statusWrap}>
-          <div style={styles.statusTitle}>Ingest-Status (ausgewählte Quellen)</div>
+          <div style={styles.statusTitle}>{t('dashboard.ingestStatus')}</div>
           {(sourceStatus.isLoading && !sourceStatus.data) ? (
-            <div style={{ color: 'var(--muted-fg)', fontSize: '0.83rem' }}>Lade Status…</div>
+            <div style={{ color: 'var(--muted-fg)', fontSize: '0.83rem' }}>{t('dashboard.loadingStatus')}</div>
           ) : (
             <div style={styles.statusGrid}>
               {selectedSources
@@ -598,10 +701,13 @@ export default function DashboardPage() {
                       <div style={styles.statusName}>{source.label}</div>
                       <div style={{ ...styles.statusBadge, background: tone.bg, color: tone.fg }}>{tone.text}</div>
                       <div style={styles.statusLine}>
-                        Letzter Event-Zeitpunkt: {status?.last_event_timestamp ? dayjs(status.last_event_timestamp).format('DD.MM.YYYY HH:mm:ss') : '–'}
+                        {t('dashboard.lastIngestEvent')}: {status?.last_event_created_at ? dayjs(status.last_event_created_at).format('DD.MM.YYYY HH:mm:ss') : '–'}
                       </div>
                       <div style={styles.statusLine}>
-                        Letzte Ingestion: {status?.last_ingested_at ? dayjs(status.last_ingested_at).format('DD.MM.YYYY HH:mm:ss') : '–'}
+                        {t('dashboard.lastLogTime')}: {status?.last_event_timestamp ? dayjs(status.last_event_timestamp).format('DD.MM.YYYY HH:mm:ss') : '–'}
+                      </div>
+                      <div style={styles.statusLine}>
+                        {t('dashboard.lastIngestion')}: {status?.last_ingested_at ? dayjs(status.last_ingested_at).format('DD.MM.YYYY HH:mm:ss') : '–'}
                       </div>
                     </div>
                   )
@@ -613,7 +719,7 @@ export default function DashboardPage() {
 
       {selectedSources.length === 0 ? (
         <div style={{ color: 'var(--muted-fg)', textAlign: 'center', padding: '3rem 1rem', fontSize: '0.9rem' }}>
-          Bitte eine oder mehrere Log-Quellen auswählen, um Metriken anzuzeigen.
+          {t('dashboard.selectSources')}
         </div>
       ) : (
         <>
@@ -841,6 +947,7 @@ function TopErrorDetailModal({
   initialTo?: string
   onClose: () => void
 }) {
+  const { t } = useI18n()
   const [fromInput, setFromInput] = useState(() => toDateTimeLocalInput(initialFrom))
   const [toInput, setToInput] = useState(() => toDateTimeLocalInput(initialTo))
   const [appliedFromInput, setAppliedFromInput] = useState(() => toDateTimeLocalInput(initialFrom))
@@ -949,52 +1056,52 @@ function TopErrorDetailModal({
       <div style={styles.detailModalBox} onClick={e => e.stopPropagation()}>
         <div style={styles.detailModalHeader}>
           <div style={{ minWidth: 0 }}>
-            <div style={styles.detailModalTitle}>{target.titleOverride ?? 'Details: Top Fehlermeldung'}</div>
+            <div style={styles.detailModalTitle}>{target.titleOverride ?? t('dashboard.detail.titleTopError')}</div>
             <div style={styles.detailModalSubtitle} title={target.service ?? target.query}>
-              {(target.subtitlePrefix ?? 'Typ')}: {target.label}
+              {(target.subtitlePrefix ?? t('dashboard.detail.type'))}: {target.label}
             </div>
           </div>
-          <button type="button" onClick={onClose} style={styles.detailModalCloseBtn}>x Schließen</button>
+          <button type="button" onClick={onClose} style={styles.detailModalCloseBtn}>x {t('dashboard.detail.close')}</button>
         </div>
 
         <div style={styles.detailModalFilterRow}>
-          <span style={styles.detailFilterLabel}>Von</span>
+          <span style={styles.detailFilterLabel}>{t('dashboard.detail.from')}</span>
           <input
             type="datetime-local"
             value={fromInput}
             onChange={e => setFromInput(e.target.value)}
             style={styles.detailFilterInput}
           />
-          <span style={styles.detailFilterLabel}>Bis</span>
+          <span style={styles.detailFilterLabel}>{t('dashboard.detail.to')}</span>
           <input
             type="datetime-local"
             value={toInput}
             onChange={e => setToInput(e.target.value)}
             style={styles.detailFilterInput}
           />
-          <button type="button" onClick={applyDateFilter} style={styles.detailFilterBtn}>Zeitraum suchen</button>
-          <button type="button" onClick={resetDateFilter} style={styles.detailResetBtn}>Zurücksetzen</button>
+          <button type="button" onClick={applyDateFilter} style={styles.detailFilterBtn}>{t('dashboard.detail.searchRange')}</button>
+          <button type="button" onClick={resetDateFilter} style={styles.detailResetBtn}>{t('dashboard.detail.reset')}</button>
           <input
             type="text"
             value={localSearch}
             onChange={e => setLocalSearch(e.target.value)}
-            placeholder="In geladenen Treffern suchen..."
+            placeholder={t('dashboard.detail.searchLoaded')}
             style={{ ...styles.detailFilterInput, minWidth: 240 }}
           />
           {localSearch && (
-            <button type="button" onClick={() => setLocalSearch('')} style={styles.detailResetBtn}>Suche löschen</button>
+            <button type="button" onClick={() => setLocalSearch('')} style={styles.detailResetBtn}>{t('dashboard.detail.clearSearch')}</button>
           )}
           <span style={styles.detailMetaText}>
-            {filteredEvents.length}/{allEvents.length} Einträge{hasNextPage ? ' (mehr verfügbar)' : ''}
+            {t('dashboard.detail.entries', { filtered: filteredEvents.length, total: allEvents.length })}{hasNextPage ? ` ${t('dashboard.detail.moreAvailable')}` : ''}
           </span>
         </div>
 
         <div ref={listRef} style={styles.detailEventList}>
           {isLoading ? (
-            <div style={{ color: 'var(--muted-fg)', padding: '1.25rem' }}>Lade Einträge…</div>
+            <div style={{ color: 'var(--muted-fg)', padding: '1.25rem' }}>{t('dashboard.detail.loadingEntries')}</div>
           ) : isError ? (
             <div style={{ color: 'var(--danger-fg)', padding: '1.25rem' }}>
-              Fehler beim Laden: {getApiErrorMessage(error)}
+              {t('dashboard.detail.loadError', { message: getApiErrorMessage(error) })}
             </div>
           ) : (
             <>
@@ -1007,9 +1114,9 @@ function TopErrorDetailModal({
                       type="button"
                       style={styles.detailEventHeader}
                       onClick={() => toggleExpand(event.id)}
-                      title="Metadaten ein-/ausklappen"
+                      title={t('dashboard.detail.toggleMetadata')}
                     >
-                      <span style={styles.detailEventTs}>{dayjs(event.timestamp).format('DD.MM.YYYY HH:mm:ss')}</span>
+                      <span style={styles.detailEventTs}>{dayjs(getEventObservedAt(event)).format('DD.MM.YYYY HH:mm:ss')}</span>
                       <span style={{ ...styles.detailEventSeverity, background: (event.severity === 'critical' ? '#ef4444' : event.severity === 'error' ? '#f97316' : event.severity === 'warning' ? '#eab308' : event.severity === 'info' ? '#22c55e' : '#6366f1') }}>
                         {event.severity}
                       </span>
@@ -1037,17 +1144,17 @@ function TopErrorDetailModal({
               })}
               {!filteredEvents.length && (
                 <div style={{ color: 'var(--muted-fg)', padding: '1.25rem' }}>
-                  {allEvents.length > 0 ? 'Keine Treffer für die lokale Suche' : 'Keine passenden Einträge gefunden'}
+                  {allEvents.length > 0 ? t('dashboard.detail.noLocalHits') : t('dashboard.detail.noEntries')}
                 </div>
               )}
               {isFetchingNextPage && (
-                <div style={{ color: 'var(--muted-fg)', padding: '0.75rem 1.25rem' }}>Lade weitere Einträge…</div>
+                <div style={{ color: 'var(--muted-fg)', padding: '0.75rem 1.25rem' }}>{t('dashboard.detail.loadingMore')}</div>
               )}
               {!isFetchingNextPage && isFetching && (
-                <div style={{ color: 'var(--muted-fg)', padding: '0.75rem 1.25rem' }}>Aktualisiere…</div>
+                <div style={{ color: 'var(--muted-fg)', padding: '0.75rem 1.25rem' }}>{t('dashboard.detail.refreshing')}</div>
               )}
               {!hasNextPage && filteredEvents.length > 0 && (
-                <div style={{ color: 'var(--muted-fg)', padding: '0.75rem 1.25rem' }}>Ende der Trefferliste</div>
+                <div style={{ color: 'var(--muted-fg)', padding: '0.75rem 1.25rem' }}>{t('dashboard.detail.endOfList')}</div>
               )}
             </>
           )}
