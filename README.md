@@ -1,3 +1,7 @@
+
+- Under Construction!! -
+
+
 # LogAnalyzer
 
 Ein lokales, KI-gestütztes Log-Analyse-System mit FastAPI-Backend und React-Frontend. LogAnalyzer hilft dir, große Mengen heterogener Logdaten strukturiert zu analysieren, sicherheitsrelevante Muster zu erkennen und Incidents nachvollziehbar zu triagieren - ohne deine Daten in die Cloud zu schicken.
