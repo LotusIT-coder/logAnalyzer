@@ -1,3 +1,4 @@
+ENGLISH VERSION BELOW!
 
 
 # LogAnalyzer
