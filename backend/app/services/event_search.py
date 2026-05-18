@@ -50,7 +50,13 @@ def _parse_cursor(cursor: str | None) -> datetime | None:
 
 
 async def search_events_postgres(session: AsyncSession, query: EventSearchQuery) -> EventSearchResult:
-    stmt = select(Event).order_by(Event.created_at.desc()).limit(query.limit + 1)
+    # Sort primarily by ingestion time, then by event timestamp so events from
+    # the same ingest batch still appear newest-first in the UI.
+    stmt = (
+        select(Event)
+        .order_by(Event.created_at.desc(), Event.timestamp.desc(), Event.id.desc())
+        .limit(query.limit + 1)
+    )
 
     if query.use_created_at_window_only:
         if query.from_ts and query.to_ts:

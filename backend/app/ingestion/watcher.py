@@ -31,7 +31,8 @@ _MAX_LINES_TOTAL_PER_TICK = 10_000
 _SOURCE_INGEST_TIMEOUT_SECONDS = 5.0
 _REALTIME_SOURCE_INGEST_TIMEOUT_SECONDS = 20.0
 _LOW_PRIORITY_SOURCES_PER_TICK = 1
-_REALTIME_SOURCE_NAMES = {"syslog", "auth.log", "kern.log"}
+_REALTIME_SOURCE_NAMES = {"syslog", "auth.log", "kern.log", "tuxguard", "tuxguard_error"}
+_REALTIME_PATH_HINTS = {"/var/log/tuxguard/"}
 
 
 class WatcherService:
@@ -61,7 +62,12 @@ class WatcherService:
     def _is_realtime_source(source) -> bool:
         if source.type == "journald":
             return True
-        return (source.name or "").lower() in _REALTIME_SOURCE_NAMES
+        source_name = (source.name or "").lower()
+        if source_name in _REALTIME_SOURCE_NAMES:
+            return True
+        config = source.config_json if isinstance(source.config_json, dict) else {}
+        source_path = str(config.get("path") or "").lower()
+        return any(hint in source_path for hint in _REALTIME_PATH_HINTS)
 
     @property
     def running(self) -> bool:

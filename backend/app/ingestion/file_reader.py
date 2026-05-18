@@ -328,6 +328,37 @@ def _parse_specialized_source_line(source: Source, line: str) -> Optional[Dict[s
     return None
 
 
+# Python stdlib logging: "YYYY-MM-DD HH:MM:SS,mmm - logger - LEVEL - thread - message"
+_PYTHON_LOG_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[,\.]\d+)\s+-\s+(\S+)\s+-\s+"
+    r"(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL)\s+-\s+\S+\s+-\s+(.*)",
+    re.DOTALL,
+)
+
+
+def _parse_python_log_header(line: str) -> Optional[Dict[str, Any]]:
+    """Parse Python stdlib logging format: 'YYYY-MM-DD HH:MM:SS,mmm - logger - LEVEL - thread - msg'.
+
+    Timestamps are in local system time; converts to UTC automatically.
+    """
+    m = _PYTHON_LOG_RE.match(line)
+    if not m:
+        return None
+    ts_str, service, level, message = m.groups()
+    try:
+        naive_ts = datetime.strptime(ts_str.replace(",", "."), "%Y-%m-%d %H:%M:%S.%f")
+        # Treat as local time and convert to UTC
+        ts = naive_ts.astimezone(timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        ts = datetime.now(timezone.utc)
+    sev = level.lower()
+    if sev == "warn":
+        sev = "warning"
+    elif sev == "fatal":
+        sev = "critical"
+    return {"timestamp": ts, "service": service, "severity": sev, "message": message.strip()}
+
+
 # ISO 8601 rsyslog: "2026-05-03T00:00:02.097521+02:00 hostname process[pid]: message"
 _SYSLOG_ISO_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z))\s+"
@@ -529,6 +560,10 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
                             parsed.setdefault("service", syslog_base["service"])
                             if not parsed.get("message"):
                                 parsed["message"] = syslog_base["message"]
+
+                # Python stdlib logging format fallback
+                if parsed is None:
+                    parsed = _parse_python_log_header(stripped)
 
                 # Final fallback: try auto JSON → kv on full line
                 if parsed is None:

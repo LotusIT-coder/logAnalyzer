@@ -47,6 +47,20 @@ function normalizeProvider(value: string) {
   return ''
 }
 
+function normalizeExplicitTo(value: string | undefined) {
+  if (!value) return undefined
+  const trimmed = value.trim()
+  // When users provide minute-only values (e.g. 2026-05-18T19:59),
+  // include the full minute to avoid cutting off newest events at :00.
+  if (/^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}$/.test(trimmed)) {
+    const parsed = dayjs(trimmed)
+    if (parsed.isValid()) {
+      return parsed.second(59).millisecond(999).toISOString()
+    }
+  }
+  return trimmed
+}
+
 function getInitialFilterValue(searchParams: URLSearchParams, key: string) {
   return searchParams.get(key) ?? ''
 }
@@ -470,7 +484,7 @@ export default function EventsPage() {
     if (fromTime || toTime) {
       return {
         from: fromTime || undefined,
-        to: toTime || undefined,
+        to: normalizeExplicitTo(toTime),
       }
     }
 
@@ -492,7 +506,7 @@ export default function EventsPage() {
     if (fromTime || toTime) {
       return {
         from: fromTime || undefined,
-        to: toTime || undefined,
+        to: normalizeExplicitTo(toTime),
       }
     }
     if (rangeHours <= 0) return { from: undefined, to: undefined }
