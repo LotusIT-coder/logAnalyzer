@@ -252,6 +252,17 @@ export async function getMitreCoverage() {
   return r.data as MitreCoverageResponse
 }
 
+export interface MitreCoverageResetResponse {
+  archived_count: number
+  archive_file: string | null
+  timestamp: string
+}
+
+export async function resetMitreCoverage() {
+  const r = await api.post('/incidents/mitre-coverage/reset')
+  return r.data as MitreCoverageResetResponse
+}
+
 export async function patchIncident(id: string, body: JsonObject) {
   const r = await api.patch(`/incidents/${id}`, body)
   return r.data as IncidentResponse

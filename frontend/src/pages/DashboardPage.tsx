@@ -5,6 +5,7 @@ import {
   getEventVolumeCheck,
   getIncidents,
   getMitreCoverage,
+  resetMitreCoverage,
   getSocAnalystStatus,
   getSourceIngestionStatus,
   getServerTime,
@@ -215,6 +216,8 @@ export default function DashboardPage() {
   const [topErrorsSeverities, setTopErrorsSeverities] = useState<string[]>(['error', 'critical'])
   const [topErrorDetail, setTopErrorDetail] = useState<TopErrorDetailTarget | null>(null)
   const [mitreDetail, setMitreDetail] = useState<MitreTechniqueDetailTarget | null>(null)
+  const [mitreResetBusy, setMitreResetBusy] = useState(false)
+  const [mitreResetMsg, setMitreResetMsg] = useState<string | null>(null)
   const [serverTimeOffset, setServerTimeOffset] = useState<number>(0)
   const [rangeCheckBusy, setRangeCheckBusy] = useState(false)
   // Live-Tick: zwingt activeTimeRange.to auf 'jetzt' und triggert via queryKey
@@ -369,7 +372,7 @@ export default function DashboardPage() {
     queryKey: ['error-rate', rangeHours, sourceKey],
     queryFn: () => getErrorRate(buildTimeRange(rangeHours, serverTimeOffset), metricsFilter),
     enabled: selectedSources.length > 0,
-    staleTime: 60_000,
+    staleTime: 0,
     placeholderData: keepPreviousData,
     refetchInterval: query => {
       if (chartBucketMode !== 'auto') return false
@@ -394,7 +397,7 @@ export default function DashboardPage() {
       })
     },
     enabled: selectedSources.length > 0,
-    staleTime: 15_000,
+    staleTime: 0,
     placeholderData: keepPreviousData,
     retry: 1,
     refetchInterval: query => {
@@ -416,7 +419,7 @@ export default function DashboardPage() {
     queryKey: ['top-errors', rangeHours, sourceKey, topErrorsSeverities.join(','), activeTimeRange?.to ?? ''],
     queryFn: () => getTopErrors(activeTimeRange, metricsFilter),
     enabled: selectedSources.length > 0 && topErrorsSeverities.length > 0,
-    staleTime: 60_000,
+    staleTime: 0,
     placeholderData: keepPreviousData,
     refetchInterval: drilldownRefreshMs,
     refetchIntervalInBackground: true,
@@ -425,7 +428,7 @@ export default function DashboardPage() {
     queryKey: ['top-services', rangeHours, sourceKey, activeTimeRange?.to ?? ''],
     queryFn: () => getTopServices(activeTimeRange, metricsFilter),
     enabled: selectedSources.length > 0,
-    staleTime: 60_000,
+    staleTime: 0,
     placeholderData: keepPreviousData,
     refetchInterval: drilldownRefreshMs,
     refetchIntervalInBackground: true,
@@ -435,7 +438,7 @@ export default function DashboardPage() {
     queryKey: ['source-status', selectedSourceIds.join('|')],
     queryFn: () => getSourceIngestionStatus(selectedSourceIds),
     enabled: selectedSourceIds.length > 0,
-    staleTime: 5_000,
+    staleTime: 0,
     placeholderData: keepPreviousData,
     refetchInterval: resolveBaseTickMs(autoRefreshProfile),
     refetchIntervalInBackground: true,
@@ -444,7 +447,7 @@ export default function DashboardPage() {
   const socAnalyst = useQuery({
     queryKey: ['soc-analyst-status'],
     queryFn: getSocAnalystStatus,
-    staleTime: 5_000,
+    staleTime: 0,
     refetchInterval: 10_000,
     refetchIntervalInBackground: true,
   })
@@ -470,7 +473,7 @@ export default function DashboardPage() {
     queryKey: ['mitre-coverage'],
     queryFn: getMitreCoverage,
     enabled: selectedSources.length > 0,
-    staleTime: 60_000,
+    staleTime: 0,
     placeholderData: keepPreviousData,
     refetchInterval: drilldownRefreshMs,
     refetchIntervalInBackground: true,
@@ -873,32 +876,116 @@ export default function DashboardPage() {
                     <span style={styles.panelMetaValue}>{mitreCoverage.data.mapped_incidents}</span>
                   </div>
                   <ol style={styles.ol}>
-                    {mitreCoverage.data.items.slice(0, 8).map(item => (
-                      <li key={item.technique_id} style={styles.li}>
-                        <button
-                          type="button"
-                          style={styles.topEntryButton}
-                          onClick={() => setMitreDetail({
-                            techniqueId: item.technique_id,
-                            tactic: item.tactic,
-                            ruleCount: item.rule_count,
-                            incidentCount: item.incident_count,
-                          })}
-                          title="Incidents zu dieser MITRE-Technik anzeigen"
-                        >
-                          <span style={styles.count}>{item.incident_count}</span>
-                          <span style={styles.msg}>
-                            {item.technique_id}
-                            {item.tactic ? ` (${item.tactic})` : ''}
-                            {` · rules ${item.rule_count}`}
-                          </span>
-                        </button>
-                      </li>
-                    ))}
+                    {[...mitreCoverage.data.items]
+                      .sort((left, right) => {
+                        if (right.incident_count !== left.incident_count) return right.incident_count - left.incident_count
+                        if (right.rule_count !== left.rule_count) return right.rule_count - left.rule_count
+                        return left.technique_id.localeCompare(right.technique_id)
+                      })
+                      .slice(0, 8)
+                      .map(item => {
+                      const hasIncidentHits = item.incident_count > 0
+                      return (
+                        <li key={item.technique_id} style={styles.li}>
+                          <button
+                            type="button"
+                            style={{
+                              ...styles.topEntryButton,
+                              background: hasIncidentHits ? 'rgba(248, 113, 113, 0.12)' : 'transparent',
+                              borderColor: hasIncidentHits ? 'rgba(248, 113, 113, 0.35)' : 'transparent',
+                              boxShadow: hasIncidentHits ? '0 0 0 1px rgba(248, 113, 113, 0.18) inset' : 'none',
+                            }}
+                            onClick={() => setMitreDetail({
+                              techniqueId: item.technique_id,
+                              tactic: item.tactic,
+                              ruleCount: item.rule_count,
+                              incidentCount: item.incident_count,
+                            })}
+                            title="Incidents zu dieser MITRE-Technik anzeigen"
+                          >
+                            <span style={{
+                              ...styles.count,
+                              minWidth: 64,
+                              textAlign: 'center',
+                              background: hasIncidentHits ? 'var(--danger-soft, rgba(248, 113, 113, 0.22))' : 'var(--accent-soft)',
+                              color: hasIncidentHits ? 'var(--danger-fg, #fca5a5)' : 'var(--accent-fg)',
+                              fontWeight: 800,
+                            }}>
+                              {hasIncidentHits ? `${item.incident_count} Treffer` : '0 Treffer'}
+                            </span>
+                            <span style={styles.msg}>
+                              {item.technique_id}
+                              {item.tactic ? ` (${item.tactic})` : ''}
+                              {` · rules ${item.rule_count}`}
+                            </span>
+                            {hasIncidentHits && (
+                              <span style={{
+                                marginLeft: 'auto',
+                                padding: '0.08rem 0.45rem',
+                                borderRadius: 999,
+                                background: 'rgba(248, 113, 113, 0.16)',
+                                color: 'var(--danger-fg, #fca5a5)',
+                                fontSize: '0.7rem',
+                                fontWeight: 800,
+                                letterSpacing: '0.04em',
+                                textTransform: 'uppercase',
+                                flexShrink: 0,
+                              }}>
+                                Fund
+                              </span>
+                            )}
+                          </button>
+                        </li>
+                      )
+                      })}
                     {!mitreCoverage.data.items.length && (
                       <div style={{ color: 'var(--muted-fg)', fontSize: '0.85rem' }}>Keine MITRE-Mappings</div>
                     )}
                   </ol>
+                  <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                    {mitreResetMsg && (
+                      <div style={{ fontSize: '0.78rem', color: 'var(--muted-fg)' }}>{mitreResetMsg}</div>
+                    )}
+                    <button
+                      type="button"
+                      disabled={mitreResetBusy || mitreCoverage.data.mapped_incidents === 0}
+                      style={{
+                        alignSelf: 'flex-start',
+                        padding: '0.3rem 0.75rem',
+                        fontSize: '0.8rem',
+                        borderRadius: '4px',
+                        border: '1px solid var(--danger-border, #7f1d1d)',
+                        background: 'transparent',
+                        color: 'var(--danger-fg, #f87171)',
+                        cursor: mitreResetBusy || mitreCoverage.data.mapped_incidents === 0 ? 'not-allowed' : 'pointer',
+                        opacity: mitreCoverage.data.mapped_incidents === 0 ? 0.45 : 1,
+                      }}
+                      onClick={async () => {
+                        const count = mitreCoverage.data?.mapped_incidents ?? 0
+                        const confirmed = window.confirm(
+                          `MITRE Coverage zurücksetzen?\n\n${count} aktive Incident(s) werden archiviert und vollständig als JSONL-Log gespeichert (backend/data/runtime/mitre-reset-archive.jsonl).\n\nDie Daten gehen NICHT verloren.`
+                        )
+                        if (!confirmed) return
+                        setMitreResetBusy(true)
+                        setMitreResetMsg(null)
+                        try {
+                          const res = await resetMitreCoverage()
+                          setMitreResetMsg(
+                            res.archived_count > 0
+                              ? `${res.archived_count} Incident(s) archiviert · Log: ${res.archive_file}`
+                              : 'Nichts zu archivieren.'
+                          )
+                          await mitreCoverage.refetch()
+                        } catch (err) {
+                          setMitreResetMsg(`Fehler: ${getApiErrorMessage(err)}`)
+                        } finally {
+                          setMitreResetBusy(false)
+                        }
+                      }}
+                    >
+                      {mitreResetBusy ? 'Archiviere…' : 'Reset & Archivieren'}
+                    </button>
+                  </div>
                 </>
               ) : mitreCoverage.isError ? (
                 <PanelError error={mitreCoverage.error} />
@@ -997,7 +1084,7 @@ function TopErrorDetailModal({
     }),
     initialPageParam: undefined,
     getNextPageParam: (lastPage) => lastPage.next_cursor,
-    staleTime: 20_000,
+    staleTime: 0,
   })
 
   const allEvents = data?.pages.flatMap(page => page.items) ?? []
@@ -1181,7 +1268,7 @@ function MitreTechniqueDetailModal({
       ...(sourceIds.length ? { source_ids: sourceIds.join(',') } : {}),
       ...(sourcePaths.length ? { source_paths: sourcePaths.join(',') } : {}),
     }),
-    staleTime: 20_000,
+    staleTime: 0,
   })
 
   const matchingIncidents = (data?.items ?? []).filter((incident: IncidentResponse) =>

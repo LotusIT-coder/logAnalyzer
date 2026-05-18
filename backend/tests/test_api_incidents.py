@@ -222,3 +222,87 @@ class TestIncidentsAPI:
         assert by_technique["T1110"]["tactic"] == "credential-access"
         assert by_technique["T1059.001"]["rule_count"] == 0
         assert by_technique["T1059.001"]["incident_count"] == 1
+
+    async def test_mitre_coverage_excludes_archived_incidents(self, client: AsyncClient, db_session: AsyncSession):
+        await _seed_incident(
+            db_session,
+            title="active-mitre",
+            mitre_techniques_json=["T1110"],
+            mitre_tactic="credential-access",
+            status="open",
+        )
+        await _seed_incident(
+            db_session,
+            title="archived-mitre",
+            mitre_techniques_json=["T1110"],
+            mitre_tactic="credential-access",
+            status="archived",
+        )
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/incidents/mitre-coverage")
+        assert resp.status_code == 200
+        body = resp.json()
+        # Archived incident must not contribute to mapped_incidents count
+        assert body["mapped_incidents"] == 1
+        by_technique = {item["technique_id"]: item for item in body["items"]}
+        assert by_technique["T1110"]["incident_count"] == 1
+
+    async def test_reset_mitre_coverage_archives_active_incidents(
+        self, client: AsyncClient, db_session: AsyncSession, tmp_path, monkeypatch
+    ):
+        import app.api.v1.incidents as incidents_mod
+        monkeypatch.setattr(incidents_mod, "_ARCHIVE_PATH", tmp_path / "mitre-reset-archive.jsonl")
+
+        inc1 = await _seed_incident(
+            db_session,
+            title="brute-force-incident",
+            mitre_techniques_json=["T1110"],
+            mitre_tactic="credential-access",
+            status="open",
+            confidence_score=0.9,
+            confidence_rationale="Many failed logins",
+        )
+        inc2 = await _seed_incident(
+            db_session,
+            title="already-archived",
+            mitre_techniques_json=["T1110"],
+            mitre_tactic="credential-access",
+            status="archived",
+        )
+        await db_session.commit()
+
+        resp = await client.post("/api/v1/incidents/mitre-coverage/reset")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["archived_count"] == 1
+        assert body["archive_file"] is not None
+
+        # Active incident must now be archived in DB
+        await db_session.refresh(inc1)
+        assert inc1.status == "archived"
+        # Already-archived incident stays archived (untouched by the endpoint)
+        await db_session.refresh(inc2)
+        assert inc2.status == "archived"
+
+        # Archive file must exist and contain valid JSON
+        archive_file = tmp_path / "mitre-reset-archive.jsonl"
+        assert archive_file.exists()
+        import json
+        line = json.loads(archive_file.read_text(encoding="utf-8").strip())
+        assert line["summary"]["archived_count"] == 1
+        assert "T1110" in line["summary"]["techniques"]
+        assert line["incidents"][0]["title"] == "brute-force-incident"
+        assert line["incidents"][0]["attack_path"]["chain"].startswith("Events (")
+        assert "T1110" in line["incidents"][0]["attack_path"]["chain"]
+
+    async def test_reset_mitre_coverage_empty(self, client: AsyncClient, tmp_path, monkeypatch):
+        import app.api.v1.incidents as incidents_mod
+        monkeypatch.setattr(incidents_mod, "_ARCHIVE_PATH", tmp_path / "mitre-reset-archive.jsonl")
+
+        resp = await client.post("/api/v1/incidents/mitre-coverage/reset")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["archived_count"] == 0
+        assert body["archive_file"] is None
+        assert not (tmp_path / "mitre-reset-archive.jsonl").exists()

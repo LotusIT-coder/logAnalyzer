@@ -89,12 +89,18 @@ async def chat_full(
     }
     if tools:
         payload["tools"] = tools
-    else:
-        # Disable extended thinking only when no tools are involved.
-        # qwen3 needs internal reasoning to pick tools correctly.
+    elif model.startswith("qwen3"):
+        # Disable extended thinking for qwen3 when no tools are involved.
+        # Other models don't support this field and return 400.
         payload["think"] = False
     timeout = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=60.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(f"{_base_url()}/api/chat", json=payload)
+        if resp.status_code == 400 and tools:
+            # Model does not support function calling – retry without tools.
+            # The caller already injected a baseline snapshot so the answer is
+            # still grounded in real data.
+            payload.pop("tools", None)
+            resp = await client.post(f"{_base_url()}/api/chat", json=payload)
         resp.raise_for_status()
         return resp.json().get("message", {}) or {}

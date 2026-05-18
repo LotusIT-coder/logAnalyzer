@@ -17,9 +17,13 @@ Ein lokales, KI-gestütztes Log-Analyse-System mit FastAPI-Backend und React-Fro
 - 📥 Log-Dateien, Syslog und Journald-Zeilen hochladen, streamen und überwachen
 - 🔍 Event-Suche, Filterung und interaktive Drilldowns
 - 🤖 KI-gestützte Triage mit Ollama
+- �️ **SOC Analyst**: Kontinuierlicher AI-getriebener Bedrohungsmonitor mit Heuristik-Fallback
 - 📊 Anomalieerkennung, Metriken und Pattern Scoring
 - 📋 Regelbasierte Incident-Generierung und Alerting
 - 💾 Persistente Quellenfilter, Kontexte und Einstellungen
+- 🎭 **Demo-Attack-Simulator**: Reproduzierbare MITRE-ATT&CK-Szenarien für Tests und Demos
+- 🛡️ **SOC Analyst**: Continuous AI-driven threat monitor with heuristic fallback
+- 🎭 **Demo Attack Simulator**: Reproducible MITRE ATT&CK scenarios for testing and demos
 
 ---
 
@@ -698,6 +702,8 @@ An AI-assisted log analysis and detection framework with a FastAPI backend and a
 - MITRE ATT&CK-oriented detection engine
 - AI-assisted incident triage via Ollama
 - Event correlation and anomaly detection
+- **SOC Analyst**: Continuous AI-driven threat monitor with heuristic fallback
+- **Demo Attack Simulator**: Reproducible MITRE ATT&CK scenarios for testing and demos
 - FastAPI + React + PostgreSQL architecture
 - Local processing with privacy-first design
 
@@ -754,6 +760,69 @@ These example detections show what LogAnalyzer can surface in practice:
 | Suspicious PowerShell | Suspicious PowerShell execution (for example encoded/hidden command patterns) |
 | Persistence Indicators | Persistence-related activity (for example scheduled tasks, autostart behavior) |
 | Service Account Abuse | Service account usage or logins outside expected behavior |
+
+## SOC Analyst – Continuous AI Monitor
+
+The SOC Analyst runs as a dedicated background service and automatically evaluates incoming events for threat patterns – no manual triggering required.
+
+### How it works
+
+1. **Event fetch**: Every `SOC_ANALYST_INTERVAL_SECONDS` the service loads the most recent N events, sorted by severity (critical → error → warning → info) so high-signal events always fill the analysis window first
+2. **LLM analysis**: Ollama evaluates the batch for threat patterns and returns a structured JSON finding
+3. **Heuristic fallback**: Deterministically detects clear signal patterns (e.g. ≥5 failed SSH logins, large outbound flows) even when the LLM responds conservatively
+4. **Deduplication**: The same pattern within an open incident does not trigger a new alert
+5. **Incident creation**: When confidence ≥ threshold, an `ai_soc` incident is created and queued for auto-triage
+
+### Configuration
+
+| Environment variable | Default | Description |
+| --- | --- | --- |
+| `SOC_ANALYST_ENABLED` | `true` | Enable service on startup |
+| `SOC_ANALYST_MODEL` | `llama3` | Ollama model to use |
+| `SOC_ANALYST_INTERVAL_SECONDS` | `20` | Seconds between analysis ticks |
+| `SOC_ANALYST_CONFIDENCE_THRESHOLD` | `0.3` | Minimum confidence to create an incident |
+| `SOC_ANALYST_WINDOW_EVENTS` | `100` | Events per analysis batch |
+
+The service can be controlled at runtime via API:
+
+```bash
+# Query current status
+curl http://localhost:8000/api/v1/system/soc-analyst
+
+# Restrict to specific sources
+curl -X PUT http://localhost:8000/api/v1/system/soc-analyst \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled": true, "source_ids": ["<uuid>", "<uuid>"]}'
+
+# Monitor all sources
+curl -X PUT http://localhost:8000/api/v1/system/soc-analyst \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled": true, "source_ids": []}'
+```
+
+## Demo Attack Simulator
+
+Generates reproducible MITRE ATT&CK attack scenario log files and registers the corresponding sources via API:
+
+```bash
+python3 scripts/demo_attack_simulation.py
+```
+
+Included scenarios:
+
+| Scenario | MITRE | Type |
+| --- | --- | --- |
+| SSH Brute Force + Post-Exploitation | T1110 | syslog |
+| Linux Privilege Escalation (sudo/SUID) | T1548 | syslog |
+| Obfuscated PowerShell + Recon | T1059.001 + T1027 | filebeat |
+| Kerberoasting (TGS burst) | T1558.003 | winlogbeat |
+| SQL Injection Probing | T1190 | file |
+| Port Scan (UFW BLOCK) | T1046 | syslog |
+| Data Exfiltration (large outbound flows) | T1041 | file |
+| Ransomware (shadow copy deletion + mass rename) | T1486 | elastic_agent |
+| Baseline noise (benign traffic) | – | file |
+
+Each run **appends** to existing files so the ingestion watcher reliably detects new bytes. Detection rules are created automatically; use `--skip-rules` to skip.
 
 ## MITRE ATT&CK Mapping
 

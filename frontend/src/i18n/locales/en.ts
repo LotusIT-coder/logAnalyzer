@@ -107,6 +107,7 @@ const en: Record<string, string> = {
   'quickTour.next': 'Next',
   'ai.referencesCount': '{count} referenced log line(s)',
   'ai.range.all': 'All entries',
+  'ai.range.lastMinutes': 'Last {count} min',
   'ai.range.lastHour': 'Last hour',
   'ai.range.lastHours': 'Last {count} hours',
   'ai.range.last24h': 'Last 24 hours',

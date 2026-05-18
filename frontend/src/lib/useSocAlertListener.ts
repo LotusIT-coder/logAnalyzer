@@ -7,7 +7,23 @@ export function useSocAlertListener() {
   const { showModal } = useSocAlertModal()
 
   useEffect(() => {
-    const shownIncidentIds = new Set<string>()
+    const STORAGE_KEY = 'soc-alert-shown-ids'
+    function loadShownIds(): Set<string> {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY)
+        return raw ? new Set(JSON.parse(raw) as string[]) : new Set()
+      } catch {
+        return new Set()
+      }
+    }
+    function persistShownIds(ids: Set<string>) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify([...ids]))
+      } catch {
+        // ignore quota errors
+      }
+    }
+    const shownIncidentIds = loadShownIds()
     let active = true
 
     function toNaturalSuspicion(summary: string, severity: string) {
@@ -32,6 +48,7 @@ export function useSocAlertListener() {
             const incidentId = String(incident.id ?? '')
             if (!incidentId || shownIncidentIds.has(incidentId)) continue
             shownIncidentIds.add(incidentId)
+            persistShownIds(shownIncidentIds)
 
             const summary = String(incident.summary ?? '').trim()
             const severity = String(incident.severity ?? '').trim()
@@ -59,6 +76,26 @@ export function useSocAlertListener() {
         await new Promise(r => setTimeout(r, 3000))
       }
     }
+
+    async function markExistingAlertsAsSeen() {
+      try {
+        const res = await fetch('/api/v1/incidents?status=open')
+        const data = await res.json()
+        const items = Array.isArray(data?.items) ? data.items : []
+        for (const incident of items) {
+          const tags = Array.isArray((incident as any)?.tags) ? (incident as any).tags : []
+          if (!tags.includes('ai_soc')) continue
+          const incidentId = String((incident as any).id ?? '')
+          if (!incidentId) continue
+          shownIncidentIds.add(incidentId)
+        }
+        persistShownIds(shownIncidentIds)
+      } catch {
+        // ignore bootstrap errors; the live poll will retry shortly
+      }
+    }
+
+    void markExistingAlertsAsSeen()
     poll()
     return () => { active = false }
   }, [showModal])

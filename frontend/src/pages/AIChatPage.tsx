@@ -41,7 +41,9 @@ function ContextBadge({ attachedContext }: { attachedContext: { title: string; s
 
   const rangeLabel = filter.rangeHours === 0
     ? t('ai.range.all')
-    : filter.rangeHours <= 1 ? t('ai.range.lastHour')
+    : filter.rangeHours < 1
+      ? t('ai.range.lastMinutes', { count: Math.round(filter.rangeHours * 60) })
+    : filter.rangeHours === 1 ? t('ai.range.lastHour')
     : filter.rangeHours <= 6 ? t('ai.range.lastHours', { count: filter.rangeHours })
     : filter.rangeHours <= 24 ? t('ai.range.last24h')
     : filter.rangeHours <= 168 ? t('ai.range.last7d')

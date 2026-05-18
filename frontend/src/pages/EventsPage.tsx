@@ -567,7 +567,7 @@ export default function EventsPage() {
     },
     initialPageParam: undefined,
     getNextPageParam: (lastPage) => lastPage.next_cursor,
-    staleTime: 30_000,
+      staleTime: 0,
     refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     refetchIntervalInBackground: true,
     enabled: eventsQueryEnabled,

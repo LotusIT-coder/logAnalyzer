@@ -18,7 +18,7 @@ import AIChatPage from './pages/AIChatPage'
 import UploadPage from './pages/UploadPage'
 
 const qc = new QueryClient({
-  defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
+  defaultOptions: { queries: { retry: 1, staleTime: 0 } },
 })
 
 export function AppRoutes() {
