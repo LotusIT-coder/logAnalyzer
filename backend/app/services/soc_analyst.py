@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import ollama_client
@@ -42,7 +42,16 @@ logger = structlog.get_logger(__name__)
 
 # Severities considered worth analysing.  Lower severities are usually
 # too noisy for the AI and would bloat the prompt.
-_RELEVANT_SEVERITIES = {"warning", "error", "critical", "warn", "err", "crit"}
+_RELEVANT_SEVERITIES = {"info", "warning", "error", "critical", "warn", "err", "crit"}
+_SEVERITY_RANK = {
+    "critical": 4,
+    "crit": 4,
+    "error": 3,
+    "err": 3,
+    "warning": 2,
+    "warn": 2,
+    "info": 1,
+}
 
 _SYSTEM_PROMPT = (
     "You are an expert SOC (Security Operations Center) analyst. "
@@ -85,6 +94,83 @@ def _map_severity(ai_severity: str) -> str:
     return mapping.get(ai_severity.lower(), "warning")
 
 
+def _parse_finding_json(raw: str) -> dict[str, Any] | None:
+    """Parse the first valid JSON object from an LLM response.
+
+    Models occasionally wrap the JSON in prose or markdown fences. This helper
+    tries strict JSON first, then scans for the first decodable JSON object.
+    """
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        parts = cleaned.split("```")
+        if len(parts) >= 2:
+            cleaned = parts[1].strip()
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:].strip()
+
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    decoder = json.JSONDecoder()
+    for idx, char in enumerate(cleaned):
+        if char != "{":
+            continue
+        try:
+            parsed, _end = decoder.raw_decode(cleaned, idx)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+
+    return None
+
+
+def _heuristic_finding(events: list[Event]) -> dict[str, Any] | None:
+    """Fallback detection for obvious high-signal patterns.
+
+    Keeps SOC responsive when the model output is overly conservative in noisy
+    batches by flagging only strong, low-ambiguity attack signatures.
+    """
+    warning_or_higher = [
+        e for e in events
+        if str(e.severity or "").lower() in {"warning", "warn", "error", "err", "critical", "crit"}
+    ]
+    if not warning_or_higher:
+        return None
+
+    lowered = [str(e.message or "").lower() for e in warning_or_higher]
+
+    failed_ssh = sum("failed password" in msg for msg in lowered)
+    if failed_ssh >= 5:
+        return {
+            "threat_detected": True,
+            "pattern_type": "brute_force_ssh",
+            "severity": "high",
+            "confidence": 0.9,
+            "title": "Repeated Failed SSH Logins (Heuristic)",
+            "summary": "Multiple failed SSH logins were observed in a short window. "
+            "This indicates likely brute-force activity and should be investigated immediately.",
+        }
+
+    large_outbound = sum("large outbound flow" in msg for msg in lowered)
+    if large_outbound >= 3:
+        return {
+            "threat_detected": True,
+            "pattern_type": "data_exfiltration",
+            "severity": "high",
+            "confidence": 0.92,
+            "title": "Suspicious Large Outbound Data Transfer (Heuristic)",
+            "summary": "Repeated large outbound transfer events were detected to external destinations. "
+            "This pattern is consistent with possible data exfiltration.",
+        }
+
+    return None
+
+
 async def _events_to_dicts(events: list[Event]) -> list[dict[str, Any]]:
     return [
         {
@@ -106,10 +192,11 @@ async def _fetch_recent_events(
     source_ids: list[str] | None = None,
 ) -> list[Event]:
     """Load the most-recent events with relevant severities."""
+    severity_rank = case(_SEVERITY_RANK, value=Event.severity, else_=0)
     stmt = (
         select(Event)
         .where(Event.severity.in_(_RELEVANT_SEVERITIES))
-        .order_by(Event.timestamp.desc())
+        .order_by(severity_rank.desc(), Event.timestamp.desc())
         .limit(limit)
     )
     if source_ids:
@@ -160,6 +247,7 @@ async def _run_analysis_tick(
                 system=_SYSTEM_PROMPT,
                 temperature=0.1,
                 max_tokens=512,
+                response_format="json",
             )
         except Exception:
             logger.exception("soc_analyst_ollama_error", model=model)
@@ -167,15 +255,8 @@ async def _run_analysis_tick(
         latency_ms = int((time.monotonic() - t0) * 1000)
 
         # Parse JSON response
-        try:
-            # Strip markdown fences if present
-            cleaned = raw.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("```")[1]
-                if cleaned.startswith("json"):
-                    cleaned = cleaned[4:]
-            finding: dict[str, Any] = json.loads(cleaned)
-        except (json.JSONDecodeError, IndexError):
+        finding = _parse_finding_json(raw)
+        if finding is None:
             logger.warning(
                 "soc_analyst_invalid_json",
                 latency_ms=latency_ms,
@@ -189,6 +270,20 @@ async def _run_analysis_tick(
         severity_ai: str = str(finding.get("severity", "medium"))
         title: str = str(finding.get("title", "AI SOC: Potential threat detected"))
         summary: str = str(finding.get("summary", ""))
+
+        heuristic = _heuristic_finding(events)
+        if heuristic is not None and (not threat_detected or confidence < confidence_threshold):
+            threat_detected = bool(heuristic.get("threat_detected", True))
+            confidence = float(heuristic.get("confidence", 0.0))
+            pattern_type = str(heuristic.get("pattern_type", "unknown"))
+            severity_ai = str(heuristic.get("severity", "medium"))
+            title = str(heuristic.get("title", title))
+            summary = str(heuristic.get("summary", summary))
+            logger.info(
+                "soc_analyst_heuristic_override",
+                pattern_type=pattern_type,
+                confidence=confidence,
+            )
 
         logger.info(
             "soc_analyst_tick_result",

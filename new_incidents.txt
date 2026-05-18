@@ -1,0 +1,13 @@
+error - Large Outbound Flow to Suspicious IP Address
+error - Suspicious Large Outbound Flow to 185.220.101.7
+error - Suspicious Large Outbound Flow from db-prod-03 to 185.220.101.7
+error - Suspicious Large Outbound Flow from db-prod-03
+error - Suspicious Large Outbound Flow to Unknown IP Address
+high - Rule fired: demo-rule-kerberoasting
+critical - Rule fired: demo-rule-ransomware-mass-rename
+high - Rule fired: demo-rule-powershell-encoded
+high - Rule fired: Service Account Abuse
+warning - Rule fired: Persistence Indicators
+high - Rule fired: Suspicious PowerShell
+high - Rule fired: Kerberoasting Indicators
+warning - Anomaly detected: Event volume spike

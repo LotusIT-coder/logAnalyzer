@@ -38,10 +38,10 @@ class Settings(BaseSettings):
     notification_webhook_url: str | None = None
 
     # SOC Analyst – continuous AI-driven threat monitoring
-    soc_analyst_enabled: bool = False
+    soc_analyst_enabled: bool = True
     soc_analyst_model: str = "llama3"
-    soc_analyst_interval_seconds: float = 60.0
-    soc_analyst_confidence_threshold: float = 0.7
+    soc_analyst_interval_seconds: float = 20.0
+    soc_analyst_confidence_threshold: float = 0.3
     soc_analyst_window_events: int = 100
 
     # Elasticsearch (optional secondary search/analytics store)

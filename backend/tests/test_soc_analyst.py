@@ -14,6 +14,7 @@ from app.domain.models import Incident
 from app.services.soc_analyst import (
     SOCAnalystService,
     _build_prompt,
+    _fetch_recent_events,
     _map_severity,
     _pattern_hash,
     _run_analysis_tick,
@@ -58,6 +59,39 @@ class TestHelpers:
 
 @pytest.mark.asyncio
 class TestRunAnalysisTick:
+
+    async def test_fetch_recent_events_prioritizes_signal_over_info_noise(self, engine):
+        """Warning/Error events must outrank newer info baseline noise."""
+        from datetime import timedelta
+        from app.domain.models import Event, Source
+
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+        async with session_factory() as session:
+            source = Source(name="src-priority", type="file", config_json={})
+            session.add(source)
+            await session.flush()
+
+            now = datetime.now(timezone.utc)
+            session.add(Event(
+                source_id=source.id,
+                timestamp=now,
+                severity="info",
+                message="benign baseline noise",
+            ))
+            session.add(Event(
+                source_id=source.id,
+                timestamp=now - timedelta(seconds=30),
+                severity="warning",
+                message="failed ssh login burst",
+            ))
+            await session.commit()
+
+        async with session_factory() as session:
+            events = await _fetch_recent_events(session, limit=1)
+
+        assert len(events) == 1
+        assert events[0].severity == "warning"
 
     async def test_no_events_skips_ollama(self, engine):
         """When no relevant events exist, Ollama should not be called."""
@@ -271,6 +305,97 @@ class TestRunAnalysisTick:
         async with session_factory() as session:
             result = await session.execute(select(Incident))
             assert result.scalars().all() == []
+
+    async def test_wrapped_json_response_is_parsed(self, engine):
+        """LLM prose wrappers around JSON should still be accepted."""
+        from app.domain.models import Event, Source
+
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+        async with session_factory() as session:
+            source = Source(name="src5", type="file", config_json={})
+            session.add(source)
+            await session.flush()
+            session.add(Event(
+                source_id=source.id,
+                timestamp=datetime.now(timezone.utc),
+                severity="warning",
+                message="suspicious outbound transfer detected",
+            ))
+            await session.commit()
+
+        wrapped = (
+            "I found a threat. Here is the JSON result:\n"
+            '{"threat_detected": true, "pattern_type": "exfiltration", '
+            '"severity": "high", "confidence": 0.91, '
+            '"title": "Possible Data Exfiltration", '
+            '"summary": "Large outbound transfers to an unknown IP were observed."}'
+        )
+
+        with patch("app.services.soc_analyst.get_session_factory", return_value=session_factory), \
+             patch("app.services.soc_analyst.ollama_client.generate",
+                   new_callable=AsyncMock, return_value=wrapped), \
+             patch("app.services.soc_analyst.mark_incident_for_auto_triage"), \
+             patch("app.services.soc_analyst.mark_incident_for_notification"):
+            await _run_analysis_tick("llama3", 100, 0.7)
+
+        async with session_factory() as session:
+            result = await session.execute(select(Incident))
+            incidents = result.scalars().all()
+            assert len(incidents) == 1
+            assert incidents[0].title == "Possible Data Exfiltration"
+
+    async def test_heuristic_fallback_creates_incident_under_noise(self, engine):
+        """Strong brute-force signal should create an incident even if LLM says no threat."""
+        from app.domain.models import Event, Source
+
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+        async with session_factory() as session:
+            source = Source(name="src6", type="file", config_json={})
+            session.add(source)
+            await session.flush()
+
+            # Baseline noise
+            for idx in range(20):
+                session.add(Event(
+                    source_id=source.id,
+                    timestamp=datetime.now(timezone.utc),
+                    severity="info",
+                    message=f"health endpoint 200 #{idx}",
+                ))
+
+            # Clear brute-force signal
+            for idx in range(6):
+                session.add(Event(
+                    source_id=source.id,
+                    timestamp=datetime.now(timezone.utc),
+                    severity="warning",
+                    message=f"Failed password for invalid user admin #{idx}",
+                ))
+            await session.commit()
+
+        llm_no_threat = json.dumps({
+            "threat_detected": False,
+            "pattern_type": "",
+            "severity": "low",
+            "confidence": 0.0,
+            "title": "",
+            "summary": "",
+        })
+
+        with patch("app.services.soc_analyst.get_session_factory", return_value=session_factory), \
+             patch("app.services.soc_analyst.ollama_client.generate",
+                   new_callable=AsyncMock, return_value=llm_no_threat), \
+             patch("app.services.soc_analyst.mark_incident_for_auto_triage"), \
+             patch("app.services.soc_analyst.mark_incident_for_notification"):
+            await _run_analysis_tick("llama3", 100, 0.7)
+
+        async with session_factory() as session:
+            result = await session.execute(select(Incident))
+            incidents = result.scalars().all()
+            assert len(incidents) == 1
+            assert "Heuristic" in incidents[0].title
 
 
 # ---------------------------------------------------------------------------

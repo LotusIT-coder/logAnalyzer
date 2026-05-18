@@ -7,12 +7,14 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.ai.model_validation import is_ollama_model_available
 from app.api.v1.router import router as v1_router
 from app.config import get_settings
-from app.db.session import get_engine
+from app.db.session import get_engine, get_session_factory
+from app.domain.models import Source
 from app.errors import http_exception_handler, unhandled_exception_handler
 from app.ingestion.watcher import WatcherService
 from app.logging_config import RequestLoggingMiddleware, configure_logging
@@ -98,6 +100,21 @@ async def lifespan(app: FastAPI):
 
     runtime_state = load_soc_analyst_runtime_state(settings.soc_analyst_enabled)
     runtime_source_ids = list(dict.fromkeys(runtime_state.get("source_ids") or []))
+    if runtime_source_ids:
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            existing_source_ids = {
+                str(value)
+                for value in (
+                    await session.execute(
+                        select(Source.id).where(Source.id.in_(runtime_source_ids))
+                    )
+                ).scalars().all()
+            }
+        # If runtime state references only stale IDs (e.g. recreated demo
+        # sources), fall back to monitoring all sources automatically.
+        if not existing_source_ids:
+            runtime_source_ids = []
     app.state.soc_analyst_enabled = bool(runtime_state.get("enabled", settings.soc_analyst_enabled))
     app.state.soc_analyst_source_ids = runtime_source_ids
 

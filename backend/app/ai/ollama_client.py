@@ -32,6 +32,7 @@ async def generate(
     system: Optional[str] = None,
     temperature: float = 0.2,
     max_tokens: int = 1024,
+    response_format: str | None = None,
 ) -> str:
     """Single-shot generation via /api/generate (non-streaming)."""
     payload: Dict[str, Any] = {
@@ -45,6 +46,8 @@ async def generate(
     }
     if system:
         payload["system"] = system
+    if response_format:
+        payload["format"] = response_format
 
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(f"{_base_url()}/api/generate", json=payload)

