@@ -3,6 +3,8 @@ import { getRules, createRule, patchRule, deleteRule, type RuleResponse } from '
 import { useState } from 'react'
 import GlobalSourceFilterNotice from '../components/GlobalSourceFilterNotice'
 import HelpTip from '../components/HelpTip'
+import { useDraggableModal } from '../lib/useDraggableModal'
+import { useEscapeToClose } from '../lib/useEscapeToClose'
 
 function EditRuleModal({
   rule,
@@ -13,6 +15,8 @@ function EditRuleModal({
   onClose: () => void
   onSaved: () => void
 }) {
+  const { offset, onHandlePointerDown } = useDraggableModal()
+  useEscapeToClose(onClose)
   const condition = (rule.condition ?? {}) as Record<string, unknown>
   const conditionEntry = Object.entries(condition).find(([k]) => ['severity', 'service', 'host'].includes(k))
   const [form, setForm] = useState({
@@ -44,8 +48,8 @@ function EditRuleModal({
 
   return (
     <div style={modal.overlay} onClick={onClose}>
-      <div style={modal.box} onClick={e => e.stopPropagation()}>
-        <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem', color: 'var(--fg)' }}>Regel bearbeiten</h3>
+      <div style={{ ...modal.box, transform: `translate(${offset.x}px, ${offset.y}px)` }} onClick={e => e.stopPropagation()}>
+        <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem', color: 'var(--fg)', cursor: 'grab' }} onPointerDown={onHandlePointerDown}>Regel bearbeiten</h3>
         <div style={styles.formGrid}>
           <Field label="Name">
             <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={styles.input} />

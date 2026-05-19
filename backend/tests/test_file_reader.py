@@ -60,6 +60,64 @@ class TestSyslogHeaderParsing:
 
 @pytest.mark.asyncio
 class TestSpecializedSourceIngestion:
+    async def test_file_source_aggregates_java_stacktrace_into_single_event(self, db_session, tmp_path):
+        log_path = tmp_path / "app-error.log"
+        log_path.write_text(
+            "java.lang.RuntimeException: boom\n"
+            "    at com.example.Service.run(Service.java:42)\n"
+            "    at com.example.Main.main(Main.java:7)\n",
+            encoding="utf-8",
+        )
+
+        source = Source(
+            name="app-error",
+            type="file",
+            config_json={"path": str(log_path)},
+            enabled=True,
+        )
+        db_session.add(source)
+        await db_session.flush()
+
+        stats = await ingest_source(db_session, source)
+
+        assert stats["events_created"] == 1
+        result = await db_session.execute(select(Event).where(Event.source_id == source.id))
+        events = list(result.scalars().all())
+        assert len(events) == 1
+        assert "RuntimeException" in (events[0].message or "")
+        assert "at com.example.Service.run" in (events[0].message or "")
+
+    async def test_file_source_ignores_delimiter_only_lines(self, db_session, tmp_path):
+        log_path = tmp_path / "delimiters.log"
+        log_path.write_text(
+            "request_started method=GET path=/api/v1/events\n"
+            "|\n"
+            "-----\n"
+            "request_finished status_code=200\n",
+            encoding="utf-8",
+        )
+
+        source = Source(
+            name="delim-source",
+            type="file",
+            config_json={"path": str(log_path)},
+            enabled=True,
+        )
+        db_session.add(source)
+        await db_session.flush()
+
+        stats = await ingest_source(db_session, source)
+
+        assert stats["events_created"] == 2
+        result = await db_session.execute(select(Event).where(Event.source_id == source.id))
+        events = list(result.scalars().all())
+        assert len(events) == 2
+        messages = sorted(e.message for e in events)
+        assert messages == [
+            "request_finished status_code=200",
+            "request_started method=GET path=/api/v1/events",
+        ]
+
     async def test_filebeat_source_normalizes_ecs_fields(self, db_session, tmp_path):
         log_path = tmp_path / "filebeat-json.log"
         log_path.write_text(

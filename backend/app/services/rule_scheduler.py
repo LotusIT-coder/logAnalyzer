@@ -12,6 +12,7 @@ import asyncio
 
 import structlog
 
+from app.config import get_settings
 from app.db.session import get_session_factory
 from app.services.anomaly_detection import run_event_volume_anomaly_detection
 from app.services.ai_auto_triage import (
@@ -22,6 +23,7 @@ from app.services.notifications import (
     consume_incidents_marked_for_notification,
     enqueue_incident_notification,
 )
+from app.services.heuristics_engine import run_realtime_heuristics
 from app.services.rule_engine import run_rule_engine
 
 logger = structlog.get_logger(__name__)
@@ -65,14 +67,39 @@ class RuleSchedulerService:
             await asyncio.sleep(self.interval_seconds)
 
     async def _tick(self) -> None:
+        settings = get_settings()
         factory = get_session_factory()
         async with factory() as session:
             try:
                 results = await run_rule_engine(session)
                 anomaly_result = await run_event_volume_anomaly_detection(session)
+                if settings.heuristics_enabled:
+                    heuristics_result = await run_realtime_heuristics(
+                        session,
+                        current_window_minutes=settings.heuristics_current_window_minutes,
+                        baseline_window_minutes=settings.heuristics_baseline_window_minutes,
+                        baseline_windows=settings.heuristics_baseline_windows,
+                        min_burst_count=settings.heuristics_min_burst_count,
+                        burst_ratio_threshold=settings.heuristics_burst_ratio_threshold,
+                        min_novelty_count=settings.heuristics_min_novelty_count,
+                        cooldown_minutes=settings.heuristics_cooldown_minutes,
+                    )
+                else:
+                    heuristics_result = None
                 incidents_created = sum(1 for r in results if r.get("incident_created"))
                 if anomaly_result.incident_created:
                     incidents_created += 1
+                if heuristics_result is not None:
+                    incidents_created += heuristics_result.incidents_created
+                    logger.info(
+                        "rule_scheduler_heuristics_tick",
+                        patterns_evaluated=heuristics_result.patterns_evaluated,
+                        burst_signals=len(heuristics_result.burst_signals),
+                        novelty_signals=len(heuristics_result.novelty_signals),
+                        burst_suppressed_cooldown=heuristics_result.burst_suppressed_cooldown,
+                        novelty_suppressed_cooldown=heuristics_result.novelty_suppressed_cooldown,
+                        incidents_created=heuristics_result.incidents_created,
+                    )
                 if incidents_created:
                     logger.info("rule_scheduler_incidents_created", count=incidents_created)
                 await session.commit()

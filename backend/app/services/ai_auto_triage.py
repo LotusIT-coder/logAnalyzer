@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,11 +12,20 @@ from app.db.session import get_session_factory
 from app.domain.models import AIAnalysis, Incident
 
 AUTO_TRIAGE_SESSION_KEY = "pending_ai_auto_triage_incident_ids"
+AUTO_TRIAGE_EVENT_TOPIC = "ai.auto_triage.requested"
 _DEFAULT_MODEL = "llama3"
 _DEFAULT_SYSTEM = (
     "You are a senior incident responder. Summarize the incident, identify likely root causes, "
     "and propose the next remediation steps. Be concise and actionable."
 )
+
+_auto_triage_event_bus: Any | None = None
+
+
+def configure_auto_triage_event_bus(event_bus: Any | None) -> None:
+    """Set or clear the optional in-memory event bus used for auto-triage jobs."""
+    global _auto_triage_event_bus
+    _auto_triage_event_bus = event_bus
 
 
 def mark_incident_for_auto_triage(session: AsyncSession, incident_id: str) -> None:
@@ -73,7 +83,23 @@ async def _run_auto_triage_job(job_id: str, incident_id: str) -> None:
         job_store.set_failed(job_id, str(exc))
 
 
+async def _handle_auto_triage_requested(payload: dict[str, Any]) -> None:
+    job_id = str(payload.get("job_id") or "").strip()
+    incident_id = str(payload.get("incident_id") or "").strip()
+    if not job_id or not incident_id:
+        return
+    await _run_auto_triage_job(job_id, incident_id)
+
+
 def enqueue_auto_triage_for_incident(incident_id: str) -> str:
     job_id = job_store.create_job()
-    asyncio.create_task(_run_auto_triage_job(job_id, incident_id))
+    if _auto_triage_event_bus is not None:
+        asyncio.create_task(
+            _auto_triage_event_bus.publish(
+                AUTO_TRIAGE_EVENT_TOPIC,
+                {"job_id": job_id, "incident_id": incident_id},
+            )
+        )
+    else:
+        asyncio.create_task(_run_auto_triage_job(job_id, incident_id))
     return job_id

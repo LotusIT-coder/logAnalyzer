@@ -118,6 +118,20 @@ class TestTimeseries:
         assert resp.status_code == 200
         assert sum(point["count"] for point in resp.json()["points"]) == 0
 
+    async def test_accepts_one_second_bucket(self, client, db_session):
+        src = _make_source(db_session, name="one-second-bucket-src")
+        db_session.add(src)
+        await db_session.flush()
+        now = datetime.now(timezone.utc)
+        _make_event(db_session, src, message="bucket-1s", ts=now, created_at=now)
+        await db_session.commit()
+
+        from_ts = (now - timedelta(seconds=5)).isoformat()
+        to_ts = (now + timedelta(seconds=1)).isoformat()
+        resp = await client.get(f"/api/v1/metrics/timeseries?from={from_ts}&to={to_ts}&bucket=1s")
+        assert resp.status_code == 200
+        assert sum(point["count"] for point in resp.json()["points"]) == 1
+
 
 # ---------------------------------------------------------------------------
 # /metrics/top-errors
@@ -275,6 +289,29 @@ class TestErrorRate:
         assert resp.status_code == 200
         data = resp.json()
         assert data["total_events"] == 0
+        assert data["error_events"] == 0
+
+    async def test_error_rate_recent_window_falls_back_for_future_skewed_timestamp(self, client, db_session):
+        src = _make_source(db_session, name="rate-future-skew-src")
+        db_session.add(src)
+        await db_session.flush()
+        now = datetime.now(timezone.utc)
+        _make_event(
+            db_session,
+            src,
+            severity="info",
+            message="future skewed source timestamp",
+            ts=now + timedelta(hours=2),
+            created_at=now,
+        )
+        await db_session.commit()
+
+        from_ts = (now - timedelta(minutes=1)).isoformat()
+        to_ts = (now + timedelta(seconds=1)).isoformat()
+        resp = await client.get("/api/v1/metrics/error-rate", params={"from": from_ts, "to": to_ts})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_events"] == 1
         assert data["error_events"] == 0
 
 

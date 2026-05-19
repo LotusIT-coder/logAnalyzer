@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_db
 from app.ingestion.file_reader import ingest_source
 from app.domain.models import Source
+from app.services.source_service import HOSTFS_PREFIX
 from app.services.source_status import refresh_source_status
 
 router = APIRouter(prefix="/ingestion", tags=["Ingestion"])
@@ -83,9 +84,15 @@ async def trigger_ingestion(
             if not path:
                 continue
 
+            # Resolve to an accessible path: try the raw path first, then the
+            # host-mounted prefix (used when running inside Docker with / mapped
+            # to /hostfs read-only). The Source record always stores the original
+            # canonical path so resolve_source_path() can re-expand it later.
             if not os.path.exists(path):
-                results.append({"source_id": path, "skipped": True, "reason": f"file not found: {path}"})
-                continue
+                hostfs_path = os.path.join(HOSTFS_PREFIX, path.lstrip("/"))
+                if not os.path.exists(hostfs_path):
+                    results.append({"source_id": path, "skipped": True, "reason": f"file not found: {path}"})
+                    continue
 
             source = by_path.get(path)
             if source is None:

@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy import func, select, text
+from sqlalchemy import and_, case, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.source_filters import resolve_source_ids
@@ -30,6 +30,7 @@ from app.schemas.domain import (
 router = APIRouter(prefix="/metrics", tags=["Metrics"])
 
 _BUCKET_SECONDS = {
+    "1s": 1,
     "5s": 5,
     "15s": 15,
     "30s": 30,
@@ -50,8 +51,27 @@ _DATE_BIN_ORIGIN_SQL = text("'1970-01-01 00:00:00+00'::timestamptz")
 _ERROR_SEVERITIES = ["error", "critical"]
 
 
+def _metric_ts_expr(to_dt: datetime):
+    """Return timestamp expression for metrics windows.
+
+    We keep source event timestamps as the primary time basis, but guard against
+    skewed future timestamps (common with local-time logs parsed as UTC). For
+    such rows we fall back to created_at so recent dashboard windows stay useful.
+    """
+    return case(
+        (
+            and_(
+                Event.created_at.isnot(None),
+                Event.timestamp > to_dt,
+            ),
+            Event.created_at,
+        ),
+        else_=Event.timestamp,
+    )
+
+
 def _observed_between(from_dt: datetime, to_dt: datetime):
-    return Event.timestamp.between(from_dt, to_dt)
+    return _metric_ts_expr(to_dt).between(from_dt, to_dt)
 
 
 def _default_range() -> tuple[datetime, datetime]:
@@ -145,7 +165,8 @@ async def _refresh_rollup_15m(
     if aligned_from >= aligned_to:
         return
 
-    bucket_expr = _bucket_expr(Event.timestamp, _ROLLUP_BUCKET_SECONDS).label("bucket_start")
+    observed_ts = _metric_ts_expr(aligned_to)
+    bucket_expr = _bucket_expr(observed_ts, _ROLLUP_BUCKET_SECONDS).label("bucket_start")
     aggregate_stmt = (
         select(
             Event.source_id.label("source_id"),
@@ -155,8 +176,8 @@ async def _refresh_rollup_15m(
             func.now().label("updated_at"),
         )
         .where(
-            Event.timestamp >= aligned_from,
-            Event.timestamp < aligned_to,
+            observed_ts >= aligned_from,
+            observed_ts < aligned_to,
             Event.source_id.in_(resolved_source_ids),
         )
         .group_by(Event.source_id, text("bucket_start"))
@@ -186,12 +207,13 @@ async def _query_raw_timeseries_slice(
 ) -> dict[datetime, int]:
     if from_dt >= to_dt:
         return {}
-    bucket_expr = _bucket_expr(Event.timestamp, bucket_seconds).label("bucket")
+    observed_ts = _metric_ts_expr(to_dt)
+    bucket_expr = _bucket_expr(observed_ts, bucket_seconds).label("bucket")
     stmt = (
         select(bucket_expr, func.count().label("count"))
         .where(
-            Event.timestamp >= from_dt,
-            Event.timestamp < to_dt,
+            observed_ts >= from_dt,
+            observed_ts < to_dt,
             Event.source_id.in_(resolved_source_ids),
         )
         .group_by(text("bucket"))
@@ -255,14 +277,15 @@ async def _query_raw_stats_slice(
 ) -> tuple[int, int]:
     if from_dt >= to_dt:
         return 0, 0
+    observed_ts = _metric_ts_expr(to_dt)
     stmt = (
         select(
             func.count().label("total"),
             func.count(Event.id).filter(Event.severity.in_(_ERROR_SEVERITIES)).label("errors"),
         )
         .where(
-            Event.timestamp >= from_dt,
-            Event.timestamp < to_dt,
+            observed_ts >= from_dt,
+            observed_ts < to_dt,
             Event.source_id.in_(resolved_source_ids),
         )
     )
@@ -361,7 +384,7 @@ async def timeseries(
     session: AsyncSession = Depends(get_db),
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
-    bucket: str = Query("15s", pattern="^(5s|15s|30s|1m|5m|15m|1h)$"),
+    bucket: str = Query("15s", pattern="^(1s|5s|15s|30s|1m|5m|15m|1h)$"),
     source_ids: Optional[str] = Query(None),
     source_paths: Optional[str] = Query(None),
 ):
@@ -380,7 +403,8 @@ async def timeseries(
     if is_postgres:
         # Push bucketing entirely into PostgreSQL — returns one row per bucket,
         # not one row per event. Scales to millions of events with no extra memory.
-        bucket_expr = _bucket_expr(Event.timestamp, bucket_seconds).label("bucket")
+        observed_ts = _metric_ts_expr(to_dt)
+        bucket_expr = _bucket_expr(observed_ts, bucket_seconds).label("bucket")
         stmt = (
             select(bucket_expr, func.count().label("count"))
             .where(_observed_between(from_dt, to_dt))
@@ -396,9 +420,9 @@ async def timeseries(
     # SQLite fallback (used in tests): fetch timestamps with a safety LIMIT
     # and bucket in Python.
     stmt = (
-        select(Event.timestamp)
+        select(_metric_ts_expr(to_dt).label("observed_ts"))
         .where(_observed_between(from_dt, to_dt))
-        .order_by(Event.timestamp)
+        .order_by(text("observed_ts"))
         .limit(_TIMESERIES_PYTHON_LIMIT)
     )
     if resolved_source_ids is not None:
@@ -443,7 +467,7 @@ async def top_errors(
         select(
             Event.message,
             func.count().label("count"),
-            func.max(Event.timestamp).label("latest")
+            func.max(_metric_ts_expr(to_dt)).label("latest")
         )
         .where(
             _observed_between(from_dt, to_dt),

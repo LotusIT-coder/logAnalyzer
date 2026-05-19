@@ -12,8 +12,9 @@ export function FeatureFlagsProvider({ children }: { children: React.ReactNode }
     ;(async () => {
       try {
         const health = await getHealth()
+        const ollamaAvailable = Boolean(health.ollama_available || health.ollama_api_reachable)
         setFlags({
-          ollama_available: health.ollama_available ?? false,
+          ollama_available: ollamaAvailable,
         })
       } catch (err) {
         console.error('Failed to fetch feature flags:', err)

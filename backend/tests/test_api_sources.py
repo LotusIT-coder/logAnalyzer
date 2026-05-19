@@ -226,3 +226,47 @@ async def test_resolve_source_path_uses_alternate_config_path(tmp_path):
 
     assert error is None
     assert path == str(alternate)
+
+
+async def test_resolve_source_path_supports_hostfs_fallback(tmp_path, monkeypatch):
+    hostfs_root = tmp_path / "hostfs"
+    mapped_file = hostfs_root / "var" / "log" / "custom" / "app.log"
+    mapped_file.parent.mkdir(parents=True, exist_ok=True)
+    mapped_file.write_text("line\n", encoding="utf-8")
+    monkeypatch.setattr(source_service, "HOSTFS_PREFIX", str(hostfs_root))
+
+    source = Source(
+        name="custom-path",
+        type="file",
+        config_json={"path": "/var/log/custom/app.log"},
+        enabled=True,
+    )
+
+    path, error = source_service.resolve_source_path(source)
+
+    assert error is None
+    assert path == str(mapped_file)
+
+
+async def test_resolve_source_path_regex_supports_hostfs_fallback(tmp_path, monkeypatch):
+    hostfs_root = tmp_path / "hostfs"
+    mapped_dir = hostfs_root / "var" / "log" / "custom"
+    mapped_dir.mkdir(parents=True, exist_ok=True)
+    old_file = mapped_dir / "app-2026-05-18.log"
+    new_file = mapped_dir / "app-2026-05-19.log"
+    old_file.write_text("old\n", encoding="utf-8")
+    new_file.write_text("new\n", encoding="utf-8")
+    monkeypatch.setattr(source_service, "HOSTFS_PREFIX", str(hostfs_root))
+
+    source = Source(
+        name="custom-regex",
+        type="file",
+        config_json={"path": "/var/log/custom/app-.*\\.log", "path_regex": True},
+        enabled=True,
+    )
+
+    path, error = source_service.resolve_source_path(source)
+
+    assert error is None
+    assert path is not None
+    assert path.endswith("app-2026-05-19.log")

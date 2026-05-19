@@ -1,6 +1,7 @@
 """Tests for AI auto-triage helpers."""
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,7 +13,9 @@ from app.ai import job_store
 from app.domain.models import AIAnalysis, Incident
 from app.services.ai_auto_triage import (
     _run_auto_triage_job,
+    configure_auto_triage_event_bus,
     consume_incidents_marked_for_auto_triage,
+    enqueue_auto_triage_for_incident,
     mark_incident_for_auto_triage,
 )
 
@@ -31,6 +34,30 @@ class TestAutoTriageBookkeeping:
 
         assert pending == ["inc-1", "inc-2"]
         assert consume_incidents_marked_for_auto_triage(session) == []
+
+    async def test_enqueue_uses_event_bus_when_configured(self):
+        job_store._jobs.clear()
+
+        class FakeBus:
+            def __init__(self):
+                self.calls = []
+
+            async def publish(self, topic, payload):
+                self.calls.append((topic, payload))
+                return True
+
+        fake_bus = FakeBus()
+        configure_auto_triage_event_bus(fake_bus)
+        try:
+            job_id = enqueue_auto_triage_for_incident("inc-7")
+            await asyncio.sleep(0)
+            assert fake_bus.calls
+            topic, payload = fake_bus.calls[0]
+            assert topic == "ai.auto_triage.requested"
+            assert payload["incident_id"] == "inc-7"
+            assert payload["job_id"] == job_id
+        finally:
+            configure_auto_triage_event_bus(None)
 
 
 @pytest.mark.asyncio

@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     rule_scheduler_interval_seconds: float = 30.0
     notification_webhook_url: str | None = None
 
+    # Realtime heuristics (pre-AI signal detection)
+    heuristics_enabled: bool = True
+    heuristics_current_window_minutes: int = 2
+    heuristics_baseline_window_minutes: int = 10
+    heuristics_baseline_windows: int = 6
+    heuristics_min_burst_count: int = 8
+    heuristics_burst_ratio_threshold: float = 3.0
+    heuristics_min_novelty_count: int = 5
+    heuristics_cooldown_minutes: int = 15
+
     # SOC Analyst – continuous AI-driven threat monitoring
     soc_analyst_enabled: bool = True
     soc_analyst_model: str = "llama3"
@@ -59,6 +69,14 @@ class Settings(BaseSettings):
     elastic_indexer_interval_seconds: float = 5.0
     elastic_indexer_batch_size: int = 500
     elastic_indexer_max_retries: int = 8
+
+    # Internal event bus (used as pre-broker transport)
+    event_bus_workers: int = 2
+    event_bus_queue_size: int = 5000
+    event_bus_max_retry_attempts: int = 3
+    event_bus_retry_backoff_seconds: float = 0.2
+    event_bus_dead_letter_max: int = 1000
+    event_bus_drain_timeout_seconds: float = 5.0
 
     @property
     def cors_origins_list(self) -> List[str]:

@@ -26,6 +26,8 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import dayjs from 'dayjs'
 import { getApiErrorMessage } from '../lib/errors'
+import { useDraggableModal } from '../lib/useDraggableModal'
+import { useEscapeToClose } from '../lib/useEscapeToClose'
 import HelpTip from '../components/HelpTip'
 import { FormattedMessage } from '../components/FormattedMessage'
 import { SourcePicker, type UploadResultState, isUploadError } from '../components/SourcePicker'
@@ -39,6 +41,7 @@ import { useI18n } from '../ctx/I18nContext'
 
 const CHART_BUCKETS: { value: string; label: string }[] = [
   { value: 'auto', label: 'Auto' },
+  { value: '1s', label: '1 s' },
   { value: '5s', label: '5 s' },
   { value: '15s', label: '15 s' },
   { value: '30s', label: '30 s' },
@@ -51,6 +54,7 @@ const CHART_BUCKETS: { value: string; label: string }[] = [
 function chartBucketToMs(bucket: string) {
   const seconds: Record<string, number> = {
     auto: 0,
+    '1s': 1,
     '5s': 5,
     '15s': 15,
     '30s': 30,
@@ -80,11 +84,13 @@ function resolveChartBucket(rangeHours: number) {
   if (rangeHours > 24) return '15m'
   if (rangeHours > 6) return '1m'
   if (rangeHours > 1) return '15s'
-  return '5s'
+  if (rangeHours > 0.25) return '5s'
+  return '1s'
 }
 
 const AUTO_REFRESH_TARGET_EVENTS_KEY = 'dashboard:auto-refresh-target-events'
 const AUTO_REFRESH_PROFILE_KEY = 'dashboard:auto-refresh-profile'
+const CHART_BUCKET_MODE_KEY = 'dashboard:chart-bucket-mode'
 const DEFAULT_AUTO_REFRESH_TARGET_EVENTS = 5
 const RANGE_CONFIRMATION_THRESHOLD = 5_000_000
 
@@ -144,7 +150,7 @@ function buildTimeRange(rangeHours: number, serverTimeOffset: number = 0): TimeR
 function toDateTimeLocalInput(iso?: string) {
   if (!iso) return ''
   const parsed = dayjs(iso)
-  return parsed.isValid() ? parsed.format('YYYY-MM-DDTHH:mm') : ''
+  return parsed.isValid() ? parsed.format('YYYY-MM-DDTHH:mm:ss') : ''
 }
 
 function toIsoFromDateTimeLocal(value: string) {
@@ -175,6 +181,7 @@ interface TopErrorDetailTarget {
   count: number
   // If set, the detail modal filters by service= instead of q=.
   service?: string
+  providerOverride?: 'auto' | 'postgres' | 'elastic'
   titleOverride?: string
   subtitlePrefix?: string
 }
@@ -186,6 +193,14 @@ interface MitreTechniqueDetailTarget {
   incidentCount: number
 }
 
+interface TimeseriesDetailTarget {
+  from: string
+  to: string
+  ts: string
+  label: string
+  count: number
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const { t } = useI18n()
@@ -193,7 +208,14 @@ export default function DashboardPage() {
   // Single source of truth: global filter.rangeHours. Changes from any tab
   // propagate via context so this page stays in sync.
   const rangeHours = filter.rangeHours
-  const [chartBucketMode, setChartBucketMode] = useState('auto')
+  const [chartBucketMode, setChartBucketMode] = useState(() => {
+    if (typeof window === 'undefined') return 'auto'
+    const storedMode = window.localStorage.getItem(CHART_BUCKET_MODE_KEY)
+    if (storedMode && CHART_BUCKETS.some(bucket => bucket.value === storedMode)) {
+      return storedMode
+    }
+    return 'auto'
+  })
   const [autoRefreshProfile, setAutoRefreshProfile] = useState<AutoRefreshProfile>(() => {
     if (typeof window === 'undefined') return 'balanced'
     const storedProfile = window.localStorage.getItem(AUTO_REFRESH_PROFILE_KEY)
@@ -216,6 +238,8 @@ export default function DashboardPage() {
   const [topErrorsSeverities, setTopErrorsSeverities] = useState<string[]>(['error', 'critical'])
   const [topErrorDetail, setTopErrorDetail] = useState<TopErrorDetailTarget | null>(null)
   const [mitreDetail, setMitreDetail] = useState<MitreTechniqueDetailTarget | null>(null)
+  const [timeseriesDetail, setTimeseriesDetail] = useState<TimeseriesDetailTarget | null>(null)
+  const [selectedTimeseriesTs, setSelectedTimeseriesTs] = useState<string | null>(null)
   const [mitreResetBusy, setMitreResetBusy] = useState(false)
   const [mitreResetMsg, setMitreResetMsg] = useState<string | null>(null)
   const [serverTimeOffset, setServerTimeOffset] = useState<number>(0)
@@ -251,6 +275,10 @@ export default function DashboardPage() {
     window.localStorage.setItem(AUTO_REFRESH_PROFILE_KEY, autoRefreshProfile)
     window.localStorage.setItem(AUTO_REFRESH_TARGET_EVENTS_KEY, String(autoRefreshTargetEvents))
   }, [autoRefreshProfile, autoRefreshTargetEvents])
+
+  useEffect(() => {
+    window.localStorage.setItem(CHART_BUCKET_MODE_KEY, chartBucketMode)
+  }, [chartBucketMode])
 
   function syncGlobalFilter(nextSelectedSources: SourceOption[], nextRangeHours = rangeHours) {
     const nextSelectedSourceIds = nextSelectedSources
@@ -742,7 +770,22 @@ export default function DashboardPage() {
           </div>
           <div style={styles.grid}>
             <Panel title={`Events / ${chartBucketMode === 'auto' ? `Auto (${chartBucket})` : chartBucket} (${rangeHours === 0 ? 'alle' : TIME_PRESETS.find(p => p.hours === rangeHours)?.label ?? ''})`} help="Die Linie zeigt, wie viele Events pro Zeitintervall eingegangen sind. Hoehere Ausschlaege markieren Lastspitzen oder Stoerungsphasen.">
-              {ts.data ? <MiniBar points={ts.data.points} /> : ts.isError ? <PanelError error={ts.error} /> : <Spinner />}
+              {ts.data ? (
+                <MiniBar
+                  points={ts.data.points}
+                  onPointClick={({ from, to, ts: clickedTs, count }) => {
+                    setSelectedTimeseriesTs(clickedTs)
+                    setTimeseriesDetail({
+                      from,
+                      to,
+                      ts: clickedTs,
+                      count,
+                      label: dayjs(clickedTs).format('DD.MM.YYYY HH:mm:ss'),
+                    })
+                  }}
+                  selectedPointTs={selectedTimeseriesTs}
+                />
+              ) : ts.isError ? <PanelError error={ts.error} /> : <Spinner />}
             </Panel>
 
             <Panel title="Top Fehler-Meldungen" help="Hier siehst du die haeufigsten Fehlermeldungen im aktuellen Datenfenster. Das hilft beim Clustern wiederkehrender Stoerungen.">
@@ -1007,6 +1050,26 @@ export default function DashboardPage() {
           onClose={() => setTopErrorDetail(null)}
         />
       )}
+      {timeseriesDetail && (
+        <TopErrorDetailModal
+          target={{
+            query: '',
+            label: timeseriesDetail.label,
+            count: timeseriesDetail.count,
+            providerOverride: 'postgres',
+            titleOverride: 'Details: Events zum Zeitpunkt',
+            subtitlePrefix: 'Zeitpunkt',
+          }}
+          sourceIds={selectedSourceIds}
+          sourcePaths={selectedSourcePaths}
+          initialFrom={timeseriesDetail.from}
+          initialTo={timeseriesDetail.to}
+          onClose={() => {
+            setTimeseriesDetail(null)
+            setSelectedTimeseriesTs(null)
+          }}
+        />
+      )}
       {mitreDetail && (
         <MitreTechniqueDetailModal
           target={mitreDetail}
@@ -1042,6 +1105,8 @@ function TopErrorDetailModal({
   const [localSearch, setLocalSearch] = useState('')
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const listRef = useRef<HTMLDivElement>(null)
+  const { offset, onHandlePointerDown, resetOffset } = useDraggableModal()
+  useEscapeToClose(onClose)
 
   useEffect(() => {
     // Reset Filter / Auswahl nur, wenn das Modal-Target wechselt (anderer Service /
@@ -1058,6 +1123,10 @@ function TopErrorDetailModal({
     setExpanded({})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target.query, target.service])
+
+  useEffect(() => {
+    resetOffset()
+  }, [target.query, target.service, target.label, resetOffset])
 
   const fromIso = toIsoFromDateTimeLocal(appliedFromInput)
   const toIso = toIsoFromDateTimeLocal(appliedToInput)
@@ -1076,7 +1145,9 @@ function TopErrorDetailModal({
     queryFn: ({ pageParam }: { pageParam?: string }) => getEvents({
       limit: 100,
       cursor: pageParam,
-      ...(target.service ? { service: target.service } : { q: target.query }),
+      ...(target.service ? { service: target.service } : {}),
+      ...(!target.service && target.query.trim() ? { q: target.query } : {}),
+      ...(target.providerOverride ? { provider: target.providerOverride } : {}),
       ...(fromIso ? { from: fromIso } : {}),
       ...(toIso ? { to: toIso } : {}),
       ...(sourceIds.length ? { source_ids: sourceIds.join(',') } : {}),
@@ -1140,8 +1211,11 @@ function TopErrorDetailModal({
 
   return (
     <div style={styles.detailModalOverlay} onClick={onClose}>
-      <div style={styles.detailModalBox} onClick={e => e.stopPropagation()}>
-        <div style={styles.detailModalHeader}>
+      <div style={{ ...styles.detailModalBox, transform: `translate(${offset.x}px, ${offset.y}px)` }} onClick={e => e.stopPropagation()}>
+        <div style={styles.detailModalDragHandle} onPointerDown={onHandlePointerDown}>
+          Zum Verschieben ziehen
+        </div>
+        <div style={{ ...styles.detailModalHeader, cursor: 'grab' }} onPointerDown={onHandlePointerDown}>
           <div style={{ minWidth: 0 }}>
             <div style={styles.detailModalTitle}>{target.titleOverride ?? t('dashboard.detail.titleTopError')}</div>
             <div style={styles.detailModalSubtitle} title={target.service ?? target.query}>
@@ -1157,6 +1231,7 @@ function TopErrorDetailModal({
             type="datetime-local"
             value={fromInput}
             onChange={e => setFromInput(e.target.value)}
+            step={1}
             style={styles.detailFilterInput}
           />
           <span style={styles.detailFilterLabel}>{t('dashboard.detail.to')}</span>
@@ -1164,6 +1239,7 @@ function TopErrorDetailModal({
             type="datetime-local"
             value={toInput}
             onChange={e => setToInput(e.target.value)}
+            step={1}
             style={styles.detailFilterInput}
           />
           <button type="button" onClick={applyDateFilter} style={styles.detailFilterBtn}>{t('dashboard.detail.searchRange')}</button>
@@ -1275,10 +1351,20 @@ function MitreTechniqueDetailModal({
     Array.isArray(incident.mitre_techniques) && incident.mitre_techniques.includes(target.techniqueId),
   )
 
+  const { offset, onHandlePointerDown, resetOffset } = useDraggableModal()
+  useEscapeToClose(onClose)
+
+  useEffect(() => {
+    resetOffset()
+  }, [target.techniqueId, resetOffset])
+
   return (
     <div style={styles.detailModalOverlay} onClick={onClose}>
-      <div style={styles.detailModalBox} onClick={e => e.stopPropagation()}>
-        <div style={styles.detailModalHeader}>
+      <div style={{ ...styles.detailModalBox, transform: `translate(${offset.x}px, ${offset.y}px)` }} onClick={e => e.stopPropagation()}>
+        <div style={styles.detailModalDragHandle} onPointerDown={onHandlePointerDown}>
+          Zum Verschieben ziehen
+        </div>
+        <div style={{ ...styles.detailModalHeader, cursor: 'grab' }} onPointerDown={onHandlePointerDown}>
           <div style={{ minWidth: 0 }}>
             <div style={styles.detailModalTitle}>Details: MITRE Technik</div>
             <div style={styles.detailModalSubtitle} title={target.techniqueId}>
@@ -1398,7 +1484,15 @@ function PanelError({ error }: { error: unknown }) {
   )
 }
 
-function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
+function MiniBar({
+  points,
+  onPointClick,
+  selectedPointTs,
+}: {
+  points: { ts: string; count: number }[]
+  onPointClick?: (payload: { ts: string; count: number; from: string; to: string }) => void
+  selectedPointTs?: string | null
+}) {
   if (!points.length) return <div style={{ color: 'var(--muted-fg)' }}>Keine Daten</div>
 
   function getChartHeight() {
@@ -1439,6 +1533,7 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
 
   const polyline = points.map((p, i) => `${x(i)},${y(p.count)}`).join(' ')
   const hoveredPoint = hoverState ? points[hoverState.index] : null
+  const selectedIndex = selectedPointTs ? points.findIndex(point => point.ts === selectedPointTs) : -1
 
   // Y-axis: 0 and max labels
   const yLabels = [
@@ -1470,6 +1565,29 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
       index: safeIndex,
       x: x(safeIndex),
       y: Math.max(pad.top, Math.min(y(points[safeIndex].count), pad.top + innerH)),
+    })
+  }
+
+  function triggerPointClick(index: number) {
+    if (!onPointClick) return
+    const safeIndex = Math.max(0, Math.min(points.length - 1, index))
+    const point = points[safeIndex]
+    const currentTs = dayjs(point.ts).valueOf()
+    const nextTs = safeIndex < points.length - 1 ? dayjs(points[safeIndex + 1].ts).valueOf() : NaN
+    const prevTs = safeIndex > 0 ? dayjs(points[safeIndex - 1].ts).valueOf() : NaN
+
+    let windowMs = 60_000
+    if (Number.isFinite(nextTs) && Number.isFinite(currentTs)) {
+      windowMs = Math.max(1_000, Math.round(nextTs - currentTs))
+    } else if (Number.isFinite(prevTs) && Number.isFinite(currentTs)) {
+      windowMs = Math.max(1_000, Math.round(currentTs - prevTs))
+    }
+
+    onPointClick({
+      ts: point.ts,
+      count: point.count,
+      from: dayjs(point.ts).toISOString(),
+      to: dayjs(point.ts).add(windowMs, 'millisecond').add(1, 'millisecond').toISOString(),
     })
   }
 
@@ -1529,6 +1647,18 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
           />
         )}
 
+        {selectedIndex >= 0 && (
+          <line
+            x1={x(selectedIndex)}
+            y1={pad.top}
+            x2={x(selectedIndex)}
+            y2={pad.top + innerH}
+            stroke="color-mix(in srgb, var(--accent) 75%, #ffffff)"
+            strokeDasharray="3 2"
+            strokeWidth={1.5}
+          />
+        )}
+
         {/* the line itself */}
         <polyline
           points={polyline}
@@ -1541,7 +1671,7 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
 
         {/* data-point dots (only when few points) */}
         {points.length <= 30 && points.map((p, i) => (
-          <circle key={i} cx={x(i)} cy={y(p.count)} r={3} fill="var(--accent)">
+          <circle key={i} cx={x(i)} cy={y(p.count)} r={3} fill="var(--accent)" style={{ cursor: onPointClick ? 'pointer' : 'default' }} onClick={() => triggerPointClick(i)}>
             <title>{`${dayjs(p.ts).format('DD.MM HH:mm')}: ${p.count}`}</title>
           </circle>
         ))}
@@ -1558,6 +1688,17 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
           />
         )}
 
+        {selectedIndex >= 0 && (
+          <circle
+            cx={x(selectedIndex)}
+            cy={y(points[selectedIndex].count)}
+            r={6}
+            fill="var(--surface)"
+            stroke="color-mix(in srgb, var(--accent) 80%, #fff)"
+            strokeWidth={2.5}
+          />
+        )}
+
         {/* transparent hover capture layer */}
         <rect
           x={pad.left}
@@ -1565,10 +1706,14 @@ function MiniBar({ points }: { points: { ts: string; count: number }[] }) {
           width={innerW}
           height={innerH}
           fill="transparent"
-          style={{ cursor: 'crosshair' }}
+          style={{ cursor: onPointClick ? 'pointer' : 'crosshair' }}
           onMouseEnter={e => updateHover(e.clientX, e.currentTarget.ownerSVGElement!.getBoundingClientRect())}
           onMouseMove={e => updateHover(e.clientX, e.currentTarget.ownerSVGElement!.getBoundingClientRect())}
           onMouseLeave={() => setHoverState(null)}
+          onClick={() => {
+            if (!hoverState) return
+            triggerPointClick(hoverState.index)
+          }}
         />
 
         {/* Y-axis labels */}
@@ -1751,6 +1896,20 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '1rem',
     padding: '0.9rem 1rem',
     borderBottom: '1px solid var(--border)',
+  },
+  detailModalDragHandle: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: '0.35rem 0.75rem',
+    fontSize: '0.73rem',
+    color: 'var(--muted-fg)',
+    letterSpacing: '0.03em',
+    background: 'var(--surface-2)',
+    borderBottom: '1px solid var(--border)',
+    cursor: 'grab',
+    userSelect: 'none',
+    touchAction: 'none',
   },
   detailModalTitle: { color: 'var(--fg)', fontSize: '0.95rem', fontWeight: 700 },
   detailModalSubtitle: {

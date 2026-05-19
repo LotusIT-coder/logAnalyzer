@@ -30,6 +30,7 @@ _PATH_BASED_SOURCE_TYPES = {"file", "syslog", "docker", "filebeat", "winlogbeat"
 # If backlog is huge, skip ahead close to EOF to prioritize near-real-time data.
 _MAX_BACKLOG_BYTES_BEFORE_FAST_FORWARD = 1_000_000
 _FAST_FORWARD_TAIL_BYTES = 256_000
+_MAX_STACKTRACE_LINES = 80
 _JOURNAL_CURSOR_PREFIX = "journal\t"
 _JOURNAL_CURSOR_CHECKPOINT_LINE = "__journal_cursor_checkpoint__"
 _FILE_CURSOR_CHECKPOINT_LINE = "__file_cursor_checkpoint__"
@@ -44,12 +45,116 @@ _JOURNALD_PRIORITY_MAP = {
     "7": "debug",
 }
 _SYSLOG_STYLE_SOURCE_NAMES = {"syslog", "auth.log", "kern.log"}
+_TRACEBACK_PREFIX = "Traceback (most recent call last):"
+_STACKTRACE_START_RE = re.compile(r"(?:Exception|Error)(?::|\b)")
+_STACKTRACE_CONTINUATION_RE = re.compile(
+    r"^(?:\s+at\s|\s*\.\.\.\s+\d+\s+more|\s*Caused by:|\s*Suppressed:|\s*File\s+\"|\s*During handling)",
+)
 
 
 def _is_syslog_style_source(source: Source) -> bool:
     if source.type == "syslog":
         return True
     return (source.name or "").lower() in _SYSLOG_STYLE_SOURCE_NAMES
+
+
+def _is_stacktrace_start(line: str) -> bool:
+    if line.startswith(_TRACEBACK_PREFIX):
+        return True
+    return _STACKTRACE_START_RE.search(line) is not None
+
+
+def _is_stacktrace_continuation(line: str) -> bool:
+    if not line:
+        return False
+    return _STACKTRACE_CONTINUATION_RE.match(line) is not None
+
+
+def _is_delimiter_only_line(line: str) -> bool:
+    """True for visual separator lines (for example: '|')."""
+    stripped = line.strip()
+    if not stripped:
+        return False
+    return all(ch in {"|", "-", "="} for ch in stripped)
+
+
+def _ordered_candidate_profiles(line: str, profiles: List[ParserProfile]) -> List[ParserProfile]:
+    stripped = line.lstrip()
+    is_json_like = stripped.startswith("{") and stripped.endswith("}")
+    is_kv_like = "=" in line and " " in line
+
+    if is_json_like:
+        preferred = [profile for profile in profiles if profile.format == "json"]
+        fallback = [profile for profile in profiles if profile.format != "json"]
+        return preferred + fallback
+    if is_kv_like:
+        preferred = [profile for profile in profiles if profile.format == "kv"]
+        fallback = [profile for profile in profiles if profile.format != "kv"]
+        return preferred + fallback
+    return profiles
+
+
+def _parse_event_payload(
+    source: Source,
+    line: str,
+    profiles: List[ParserProfile],
+    now: datetime,
+) -> Dict[str, Any]:
+    parsed: Optional[Dict[str, Any]] = None
+    if _is_syslog_style_source(source):
+        # Fast path for high-volume syslog-like sources: avoid running
+        # every parser profile on every line.
+        syslog_base = _parse_syslog_header(line)
+        if syslog_base:
+            kv_extra = parse_line(syslog_base["message"], "kv", None, None) or {}
+            kv_extra.pop("timestamp", None)
+            kv_extra.pop("host", None)
+            kv_extra.pop("service", None)
+            parsed = {**kv_extra, **syslog_base}
+    else:
+        parsed = _parse_specialized_source_line(source, line)
+
+        if parsed is None:
+            for profile in _ordered_candidate_profiles(line, profiles):
+                parsed = parse_line(line, profile.format, profile.pattern, profile.mapping_json)
+                if parsed is not None:
+                    break
+
+        # Syslog RFC3164 pre-parser: extracts real timestamp/host/service/message
+        syslog_base = _parse_syslog_header(line)
+        if syslog_base:
+            kv_extra = parse_line(syslog_base["message"], "kv", None, None) or {}
+            kv_extra.pop("timestamp", None)
+            kv_extra.pop("host", None)
+            kv_extra.pop("service", None)
+            if parsed is None:
+                parsed = {**kv_extra, **syslog_base}
+            else:
+                parsed.setdefault("timestamp", syslog_base["timestamp"])
+                parsed.setdefault("host", syslog_base["host"])
+                parsed.setdefault("service", syslog_base["service"])
+                if not parsed.get("message"):
+                    parsed["message"] = syslog_base["message"]
+
+    if parsed is None:
+        parsed = _parse_python_log_header(line)
+
+    if parsed is None:
+        parsed = parse_line(line, "json", None, None)
+    if parsed is None:
+        parsed = parse_line(line, "kv", None, None)
+
+    if parsed is None:
+        parsed = {
+            "timestamp": now,
+            "severity": "info",
+            "service": source.name,
+            "message": line,
+            "ingest_parse_error": True,
+            "ingest_parse_error_reason": "unparsed_line_fallback",
+        }
+
+    return normalize_ecs_payload(parsed, raw_line=line)
 
 
 async def _get_last_cursor(session: AsyncSession, source_id: str) -> tuple[Optional[str], Optional[int]]:
@@ -500,6 +605,48 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
     _raw_batch: list[dict] = []
     _evt_batch: list[dict] = []
 
+    def _append_event_row(payload: Dict[str, Any], default_message: str) -> None:
+        nonlocal events_created
+        ts_raw = payload.get("timestamp")
+        if ts_raw and isinstance(ts_raw, str):
+            try:
+                from datetime import datetime as _dt
+                ts = _dt.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            except ValueError:
+                ts = now
+        elif isinstance(ts_raw, datetime):
+            ts = ts_raw
+        else:
+            ts = now
+
+        _evt_batch.append({
+            "id": str(uuid.uuid4()),
+            "source_id": source.id,
+            "timestamp": ts,
+            "severity": payload.get("severity", "info"),
+            "service": payload.get("service"),
+            "host": payload.get("host"),
+            "environment": payload.get("environment"),
+            "event_type": payload.get("event_type"),
+            "message": payload.get("message", default_message),
+            "fields_json": {
+                k: v for k, v in payload.items()
+                if k not in {"timestamp", "severity", "service", "host", "environment", "event_type", "message"}
+            },
+        })
+        events_created += 1
+
+    pending_stacktrace: list[str] = []
+
+    def _flush_pending_stacktrace() -> None:
+        nonlocal pending_stacktrace
+        if not pending_stacktrace:
+            return
+        combined = "\n".join(pending_stacktrace)
+        payload = _parse_event_payload(source, combined, profiles, now)
+        _append_event_row(payload, default_message=combined)
+        pending_stacktrace = []
+
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             fh.seek(start_offset)
@@ -509,6 +656,9 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
                     break  # EOF
                 stripped = raw_line.rstrip("\n")
                 if not stripped:
+                    new_cursor = fh.tell()
+                    continue
+                if _is_delimiter_only_line(stripped):
                     new_cursor = fh.tell()
                     continue
 
@@ -522,97 +672,18 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
                 })
                 lines_ingested += 1
 
-                parsed: Optional[Dict[str, Any]] = None
-                if _is_syslog_style_source(source):
-                    # Fast path for high-volume syslog-like sources: avoid running
-                    # every parser profile on every line.
-                    syslog_base = _parse_syslog_header(stripped)
-                    if syslog_base:
-                        kv_extra = parse_line(syslog_base["message"], "kv", None, None) or {}
-                        kv_extra.pop("timestamp", None)
-                        kv_extra.pop("host", None)
-                        kv_extra.pop("service", None)
-                        parsed = {**kv_extra, **syslog_base}
-                else:
-                    parsed = _parse_specialized_source_line(source, stripped)
+                if pending_stacktrace:
+                    if _is_stacktrace_continuation(stripped) and len(pending_stacktrace) < _MAX_STACKTRACE_LINES:
+                        pending_stacktrace.append(stripped)
+                        continue
+                    _flush_pending_stacktrace()
 
-                    # Attempt parsing with first matching profile
-                    if parsed is None:
-                        for profile in profiles:
-                            parsed = parse_line(stripped, profile.format, profile.pattern, profile.mapping_json)
-                            if parsed is not None:
-                                break
+                if _is_stacktrace_start(stripped):
+                    pending_stacktrace = [stripped]
+                    continue
 
-                    # Syslog RFC3164 pre-parser: extracts real timestamp/host/service/message
-                    syslog_base = _parse_syslog_header(stripped)
-                    if syslog_base:
-                        # Merge: syslog_base wins for ts/host/service, kv wins for extra fields
-                        kv_extra = parse_line(syslog_base["message"], "kv", None, None) or {}
-                        kv_extra.pop("timestamp", None)
-                        kv_extra.pop("host", None)
-                        kv_extra.pop("service", None)
-                        if parsed is None:
-                            parsed = {**kv_extra, **syslog_base}
-                        else:
-                            # Profile parser ran on full line; patch in real timestamp/host/service
-                            parsed.setdefault("timestamp", syslog_base["timestamp"])
-                            parsed.setdefault("host", syslog_base["host"])
-                            parsed.setdefault("service", syslog_base["service"])
-                            if not parsed.get("message"):
-                                parsed["message"] = syslog_base["message"]
-
-                # Python stdlib logging format fallback
-                if parsed is None:
-                    parsed = _parse_python_log_header(stripped)
-
-                # Final fallback: try auto JSON → kv on full line
-                if parsed is None:
-                    parsed = parse_line(stripped, "json", None, None)
-                if parsed is None:
-                    parsed = parse_line(stripped, "kv", None, None)
-
-                # Fallback: keep every non-empty log line as an event.
-                if parsed is None:
-                    parsed = {
-                        "timestamp": now,
-                        "severity": "info",
-                        "service": source.name,
-                        "message": stripped,
-                        "ingest_parse_error": True,
-                        "ingest_parse_error_reason": "unparsed_line_fallback",
-                    }
-
-                parsed = normalize_ecs_payload(parsed, raw_line=stripped)
-
-                ts_raw = parsed.get("timestamp")
-                if ts_raw and isinstance(ts_raw, str):
-                    try:
-                        from datetime import datetime as _dt
-                        ts = _dt.fromisoformat(ts_raw.replace("Z", "+00:00"))
-                    except ValueError:
-                        ts = now
-                elif isinstance(ts_raw, datetime):
-                    ts = ts_raw
-                else:
-                    ts = now
-
-                _evt_batch.append({
-                    "id": str(uuid.uuid4()),
-                    "source_id": source.id,
-                    "timestamp": ts,
-                    "severity": parsed.get("severity", "info"),
-                    "service": parsed.get("service"),
-                    "host": parsed.get("host"),
-                    "environment": parsed.get("environment"),
-                    "event_type": parsed.get("event_type"),
-                    "message": parsed.get("message", stripped),
-                    "fields_json": {
-                        k: v for k, v in parsed.items()
-                        if k not in {"timestamp", "severity", "service", "host",
-                                     "environment", "event_type", "message"}
-                    },
-                })
-                events_created += 1
+                parsed_payload = _parse_event_payload(source, stripped, profiles, now)
+                _append_event_row(parsed_payload, default_message=stripped)
 
                 # Periodically bulk-insert and drop references so the session
                 # identity map never holds more than _BATCH_SIZE ORM objects.
@@ -622,6 +693,8 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
                     await _enqueue_event_index_outbox(session, _evt_batch)
                     _raw_batch.clear()
                     _evt_batch.clear()
+
+            _flush_pending_stacktrace()
     except PermissionError:
         return {
             "source_id": str(source.id),

@@ -26,6 +26,25 @@ Ein lokales, KI-gestütztes Log-Analyse-System mit FastAPI-Backend und React-Fro
 - 🛡️ **SOC Analyst**: Continuous AI-driven threat monitor with heuristic fallback
 - 🎭 **Demo Attack Simulator**: Reproducible MITRE ATT&CK scenarios for testing and demos
 
+## Aktueller Stand (Mai 2026)
+
+- Ollama-Fallback ist aktiv: Backend prueft und nutzt `11434` und `11435`.
+- Docker-Setup enthaelt einen `ollama-proxy` (host network), damit Container den lokalen Ollama-Dienst robust erreichen.
+- Dashboard-Drilldown auf Zeitreihenpunkte ist stabilisiert (sekundengenaue Zeitfenster, Postgres-Provider fuer punktgenaue Event-Details).
+- Modals/Detailansichten sind verschiebbar und per `ESC` schliessbar (Dashboard, Events, Sources, Rules, Quick Tutorial, SOC-Alerts).
+
+### Docker Schnell-Update
+
+```bash
+docker-compose up -d --build
+```
+
+Status pruefen:
+
+```bash
+docker-compose ps
+```
+
 ---
 
 ## Problemstellung

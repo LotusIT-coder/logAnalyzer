@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { getEvents, getSources, getServerTime, type EventResponse, type SourceResponse } from '../lib/requests'
+import { getEvents, getHealth, getSourceIngestionStatus, getSources, getServerTime, runIngestion, type EventResponse, type HealthResponse, type SourceIngestionStatus, type SourceResponse } from '../lib/requests'
 import dayjs from 'dayjs'
 import { getApiBase } from '../lib/api'
 import HelpTip from '../components/HelpTip'
@@ -12,6 +12,8 @@ import { type SourceOption } from '../ctx/SourceFilterContext.shared'
 import { useSourceFilter } from '../ctx/useSourceFilter'
 import { AnsiText, FormattedMessage } from '../components/FormattedMessage'
 import { useI18n } from '../ctx/I18nContext'
+import { useDraggableModal } from '../lib/useDraggableModal'
+import { useEscapeToClose } from '../lib/useEscapeToClose'
 
 const SEV_COLOR: Record<string, string> = {
   critical: '#ef4444',
@@ -32,6 +34,17 @@ const SEVERITIES = ['debug', 'info', 'warning', 'error', 'critical']
 
 function getEventObservedAt(event: EventResponse) {
   return event.created_at ?? event.timestamp
+}
+
+function compareEventsNewestFirst(a: EventResponse, b: EventResponse) {
+  const aMs = Date.parse(getEventObservedAt(a) ?? '')
+  const bMs = Date.parse(getEventObservedAt(b) ?? '')
+  const aValid = Number.isFinite(aMs)
+  const bValid = Number.isFinite(bMs)
+  if (aValid && bValid && aMs !== bMs) return bMs - aMs
+  if (aValid && !bValid) return -1
+  if (!aValid && bValid) return 1
+  return b.id.localeCompare(a.id)
 }
 
 function parseSeverityCsv(value: string) {
@@ -136,6 +149,98 @@ interface TailLine {
   seq: number
 }
 
+type StreamStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'paused' | 'error'
+
+function computeBusHealthTone(health?: HealthResponse) {
+  const bus = health?.event_bus
+  if (!bus) {
+    return {
+      fg: 'var(--muted-fg)',
+      bg: 'var(--surface-2)',
+      label: 'events.health.busUnavailable' as const,
+      title: '',
+    }
+  }
+
+  const deadLetter = bus.dead_letter_total ?? 0
+  const queueDrops = bus.dropped_queue_full_total ?? 0
+  const failures = bus.failed_total ?? 0
+  const queueDepth = bus.queue_depth ?? 0
+
+  if (deadLetter > 0 || queueDrops > 0 || failures > 0) {
+    return {
+      fg: 'var(--danger-fg)',
+      bg: 'color-mix(in srgb, var(--danger-fg) 14%, var(--surface))',
+      label: 'events.health.busDegraded' as const,
+      title: `DLQ: ${deadLetter} | Drops: ${queueDrops} | Failed: ${failures} | Queue: ${queueDepth}`,
+    }
+  }
+
+  return {
+    fg: 'var(--success-fg)',
+    bg: 'color-mix(in srgb, var(--success-fg) 16%, var(--surface))',
+    label: 'events.health.busOk' as const,
+    title: `Queue: ${queueDepth} | Processed: ${bus.processed_total ?? 0} | Retried: ${bus.retried_total ?? 0}`,
+  }
+}
+
+function computeIngestionTone(statuses?: SourceIngestionStatus[]) {
+  if (!statuses || statuses.length === 0) {
+    return {
+      fg: 'var(--muted-fg)',
+      bg: 'var(--surface-2)',
+      label: 'events.ingestion.unavailable' as const,
+      title: '',
+    }
+  }
+
+  const parsedTimes = statuses
+    .map((entry) => entry.last_event_created_at ?? entry.last_event_timestamp ?? entry.last_ingested_at ?? null)
+    .filter((value): value is string => Boolean(value))
+    .map((value) => dayjs(value).valueOf())
+    .filter((value) => Number.isFinite(value))
+
+  if (parsedTimes.length === 0) {
+    return {
+      fg: 'var(--warning-fg)',
+      bg: 'color-mix(in srgb, var(--warning-fg) 14%, var(--surface))',
+      label: 'events.ingestion.noData' as const,
+      title: '',
+    }
+  }
+
+  const newestMs = Math.max(...parsedTimes)
+  const ageMs = Date.now() - newestMs
+  const totalEventsPerMin = statuses.reduce((sum, entry) => sum + (entry.events_per_min ?? 0), 0)
+  const totalParseErrors = statuses.reduce((sum, entry) => sum + (entry.parse_error_count ?? 0), 0)
+  const title = `Last seen: ${dayjs(newestMs).format('YYYY-MM-DD HH:mm:ss')} | Events/min: ${totalEventsPerMin} | Parse errors: ${totalParseErrors}`
+
+  if (ageMs > 2 * 3600_000) {
+    return {
+      fg: 'var(--danger-fg)',
+      bg: 'color-mix(in srgb, var(--danger-fg) 14%, var(--surface))',
+      label: 'events.ingestion.stale' as const,
+      title,
+    }
+  }
+
+  if (ageMs > 10 * 60_000) {
+    return {
+      fg: 'var(--warning-fg)',
+      bg: 'color-mix(in srgb, var(--warning-fg) 14%, var(--surface))',
+      label: 'events.ingestion.delayed' as const,
+      title,
+    }
+  }
+
+  return {
+    fg: 'var(--success-fg)',
+    bg: 'color-mix(in srgb, var(--success-fg) 16%, var(--surface))',
+    label: 'events.ingestion.ok' as const,
+    title,
+  }
+}
+
 const SOURCE_COLORS = ['#7dd3fc', '#fbbf24', '#a78bfa', '#34d399', '#fb7185', '#60a5fa', '#f97316', '#c084fc']
 
 const EVENTS_REFRESH_INTERVAL_KEY = 'events:refresh-interval-ms'
@@ -161,6 +266,8 @@ const ANSI_LEGEND_ROWS: Array<{ sample: string; code: string; meaning: string }>
 
 function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClose: () => void }) {
   const { t } = useI18n()
+  const { offset, onHandlePointerDown } = useDraggableModal()
+  useEscapeToClose(onClose)
   const [lines, setLines] = useState<TailLine[]>([])
   const [connected, setConnected] = useState<Record<string, boolean>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -241,8 +348,8 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
 
   return (
     <div style={modal.overlay} onClick={onClose}>
-      <div style={modal.box} onClick={e => e.stopPropagation()}>
-        <div style={modal.header}>
+      <div style={{ ...modal.box, transform: `translate(${offset.x}px, ${offset.y}px)` }} onClick={e => e.stopPropagation()}>
+        <div style={{ ...modal.header, cursor: 'grab' }} onPointerDown={onHandlePointerDown}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>{title}</span>
             <span style={{ ...modal.dot, background: allConnected ? '#22c55e' : anyConnected ? '#fbbf24' : '#ef4444' }} />
@@ -332,10 +439,12 @@ function LiveTailModal({ sources, onClose }: { sources: SourceResponse[]; onClos
 
 function ColorLegendModal({ onClose }: { onClose: () => void }) {
   const { t } = useI18n()
+  const { offset, onHandlePointerDown } = useDraggableModal()
+  useEscapeToClose(onClose)
   return (
     <div style={modal.overlay} onClick={onClose}>
-      <div style={legendModal.box} onClick={e => e.stopPropagation()}>
-        <div style={legendModal.header}>
+      <div style={{ ...legendModal.box, transform: `translate(${offset.x}px, ${offset.y}px)` }} onClick={e => e.stopPropagation()}>
+        <div style={{ ...legendModal.header, cursor: 'grab' }} onPointerDown={onHandlePointerDown}>
           <div>
             <div style={legendModal.title}>{t('events.legend.title')}</div>
             <div style={legendModal.subtitle}>{t('events.legend.subtitle')}</div>
@@ -388,17 +497,53 @@ export default function EventsPage() {
   const [uploadResult, setUploadResult] = useState<UploadResultState | null>(null)
   const [showColorLegend, setShowColorLegend] = useState(false)
   const [serverTimeOffset, setServerTimeOffset] = useState<number>(0)
+  const [liveStreamEvents, setLiveStreamEvents] = useState<EventResponse[]>([])
+  const [streamStatus, setStreamStatus] = useState<StreamStatus>('idle')
+  const [streamLastEventAtMs, setStreamLastEventAtMs] = useState<number | null>(null)
+  const [streamReconnectAttempt, setStreamReconnectAttempt] = useState(0)
+  const [isPageVisible, setIsPageVisible] = useState(() => (
+    typeof document === 'undefined' ? true : document.visibilityState !== 'hidden'
+  ))
   const [refreshIntervalMs, setRefreshIntervalMs] = useState<number>(() => {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem(EVENTS_REFRESH_INTERVAL_KEY) : null
     const parsed = stored ? Number(stored) : NaN
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : 5_000
   })
   const tableContainerRef = useRef<HTMLDivElement>(null)
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearReconnectTimer = () => {
+    if (!reconnectTimerRef.current) return
+    clearTimeout(reconnectTimerRef.current)
+    reconnectTimerRef.current = null
+  }
 
   useEffect(() => {
     if (typeof window === 'undefined') return
     window.localStorage.setItem(EVENTS_REFRESH_INTERVAL_KEY, String(refreshIntervalMs))
   }, [refreshIntervalMs])
+
+  // On mount (and when source selection changes), ensure preset/custom paths are
+  // registered and ingested so that resolve_source_ids finds matching DB records.
+  useEffect(() => {
+    const extraEntries = selectedSources
+      .filter(s => s.kind === 'preset' || s.kind === 'custom')
+      .map(s => ({ path: s.path, origin: s.kind === 'preset' ? 'preset' as const : 'custom' as const }))
+    if (extraEntries.length > 0) {
+      void runIngestion({ extraEntries })
+    }
+  }, [selectedSources])
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const onVisibilityChange = () => {
+      setIsPageVisible(document.visibilityState !== 'hidden')
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [])
 
   // Synchronize client time with server time to fix time-skew bugs
   // where events fall outside the filter range due to time differences
@@ -420,6 +565,13 @@ export default function EventsPage() {
   }, [])
 
   const { data: sources = [] } = useQuery({ queryKey: ['sources'], queryFn: getSources })
+  const { data: health } = useQuery({
+    queryKey: ['health', 'events-page'],
+    queryFn: getHealth,
+    staleTime: 5_000,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: true,
+  })
   const globalSourceIdsCsv = globalFilter.sourceIds.join(',')
   const globalSourcePathsCsv = globalFilter.sourcePaths.join(',')
   const globalSingleSourceId = globalFilter.sourceIds.length === 1 && globalFilter.sourcePaths.length === 0
@@ -474,6 +626,26 @@ export default function EventsPage() {
   const effectiveSourcePathCount = effectiveSourcePathsCsv ? effectiveSourcePathsCsv.split(',').filter(Boolean).length : 0
   const showSourceColumn = (effectiveSourceIdCount + effectiveSourcePathCount) > 1
   const sourceNameById = new Map<string, string>(sources.map(s => [s.id, s.name]))
+  const sourceIdsForIngestionStatus = useMemo(() => {
+    if (sourceId) return [sourceId]
+
+    const explicitIds = parseCsvValues(effectiveSourceIdsCsv)
+    if (explicitIds.length > 0) return explicitIds
+
+    const idsFromPaths = parseCsvValues(effectiveSourcePathsCsv)
+      .map((path) => sources.find((entry) => entry.config?.path === path)?.id)
+      .filter((value): value is string => Boolean(value))
+
+    return idsFromPaths
+  }, [sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, sources])
+  const { data: sourceStatus = [] } = useQuery({
+    queryKey: ['sources', 'status', 'events-page', sourceIdsForIngestionStatus.join(',')],
+    queryFn: () => getSourceIngestionStatus(sourceIdsForIngestionStatus.length > 0 ? sourceIdsForIngestionStatus : undefined),
+    staleTime: 5_000,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: true,
+    enabled: sources.length > 0,
+  })
 
   const selectedSeveritiesCsv = selectedSeverities.join(',')
 
@@ -560,6 +732,8 @@ export default function EventsPage() {
   // Infinite query: loads events page by page
   const hasAnySourceSelection = Boolean(sourceId || effectiveSourceIdsCsv || effectiveSourcePathsCsv)
   const eventsQueryEnabled = !REQUIRE_SOURCE_SELECTION || hasAnySourceSelection
+  const canUseEventStream = eventsQueryEnabled && !provider && !fromTime && !toTime
+  const streamEnabled = canUseEventStream && isPageVisible
   const { data, isLoading, isFetched, hasNextPage, fetchNextPage, isFetchingNextPage, isFetching, refetch } = useInfiniteQuery({
     queryKey: ['events', sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, fromTime, toTime, rangeHours, selectedSeveritiesCsv, provider, host, service, search],
     queryFn: ({ pageParam }: { pageParam?: string }) => {
@@ -582,14 +756,139 @@ export default function EventsPage() {
     initialPageParam: undefined,
     getNextPageParam: (lastPage) => lastPage.next_cursor,
       staleTime: 0,
-    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+    refetchInterval: !streamEnabled && refreshIntervalMs > 0 ? refreshIntervalMs : false,
     refetchIntervalInBackground: true,
     enabled: eventsQueryEnabled,
   })
 
+  useEffect(() => {
+    setLiveStreamEvents([])
+    setStreamLastEventAtMs(null)
+    setStreamReconnectAttempt(0)
+    clearReconnectTimer()
+  }, [canUseEventStream, sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, selectedSeveritiesCsv, provider, host, service, search, refreshIntervalMs])
+
+  useEffect(() => {
+    if (!canUseEventStream) {
+      clearReconnectTimer()
+      setStreamStatus('idle')
+      return
+    }
+
+    if (!isPageVisible) {
+      clearReconnectTimer()
+      setStreamStatus('paused')
+      return
+    }
+
+    setStreamStatus(streamReconnectAttempt > 0 ? 'reconnecting' : 'connecting')
+
+    const streamParams = new URLSearchParams()
+    if (sourceId) streamParams.set('source_id', sourceId)
+    if (effectiveSourceIdsCsv) streamParams.set('source_ids', effectiveSourceIdsCsv)
+    if (effectiveSourcePathsCsv) streamParams.set('source_paths', effectiveSourcePathsCsv)
+    if (selectedSeveritiesCsv) streamParams.set('severity', selectedSeveritiesCsv)
+    if (host) streamParams.set('host', host)
+    if (service) streamParams.set('service', service)
+    if (search) streamParams.set('q', search)
+
+    // Pass poll_interval (in seconds) to backend
+    const pollIntervalSec = Math.max(1, Math.round(refreshIntervalMs / 1000))
+    streamParams.set('poll_interval', String(pollIntervalSec))
+    const querySuffix = streamParams.toString() ? `?${streamParams.toString()}` : ''
+    const es = new EventSource(`${getApiBase()}/events/stream${querySuffix}`)
+    let cancelled = false
+    es.onopen = () => {
+      if (cancelled) return
+      setStreamStatus('connected')
+      if (streamReconnectAttempt !== 0) {
+        setStreamReconnectAttempt(0)
+      }
+    }
+    es.onmessage = (event) => {
+      try {
+        const parsed = JSON.parse(event.data)
+        // Accept both batch (array) and single event for backward compatibility
+        const events: EventResponse[] = Array.isArray(parsed)
+          ? parsed.map(e => e.data || e).filter(e => e && e.id)
+          : (parsed && parsed.id ? [parsed] : [])
+        if (events.length === 0) return
+        if (!cancelled) {
+          setStreamStatus('connected')
+          setStreamLastEventAtMs(Date.now())
+        }
+        setLiveStreamEvents(prev => {
+          const seen = new Set(prev.map(e => e.id))
+          const next = [...events.filter(e => !seen.has(e.id)), ...prev]
+          return next.length > 300 ? next.slice(0, 300) : next
+        })
+      } catch {
+        // ignore malformed SSE payloads
+      }
+    }
+
+    es.onerror = () => {
+      if (cancelled) return
+      setStreamStatus('error')
+      es.close()
+      clearReconnectTimer()
+      const nextAttempt = streamReconnectAttempt + 1
+      const delay = Math.min(5000, 500 * nextAttempt)
+      reconnectTimerRef.current = setTimeout(() => {
+        setStreamStatus('reconnecting')
+        setStreamReconnectAttempt(prev => prev + 1)
+      }, delay)
+    }
+
+    return () => {
+      cancelled = true
+      clearReconnectTimer()
+      es.close()
+    }
+  }, [canUseEventStream, isPageVisible, streamReconnectAttempt, sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, selectedSeveritiesCsv, host, service, search, refreshIntervalMs])
+
   // Flatten all pages into single events array
-  const allEvents = eventsQueryEnabled ? (data?.pages.flatMap(page => page.items) ?? []) : []
+  const fetchedEvents = eventsQueryEnabled ? (data?.pages.flatMap(page => page.items) ?? []) : []
+  const allEvents = useMemo(() => {
+    if (!canUseEventStream || liveStreamEvents.length === 0) {
+      return [...fetchedEvents].sort(compareEventsNewestFirst)
+    }
+    const seen = new Set<string>()
+    const merged: EventResponse[] = []
+    for (const item of [...liveStreamEvents, ...fetchedEvents]) {
+      if (seen.has(item.id)) continue
+      seen.add(item.id)
+      merged.push(item)
+    }
+    return merged.sort(compareEventsNewestFirst)
+  }, [canUseEventStream, liveStreamEvents, fetchedEvents])
   const showInitialLoading = isLoading && !isFetched
+  const healthTone = useMemo(() => computeBusHealthTone(health), [health])
+  const ingestionTone = useMemo(() => computeIngestionTone(sourceStatus), [sourceStatus])
+  const systemHealthLabel = health?.status === 'ok' ? t('events.health.systemOk') : t('events.health.systemUnknown')
+  const streamStatusLabel = useMemo(() => {
+    if (streamStatus === 'connected') return t('events.stream.connected')
+    if (streamStatus === 'reconnecting') return t('events.stream.reconnecting')
+    if (streamStatus === 'connecting') return t('events.stream.connecting')
+    if (streamStatus === 'paused') return t('events.stream.pausedHidden')
+    if (streamStatus === 'error') return t('events.stream.error')
+    return t('events.stream.idle')
+  }, [streamStatus, t])
+  const streamStatusColor = useMemo(() => {
+    if (streamStatus === 'connected') return '#22c55e'
+    if (streamStatus === 'reconnecting' || streamStatus === 'connecting') return '#f59e0b'
+    if (streamStatus === 'paused') return 'var(--muted-fg)'
+    if (streamStatus === 'error') return 'var(--danger-fg)'
+    return 'var(--muted-fg)'
+  }, [streamStatus])
+  const emptyStateLabel = useMemo(() => {
+    if (showInitialLoading) return t('events.empty.loading')
+    if (REQUIRE_SOURCE_SELECTION && !hasAnySourceSelection) return t('events.empty.noSource')
+    if (canUseEventStream && streamStatus === 'connected') return t('events.empty.waitingLive')
+    if (canUseEventStream && (streamStatus === 'connecting' || streamStatus === 'reconnecting')) return t('events.empty.connectingLive')
+    if (effectiveFrom || effectiveTo) return t('events.empty.noEventsInRange')
+    return t('events.empty.noEvents')
+  }, [showInitialLoading, hasAnySourceSelection, canUseEventStream, streamStatus, effectiveFrom, effectiveTo, t])
 
   useEffect(() => {
     const container = tableContainerRef.current
@@ -653,6 +952,7 @@ export default function EventsPage() {
 
   function refreshLatest() {
     setExpanded({})
+    setLiveStreamEvents([])
     void refetch()
   }
 
@@ -682,9 +982,20 @@ export default function EventsPage() {
           <h2 style={styles.h2}>Events</h2>
           <HelpTip content="The event list shows raw events with all active filters. Click a row to open detailed event fields." ariaLabel="Explain events" />
         </div>
-        <button onClick={refreshLatest} disabled={isFetching} style={styles.refBtn}>
-          {isFetching ? t('events.refreshing') : t('events.refresh')}
-        </button>
+        <div style={styles.headerRight}>
+          <span style={styles.healthPill} title={health?.timestamp ? dayjs(health.timestamp).format('YYYY-MM-DD HH:mm:ss') : undefined}>
+            {systemHealthLabel}
+          </span>
+          <span style={{ ...styles.healthPill, color: healthTone.fg, background: healthTone.bg }} title={healthTone.title || undefined}>
+            {t(healthTone.label)}
+          </span>
+          <span style={{ ...styles.healthPill, color: ingestionTone.fg, background: ingestionTone.bg }} title={ingestionTone.title || undefined}>
+            {t('events.ingestion.prefix')}: {t(ingestionTone.label)}
+          </span>
+          <button onClick={refreshLatest} disabled={isFetching} style={styles.refBtn}>
+            {isFetching ? t('events.refreshing') : t('events.refresh')}
+          </button>
+        </div>
       </div>
 
       {showGlobalFilterNotice && <GlobalSourceFilterNotice />}
@@ -717,6 +1028,15 @@ export default function EventsPage() {
               <option key={opt.value} value={String(opt.value)}>{opt.label}</option>
             ))}
           </select>
+          <span
+            title={streamLastEventAtMs ? t('events.stream.lastUpdate', { time: dayjs(streamLastEventAtMs).format('HH:mm:ss') }) : undefined}
+            style={{
+              ...styles.streamPill,
+              color: streamStatusColor,
+            }}
+          >
+            {streamStatusLabel}
+          </span>
           <HelpTip content="The event list refreshes automatically with the selected interval and current filters. 'Off' pauses live updates." ariaLabel="Explain live refresh" />
         </div>
 
@@ -895,11 +1215,7 @@ export default function EventsPage() {
             ))}
             {!allEvents.length && (
               <div style={{ padding: '2rem', color: 'var(--muted-fg)', textAlign: 'center' }}>
-                {showInitialLoading
-                  ? t('events.empty.loading')
-                  : REQUIRE_SOURCE_SELECTION && !hasAnySourceSelection
-                    ? t('events.empty.noSource')
-                    : t('events.empty.noEvents')}
+                {emptyStateLabel}
               </div>
             )}
             {isFetchingNextPage && (
@@ -916,8 +1232,30 @@ export default function EventsPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' },
+  headerRight: { display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap', justifyContent: 'flex-end' },
   h2: { margin: 0, fontSize: '1.5rem' },
   refBtn: { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--muted-fg)', borderRadius: 6, padding: '0.35rem 0.75rem', cursor: 'pointer', opacity: 1 },
+  healthPill: {
+    borderRadius: 999,
+    border: '1px solid var(--border)',
+    background: 'var(--surface-2)',
+    color: 'var(--muted-fg)',
+    fontSize: '0.74rem',
+    fontWeight: 700,
+    letterSpacing: '0.02em',
+    padding: '0.15rem 0.55rem',
+    whiteSpace: 'nowrap',
+  },
+  streamPill: {
+    fontSize: '0.74rem',
+    fontWeight: 700,
+    border: '1px solid var(--border)',
+    borderRadius: 999,
+    padding: '0.16rem 0.55rem',
+    background: 'var(--surface-2)',
+    whiteSpace: 'nowrap',
+    letterSpacing: '0.015em',
+  },
   intervalSelect: { background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)', borderRadius: 6, padding: '0.35rem 0.55rem', fontSize: '0.82rem' },
   liveBtn: { background: 'var(--nav-active-bg)', border: '1px solid var(--accent)', color: 'var(--nav-active-fg)', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap' },
   liveBtnDisabled: { background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--muted-fg)', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'not-allowed', fontWeight: 700, whiteSpace: 'nowrap' },

@@ -65,12 +65,14 @@ class TestRuleSchedulerPolling:
 
         mock_run = AsyncMock(return_value=[])
         mock_run_anomaly = AsyncMock(return_value=MagicMock(incident_created=False))
+        mock_run_heuristics = AsyncMock(return_value=MagicMock(incidents_created=0))
         mock_session = _make_mock_session()
         mock_factory = MagicMock(return_value=mock_session)
 
         with (
             patch("app.services.rule_scheduler.run_rule_engine", mock_run),
             patch("app.services.rule_scheduler.run_event_volume_anomaly_detection", mock_run_anomaly),
+            patch("app.services.rule_scheduler.run_realtime_heuristics", mock_run_heuristics),
             patch("app.services.rule_scheduler.get_session_factory", return_value=mock_factory),
         ):
             svc = RuleSchedulerService(interval_seconds=0.05)
@@ -86,12 +88,14 @@ class TestRuleSchedulerPolling:
 
         mock_run_rules = AsyncMock(return_value=[])
         mock_run_anomaly = AsyncMock(return_value=MagicMock(incident_created=False))
+        mock_run_heuristics = AsyncMock(return_value=MagicMock(incidents_created=0))
         mock_session = _make_mock_session()
         mock_factory = MagicMock(return_value=mock_session)
 
         with (
             patch("app.services.rule_scheduler.run_rule_engine", mock_run_rules),
             patch("app.services.rule_scheduler.run_event_volume_anomaly_detection", mock_run_anomaly),
+            patch("app.services.rule_scheduler.run_realtime_heuristics", mock_run_heuristics),
             patch("app.services.rule_scheduler.get_session_factory", return_value=mock_factory),
         ):
             svc = RuleSchedulerService(interval_seconds=0.05)
@@ -115,6 +119,7 @@ class TestRuleSchedulerPolling:
             return []
 
         mock_run_anomaly = AsyncMock(return_value=MagicMock(incident_created=False))
+        mock_run_heuristics = AsyncMock(return_value=MagicMock(incidents_created=0))
         mock_session = _make_mock_session()
         mock_factory = MagicMock(return_value=mock_session)
 
@@ -125,6 +130,7 @@ class TestRuleSchedulerPolling:
         with (
             patch("app.services.rule_scheduler.run_rule_engine", side_effect=flaky_run),
             patch("app.services.rule_scheduler.run_event_volume_anomaly_detection", mock_run_anomaly),
+            patch("app.services.rule_scheduler.run_realtime_heuristics", mock_run_heuristics),
             patch("app.services.rule_scheduler.get_session_factory", return_value=mock_factory),
         ):
             svc = RuleSchedulerService(interval_seconds=0.05)
@@ -141,12 +147,14 @@ class TestRuleSchedulerPolling:
 
         mock_run = AsyncMock(return_value=[])
         mock_run_anomaly = AsyncMock(return_value=MagicMock(incident_created=False))
+        mock_run_heuristics = AsyncMock(return_value=MagicMock(incidents_created=0))
         mock_session = _make_mock_session()
         mock_factory = MagicMock(return_value=mock_session)
 
         with (
             patch("app.services.rule_scheduler.run_rule_engine", mock_run),
             patch("app.services.rule_scheduler.run_event_volume_anomaly_detection", mock_run_anomaly),
+            patch("app.services.rule_scheduler.run_realtime_heuristics", mock_run_heuristics),
             patch("app.services.rule_scheduler.get_session_factory", return_value=mock_factory),
         ):
             svc = RuleSchedulerService(interval_seconds=0.05)
@@ -162,6 +170,7 @@ class TestRuleSchedulerPolling:
 
         mock_run = AsyncMock(return_value=[])
         mock_run_anomaly = AsyncMock(return_value=MagicMock(incident_created=False))
+        mock_run_heuristics = AsyncMock(return_value=MagicMock(incidents_created=0))
         mock_enqueue = MagicMock()
         mock_session = _make_mock_session()
         mock_factory = MagicMock(return_value=mock_session)
@@ -169,6 +178,7 @@ class TestRuleSchedulerPolling:
         with (
             patch("app.services.rule_scheduler.run_rule_engine", mock_run),
             patch("app.services.rule_scheduler.run_event_volume_anomaly_detection", mock_run_anomaly),
+            patch("app.services.rule_scheduler.run_realtime_heuristics", mock_run_heuristics),
             patch("app.services.rule_scheduler.consume_incidents_marked_for_auto_triage", return_value=["inc-1", "inc-2"]),
             patch("app.services.rule_scheduler.enqueue_auto_triage_for_incident", mock_enqueue),
             patch("app.services.rule_scheduler.get_session_factory", return_value=mock_factory),
@@ -186,6 +196,7 @@ class TestRuleSchedulerPolling:
 
         mock_run = AsyncMock(return_value=[])
         mock_run_anomaly = AsyncMock(return_value=MagicMock(incident_created=False))
+        mock_run_heuristics = AsyncMock(return_value=MagicMock(incidents_created=0))
         mock_enqueue = MagicMock()
         mock_session = _make_mock_session()
         mock_factory = MagicMock(return_value=mock_session)
@@ -193,6 +204,7 @@ class TestRuleSchedulerPolling:
         with (
             patch("app.services.rule_scheduler.run_rule_engine", mock_run),
             patch("app.services.rule_scheduler.run_event_volume_anomaly_detection", mock_run_anomaly),
+            patch("app.services.rule_scheduler.run_realtime_heuristics", mock_run_heuristics),
             patch("app.services.rule_scheduler.consume_incidents_marked_for_auto_triage", return_value=[]),
             patch("app.services.rule_scheduler.consume_incidents_marked_for_notification", return_value=["inc-9"]),
             patch("app.services.rule_scheduler.enqueue_incident_notification", mock_enqueue),

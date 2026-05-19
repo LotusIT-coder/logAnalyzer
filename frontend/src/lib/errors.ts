@@ -23,6 +23,10 @@ export function getApiErrorMessage(error: unknown, fallback = 'Unbekannter Fehle
 
   const detail = candidate.response?.data?.detail
   if (typeof detail === 'string' && detail.trim()) return detail
+  if (detail && typeof detail === 'object') {
+    const detailMessage = (detail as { message?: unknown }).message
+    if (typeof detailMessage === 'string' && detailMessage.trim()) return detailMessage
+  }
 
   const message = candidate.response?.data?.message
   if (typeof message === 'string' && message.trim()) return message

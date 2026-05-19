@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.events import _stream_events_stmt, _stream_start_seen_ids
+from app.api.v1.events import _decode_stream_cursor, _encode_stream_cursor, _stream_bootstrap_cursor, _stream_events_stmt_after
 from app.domain.models import Event, Source
 
 
@@ -164,7 +164,7 @@ class TestEventsAPI:
 
         from_ts = (now - timedelta(minutes=1)).isoformat()
         to_ts = (now + timedelta(seconds=1)).isoformat()
-        resp = await client.get(f"/api/v1/events?from={from_ts}&to={to_ts}")
+        resp = await client.get("/api/v1/events", params={"from": from_ts, "to": to_ts})
         assert resp.status_code == 200
         items = resp.json()["items"]
         assert len(items) == 1
@@ -213,22 +213,75 @@ class TestEventsAPI:
 
     async def test_event_stream_starts_at_current_time_and_emits_only_new_events(self, client: AsyncClient, db_session: AsyncSession):
         src = await _seed_source(db_session)
-        historical = await _seed_event(db_session, src.id, message="historical event")
+        now = datetime.now(timezone.utc)
+        historical = await _seed_event(
+            db_session,
+            src.id,
+            message="historical event",
+            timestamp=now,
+            created_at=now,
+        )
         await db_session.commit()
 
-        seen_ids = await _stream_start_seen_ids(db_session)
-        assert historical.id in seen_ids
+        cursor = await _stream_bootstrap_cursor(db_session)
+        assert cursor is not None
+        encoded = _encode_stream_cursor(cursor[0], cursor[1])
+        decoded = _decode_stream_cursor(encoded)
+        assert decoded == cursor
 
-        result = await db_session.execute(_stream_events_stmt())
-        rows = [row for row in reversed(result.scalars().all()) if row.id not in seen_ids]
-        assert rows == []
+        result = await db_session.execute(_stream_events_stmt_after(cursor))
+        rows = list(result.scalars().all())
+        rows_without_bootstrap = [row for row in rows if row.id != historical.id]
+        assert rows_without_bootstrap == []
 
-        fresh = await _seed_event(db_session, src.id, message="fresh live event", event_type="syslog")
+        fresh = await _seed_event(
+            db_session,
+            src.id,
+            message="fresh live event",
+            event_type="syslog",
+            timestamp=now + timedelta(seconds=1),
+            created_at=now + timedelta(seconds=1),
+        )
         await db_session.commit()
 
-        result = await db_session.execute(_stream_events_stmt())
-        rows = [row for row in reversed(result.scalars().all()) if row.id not in seen_ids]
+        result = await db_session.execute(_stream_events_stmt_after(cursor))
+        rows = [row for row in result.scalars().all() if row.id != historical.id]
         assert [row.id for row in rows] == [fresh.id]
+
+    async def test_event_stream_cursor_uses_created_at_and_id_tie_break(self, db_session: AsyncSession):
+        src = await _seed_source(db_session, name="stream-tie-break")
+        shared_created = datetime(2026, 5, 19, 10, 0, 0, tzinfo=timezone.utc)
+
+        first = await _seed_event(
+            db_session,
+            src.id,
+            message="first",
+            timestamp=shared_created,
+            created_at=shared_created,
+        )
+        second = await _seed_event(
+            db_session,
+            src.id,
+            message="second",
+            timestamp=shared_created,
+            created_at=shared_created,
+        )
+        third = await _seed_event(
+            db_session,
+            src.id,
+            message="third",
+            timestamp=shared_created,
+            created_at=shared_created,
+        )
+        await db_session.commit()
+
+        events_sorted = sorted([first, second, third], key=lambda event: event.id)
+        cursor = (shared_created, events_sorted[1].id)
+
+        result = await db_session.execute(_stream_events_stmt_after(cursor))
+        rows = list(result.scalars().all())
+
+        assert [row.id for row in rows] == [events_sorted[2].id]
 
     async def test_provider_query_rejects_invalid_value(self, client: AsyncClient):
         resp = await client.get("/api/v1/events?provider=invalid")

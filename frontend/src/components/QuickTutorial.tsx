@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { useI18n } from '../ctx/I18nContext'
+import { useDraggableModal } from '../lib/useDraggableModal'
+import { useEscapeToClose } from '../lib/useEscapeToClose'
 
 const TOUR_STORAGE_KEY = 'lotus-analyzer-onboarding-v1'
 
@@ -78,6 +80,8 @@ export default function QuickTutorial() {
   const activeStep = STEPS[stepIndex]
   const isFirstStep = stepIndex === 0
   const isLastStep = stepIndex === STEPS.length - 1
+  const { offset, onHandlePointerDown } = useDraggableModal()
+  useEscapeToClose(closeTour, open)
 
   return (
     <div style={styles.root}>
@@ -99,8 +103,8 @@ export default function QuickTutorial() {
       )}
       {open && (
         <div style={styles.overlay} role="dialog" aria-modal="true" aria-label={t('quickTour.dialogLabel')}>
-          <div style={styles.modal}>
-            <div style={styles.header}>
+          <div style={{ ...styles.modal, transform: `translate(${offset.x}px, ${offset.y}px)` }}>
+            <div style={{ ...styles.header, cursor: 'grab' }} onPointerDown={onHandlePointerDown}>
               <div>
                 <div style={styles.eyebrow}>LotusAnalyzer</div>
                 <h3 style={styles.title}>{t('quickTour.heading')}</h3>

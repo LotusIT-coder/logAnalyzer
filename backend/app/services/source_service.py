@@ -14,6 +14,9 @@ from app.domain.models import Source
 from app.schemas.source import SourceCreateRequest, SourcePatchRequest
 
 
+HOSTFS_PREFIX = "/hostfs"
+
+
 async def list_sources(session: AsyncSession) -> List[Source]:
     result = await session.execute(select(Source).order_by(Source.created_at))
     return list(result.scalars().all())
@@ -119,6 +122,24 @@ def source_path_is_regex(source: Source) -> bool:
     return bool(cfg.get("path_regex") or cfg.get("use_regex") or cfg.get("regex"))
 
 
+def _expand_candidate_paths(paths: list[str]) -> list[str]:
+    """Return path candidates including host-mounted fallback paths.
+
+    In dockerized deployments host paths are available below /hostfs when the
+    host root is mounted read-only. This keeps manual source paths working
+    without rewriting persisted config values.
+    """
+    expanded: list[str] = []
+    for path in paths:
+        if path not in expanded:
+            expanded.append(path)
+        if path.startswith("/"):
+            mapped = os.path.join(HOSTFS_PREFIX, path.lstrip("/"))
+            if mapped not in expanded:
+                expanded.append(mapped)
+    return expanded
+
+
 def resolve_source_path(source: Source) -> tuple[Optional[str], Optional[str]]:
     """Resolve configured source path to an existing file.
 
@@ -126,7 +147,8 @@ def resolve_source_path(source: Source) -> tuple[Optional[str], Optional[str]]:
     filename inside its directory and the most recently modified matching file is
     returned.
     """
-    candidate_paths = get_source_config_paths(source)
+    configured_paths = get_source_config_paths(source)
+    candidate_paths = _expand_candidate_paths(configured_paths)
     if not candidate_paths:
         return None, "config.path is missing."
 
@@ -134,42 +156,43 @@ def resolve_source_path(source: Source) -> tuple[Optional[str], Optional[str]]:
         for candidate_path in candidate_paths:
             if os.path.exists(candidate_path):
                 return candidate_path, None
-        return None, f"File not found: {candidate_paths[0]}"
+        return None, f"File not found: {configured_paths[0]}"
 
     last_error: str | None = None
-    for raw_path in candidate_paths:
-        base_dir = os.path.dirname(raw_path) or "."
-        name_pattern = os.path.basename(raw_path)
-        if not name_pattern:
-            last_error = f"Invalid regex path (missing filename pattern): {raw_path}"
-            continue
-        if not os.path.isdir(base_dir):
-            last_error = f"Directory not found: {base_dir}"
-            continue
+    for raw_path in configured_paths:
+        for candidate_path in _expand_candidate_paths([raw_path]):
+            base_dir = os.path.dirname(candidate_path) or "."
+            name_pattern = os.path.basename(candidate_path)
+            if not name_pattern:
+                last_error = f"Invalid regex path (missing filename pattern): {raw_path}"
+                continue
+            if not os.path.isdir(base_dir):
+                last_error = f"Directory not found: {os.path.dirname(raw_path) or '.'}"
+                continue
 
-        try:
-            compiled = re.compile(name_pattern)
-        except re.error as exc:
-            last_error = f"Invalid regex in path '{raw_path}': {exc}"
-            continue
+            try:
+                compiled = re.compile(name_pattern)
+            except re.error as exc:
+                last_error = f"Invalid regex in path '{raw_path}': {exc}"
+                continue
 
-        matches: list[tuple[str, float]] = []
-        try:
-            with os.scandir(base_dir) as entries:
-                for entry in entries:
-                    if not entry.is_file():
-                        continue
-                    if compiled.fullmatch(entry.name):
-                        matches.append((entry.path, entry.stat().st_mtime))
-        except OSError as exc:
-            last_error = f"Failed to list directory '{base_dir}': {exc}"
-            continue
+            matches: list[tuple[str, float]] = []
+            try:
+                with os.scandir(base_dir) as entries:
+                    for entry in entries:
+                        if not entry.is_file():
+                            continue
+                        if compiled.fullmatch(entry.name):
+                            matches.append((entry.path, entry.stat().st_mtime))
+            except OSError as exc:
+                last_error = f"Failed to list directory '{os.path.dirname(raw_path) or '.'}': {exc}"
+                continue
 
-        if not matches:
-            last_error = f"No files match regex path: {raw_path}"
-            continue
+            if not matches:
+                last_error = f"No files match regex path: {raw_path}"
+                continue
 
-        matches.sort(key=lambda item: (item[1], item[0]), reverse=True)
-        return matches[0][0], None
+            matches.sort(key=lambda item: (item[1], item[0]), reverse=True)
+            return matches[0][0], None
 
-    return None, last_error or f"No files match regex path: {candidate_paths[0]}"
+    return None, last_error or f"No files match regex path: {configured_paths[0]}"

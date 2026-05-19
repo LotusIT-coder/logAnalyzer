@@ -5,13 +5,14 @@ SSE stream endpoint emits new events by polling every second (MVP implementation
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import json
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.source_filters import resolve_source_ids
@@ -24,6 +25,13 @@ from app.services.event_search import EventSearchQuery, EventSearchResult, searc
 router = APIRouter(prefix="/events", tags=["Events"])
 
 _STREAM_POLL_LIMIT = 500
+_STREAM_HEARTBEAT_SECONDS = 10
+
+
+def _parse_csv(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    return [entry.strip() for entry in value.split(",") if entry.strip()]
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -66,62 +74,216 @@ def _should_fallback_to_postgres_for_freshness(query: EventSearchQuery, result: 
     return freshest_created < (upper_bound - timedelta(minutes=1))
 
 
-async def _stream_start_seen_ids(session: AsyncSession, event_type: Optional[str] = None) -> set[str]:
-    stmt = select(Event.id)
+def _encode_stream_cursor(created_at: datetime, event_id: str) -> str:
+    return f"{_as_utc(created_at).isoformat()}|{event_id}"
+
+def _decode_stream_cursor(cursor: str) -> tuple[datetime, str] | None:
+    if not cursor or "|" not in cursor:
+        return None
+    ts_raw, event_id = cursor.rsplit("|", 1)
+    if not ts_raw or not event_id:
+        return None
+    try:
+        ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return _as_utc(ts), event_id
+
+
+def _apply_stream_filters(
+    stmt,
+    *,
+    resolved_source_ids: Optional[list[str]],
+    severities: list[str],
+    service: Optional[str],
+    host: Optional[str],
+    q: Optional[str],
+    event_type: Optional[str],
+):
     if event_type:
         stmt = stmt.where(Event.event_type == event_type)
-    result = await session.execute(
-        stmt.order_by(Event.created_at.desc(), Event.id.desc()).limit(_STREAM_POLL_LIMIT)
-    )
-    return set(result.scalars().all())
+    if resolved_source_ids is not None:
+        if not resolved_source_ids:
+            return stmt.where(False)
+        stmt = stmt.where(Event.source_id.in_(resolved_source_ids))
+    if severities:
+        stmt = stmt.where(Event.severity.in_(severities))
+    if service:
+        stmt = stmt.where(Event.service.ilike(f"%{service}%"))
+    if host:
+        stmt = stmt.where(Event.host.ilike(f"%{host}%"))
+    if q:
+        stmt = stmt.where(Event.message.ilike(f"%{q}%"))
+    return stmt
 
 
-def _stream_events_stmt(event_type: Optional[str] = None):
+async def _stream_bootstrap_cursor(
+    session: AsyncSession,
+    *,
+    resolved_source_ids: Optional[list[str]] = None,
+    severities: list[str] | None = None,
+    service: Optional[str] = None,
+    host: Optional[str] = None,
+    q: Optional[str] = None,
+    event_type: Optional[str] = None,
+) -> tuple[datetime, str] | None:
+    created_expr = func.coalesce(Event.created_at, Event.timestamp)
     stmt = select(Event)
-    if event_type:
-        stmt = stmt.where(Event.event_type == event_type)
-    return stmt.order_by(Event.created_at.desc(), Event.id.desc()).limit(_STREAM_POLL_LIMIT)
+    stmt = _apply_stream_filters(
+        stmt,
+        resolved_source_ids=resolved_source_ids,
+        severities=severities or [],
+        service=service,
+        host=host,
+        q=q,
+        event_type=event_type,
+    )
+    result = await session.execute(stmt.order_by(created_expr.desc(), Event.id.desc()).limit(1))
+    latest = result.scalar_one_or_none()
+    if latest is None:
+        return None
+    created_at = latest.created_at or latest.timestamp
+    return _as_utc(created_at), str(latest.id)
+
+
+def _stream_events_stmt_after(
+    cursor: tuple[datetime, str] | None,
+    *,
+    resolved_source_ids: Optional[list[str]] = None,
+    severities: list[str] | None = None,
+    service: Optional[str] = None,
+    host: Optional[str] = None,
+    q: Optional[str] = None,
+    event_type: Optional[str] = None,
+):
+    created_expr = func.coalesce(Event.created_at, Event.timestamp)
+    stmt = select(Event)
+    stmt = _apply_stream_filters(
+        stmt,
+        resolved_source_ids=resolved_source_ids,
+        severities=severities or [],
+        service=service,
+        host=host,
+        q=q,
+        event_type=event_type,
+    )
+    if cursor is not None:
+        after_created_at, after_id = cursor
+        stmt = stmt.where(
+            or_(
+                created_expr > after_created_at,
+                and_(created_expr == after_created_at, Event.id > after_id),
+            )
+        )
+    return stmt.order_by(created_expr.asc(), Event.id.asc()).limit(_STREAM_POLL_LIMIT)
 
 
 @router.get("/stream")
 async def stream_events(
     request: Request,
+    source_id: Optional[str] = Query(None),
+    source_ids: Optional[str] = Query(None),
+    source_paths: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
+    service: Optional[str] = Query(None),
+    host: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
     event_type: Optional[str] = Query(None),
+    poll_interval: int = Query(1, ge=1, le=3600, description="Polling interval in seconds for event batching (default: 1s)"),
 ):
-    """Server-Sent Events stream. Polls the DB every second for new events.
+    """Server-Sent Events stream. Polls the DB for new events after a cursor.
 
     A fresh DB session is opened and closed on every poll tick so that no
     connection is held open for the full lifetime of the SSE connection.
     """
     factory = get_session_factory()
+    severity_values = [value.lower() for value in _parse_csv(severity)]
+
+    async with factory() as setup_session:
+        resolved_source_ids = await resolve_source_ids(
+            setup_session,
+            source_id=source_id,
+            source_ids_csv=source_ids,
+            source_paths_csv=source_paths,
+        )
 
     async def _generator() -> AsyncGenerator[str, None]:
-        # Bootstrap: record which event IDs already exist so we only emit future ones.
+        last_event_id = request.headers.get("last-event-id") or ""
+        cursor = _decode_stream_cursor(last_event_id)
+
+        # Bootstrap to "current head" when no reconnect cursor exists,
+        # so a fresh client receives only future events.
         async with factory() as session:
-            seen_event_ids = await _stream_start_seen_ids(session, event_type)
+            if cursor is None:
+                cursor = await _stream_bootstrap_cursor(
+                    session,
+                    resolved_source_ids=resolved_source_ids,
+                    severities=severity_values,
+                    service=service,
+                    host=host,
+                    q=q,
+                    event_type=event_type,
+                )
+
+        idle_ticks = 0
+        recent_emitted_ids: deque[str] = deque()
+        recent_emitted_lookup: set[str] = set()
+        dedupe_limit = _STREAM_POLL_LIMIT * 8
+        if cursor is not None:
+            recent_emitted_ids.append(cursor[1])
+            recent_emitted_lookup.add(cursor[1])
+
+        # Emit an initial frame so clients move to "connected" immediately,
+        # even when no new events are available yet.
+        yield ": connected\n\n"
 
         while True:
             if await request.is_disconnected():
                 break
 
             async with factory() as session:
-                result = await session.execute(_stream_events_stmt(event_type))
-                rows = list(reversed(result.scalars().all()))
+                result = await session.execute(
+                    _stream_events_stmt_after(
+                        cursor,
+                        resolved_source_ids=resolved_source_ids,
+                        severities=severity_values,
+                        service=service,
+                        host=host,
+                        q=q,
+                        event_type=event_type,
+                    )
+                )
+                rows = list(result.scalars().all())
 
+            if not rows:
+                idle_ticks += 1
+                if idle_ticks >= _STREAM_HEARTBEAT_SECONDS:
+                    yield ": keepalive\n\n"
+                    idle_ticks = 0
+                await asyncio.sleep(poll_interval)
+                continue
+
+            idle_ticks = 0
+            batch = []
             for row in rows:
-                if row.id in seen_event_ids:
+                if str(row.id) in recent_emitted_lookup:
                     continue
                 data = EventResponse.model_validate(row).model_dump(by_alias=False)
-                # datetime objects must be serialized manually
-                yield f"data: {json.dumps(data, default=str)}\n\n"
-                seen_event_ids.add(row.id)
+                created_at = row.created_at or row.timestamp
+                cursor = (_as_utc(created_at), str(row.id))
+                encoded_cursor = _encode_stream_cursor(cursor[0], cursor[1])
+                batch.append({"id": encoded_cursor, "data": data})
+                recent_emitted_ids.append(str(row.id))
+                recent_emitted_lookup.add(str(row.id))
+                while len(recent_emitted_ids) > dedupe_limit:
+                    old_id = recent_emitted_ids.popleft()
+                    recent_emitted_lookup.discard(old_id)
 
-            # Trim the seen-IDs set so it doesn't grow without bound.
-            if len(seen_event_ids) > _STREAM_POLL_LIMIT * 4:
-                async with factory() as session:
-                    seen_event_ids = await _stream_start_seen_ids(session, event_type)
+            # Send all new events as a batch (array) every poll_interval seconds
+            if batch:
+                yield f"data: {json.dumps(batch, default=str)}\n\n"
 
-            await asyncio.sleep(1)
+            await asyncio.sleep(poll_interval)
 
     return StreamingResponse(_generator(), media_type="text/event-stream")
 

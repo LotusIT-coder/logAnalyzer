@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -21,6 +22,19 @@ from app.services.soc_analyst_runtime import save_soc_analyst_runtime_state
 router = APIRouter(tags=["System"])
 
 _start_time = time.monotonic()
+
+
+async def _check_ollama_api_reachable(base_url: str) -> tuple[bool, str | None]:
+    url = f"{base_url.rstrip('/')}/api/tags"
+    timeout = httpx.Timeout(connect=1.5, read=2.0, write=2.0, pool=2.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(url)
+            if response.status_code >= 400:
+                return False, f"HTTP {response.status_code}"
+            return True, None
+    except Exception as exc:
+        return False, str(exc)
 
 
 class SOCAnalystToggleRequest(BaseModel):
@@ -57,21 +71,29 @@ def _age_seconds(value: datetime | None, now: datetime) -> int | None:
 
 @router.get("/health")
 async def health(request: Request):
+    settings = get_settings()
     ollama_available = getattr(request.app.state, "ollama_available", False)
+    ollama_api_reachable, ollama_api_error = await _check_ollama_api_reachable(settings.ollama_base_url)
     elastic_enabled = bool(getattr(request.app.state, "elastic_enabled", False))
     elastic_available = bool(getattr(request.app.state, "elastic_available", False))
     elastic_bootstrap_ok = bool(getattr(request.app.state, "elastic_bootstrap_ok", False))
     elastic_indexer = getattr(request.app.state, "elastic_indexer", None)
     elastic_indexer_running = bool(elastic_indexer is not None and elastic_indexer.running)
+    event_bus = getattr(request.app.state, "event_bus", None)
+    event_bus_stats = event_bus.get_stats() if event_bus is not None else None
     return {
         "status": "ok",
         "uptime_seconds": int(time.monotonic() - _start_time),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "ollama_available": ollama_available,
+        "ollama_base_url": settings.ollama_base_url,
+        "ollama_api_reachable": ollama_api_reachable,
+        "ollama_api_error": ollama_api_error,
         "elastic_enabled": elastic_enabled,
         "elastic_available": elastic_available,
         "elastic_bootstrap_ok": elastic_bootstrap_ok,
         "elastic_indexer_running": elastic_indexer_running,
+        "event_bus": event_bus_stats,
     }
 
 
@@ -174,18 +196,29 @@ async def set_soc_analyst_status(
         source_ids_csv=source_ids_csv,
         source_paths_csv=source_paths_csv,
     )
-    normalized_source_ids = list(dict.fromkeys(resolved_source_ids or []))
+    normalized_source_ids = list(
+        dict.fromkeys(str(source_id) for source_id in (resolved_source_ids or []) if str(source_id).strip())
+    )
 
     if body.enabled:
-        model_ok, installed_models = await is_ollama_model_available(settings.soc_analyst_model)
+        try:
+            model_ok, installed_models = await is_ollama_model_available(settings.soc_analyst_model)
+        except (httpx.ConnectError, httpx.HTTPError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Ollama ist aktuell nicht erreichbar. Bitte Ollama starten/pruefen und erneut versuchen. "
+                    f"Details: {exc}"
+                ),
+            ) from exc
+
         if not model_ok:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "message": "Configured SOC_ANALYST_MODEL is not installed in Ollama.",
-                    "configured_model": settings.soc_analyst_model,
-                    "installed_models": installed_models,
-                },
+                detail=(
+                    f"Das konfigurierte SOC-Analyst-Modell '{settings.soc_analyst_model}' ist in Ollama nicht installiert. "
+                    f"Installiert: {', '.join(installed_models) if installed_models else 'keine'}"
+                ),
             )
 
         if current_service is not None:

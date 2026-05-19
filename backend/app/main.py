@@ -20,7 +20,13 @@ from app.ingestion.watcher import WatcherService
 from app.logging_config import RequestLoggingMiddleware, configure_logging
 from app.services.elastic_client import ElasticClient
 from app.services.elastic_indexer import ElasticIndexerService
+from app.services.event_bus import InMemoryEventBus
 from app.services.rule_scheduler import RuleSchedulerService
+from app.services.ai_auto_triage import (
+    AUTO_TRIAGE_EVENT_TOPIC,
+    _handle_auto_triage_requested,
+    configure_auto_triage_event_bus,
+)
 from app.services.soc_analyst import SOCAnalystService
 from app.services.soc_analyst_runtime import load_soc_analyst_runtime_state
 
@@ -78,6 +84,20 @@ async def lifespan(app: FastAPI):
     async with engine.connect():
         pass
     logger.info("database_connected")
+
+    # Start internal event bus (local async queue, broker-compatible API).
+    event_bus = InMemoryEventBus(
+        workers=settings.event_bus_workers,
+        queue_size=settings.event_bus_queue_size,
+        max_retry_attempts=settings.event_bus_max_retry_attempts,
+        retry_backoff_seconds=settings.event_bus_retry_backoff_seconds,
+        dead_letter_max=settings.event_bus_dead_letter_max,
+    )
+    event_bus.subscribe(AUTO_TRIAGE_EVENT_TOPIC, _handle_auto_triage_requested)
+    await event_bus.start()
+    configure_auto_triage_event_bus(event_bus)
+    app.state.event_bus = event_bus
+    logger.info("event_bus_ready", **event_bus.get_stats())
 
     # Start ingestion watcher
     watcher = WatcherService(
@@ -171,6 +191,10 @@ async def lifespan(app: FastAPI):
     running_indexer = getattr(app.state, "elastic_indexer", None)
     if running_indexer is not None:
         await running_indexer.stop()
+    running_bus = getattr(app.state, "event_bus", None)
+    if running_bus is not None:
+        await running_bus.stop(drain=True, drain_timeout_seconds=settings.event_bus_drain_timeout_seconds)
+    configure_auto_triage_event_bus(None)
     await engine.dispose()
 
 

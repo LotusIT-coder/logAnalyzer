@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 import { getApiBase } from '../lib/api'
 import HelpTip from '../components/HelpTip'
 import { getApiErrorMessage } from '../lib/errors'
+import { useDraggableModal } from '../lib/useDraggableModal'
+import { useEscapeToClose } from '../lib/useEscapeToClose'
 import dayjs from 'dayjs'
 
 type UploadResultState = UploadImportResponse | { error: string }
@@ -50,6 +52,8 @@ function sourceHealthTone(status?: SourceIngestionStatus): { bg: string; fg: str
 
 // ─── Edit Modal ───────────────────────────────────────────────────────────────
 function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse; onClose: () => void; onSaved: () => void }) {
+  const { offset, onHandlePointerDown } = useDraggableModal()
+  useEscapeToClose(onClose)
   const [name, setName] = useState(source.name ?? '')
   const [path, setPath] = useState(source.config?.path ?? '')
   const [pathRegex, setPathRegex] = useState(Boolean(source.config?.path_regex))
@@ -81,8 +85,8 @@ function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse;
 
   return (
     <div style={modal.overlay} onClick={onClose}>
-      <div style={{ ...modal.box, height: 'auto', maxWidth: 540, padding: '1.5rem' }} onClick={e => e.stopPropagation()}>
-        <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem', color: 'var(--fg)' }}>Quelle bearbeiten</h3>
+      <div style={{ ...modal.box, height: 'auto', maxWidth: 540, padding: '1.5rem', transform: `translate(${offset.x}px, ${offset.y}px)` }} onClick={e => e.stopPropagation()}>
+        <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem', color: 'var(--fg)', cursor: 'grab' }} onPointerDown={onHandlePointerDown}>Quelle bearbeiten</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <div style={styles.field}>
             <label style={styles.label}>Name</label>
@@ -119,6 +123,8 @@ function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse;
 
 // ─── Live-Tail Modal ──────────────────────────────────────────────────────────
 function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: () => void }) {
+  const { offset, onHandlePointerDown } = useDraggableModal()
+  useEscapeToClose(onClose)
   const [lines, setLines] = useState<string[]>([])
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState('')
@@ -162,8 +168,8 @@ function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: (
 
   return (
     <div style={modal.overlay} onClick={onClose}>
-      <div style={modal.box} onClick={e => e.stopPropagation()}>
-        <div style={modal.header}>
+      <div style={{ ...modal.box, transform: `translate(${offset.x}px, ${offset.y}px)` }} onClick={e => e.stopPropagation()}>
+        <div style={{ ...modal.header, cursor: 'grab' }} onPointerDown={onHandlePointerDown}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>Live-Tail: {source.name}</span>
             <span style={{ ...modal.dot, background: connected ? '#22c55e' : '#ef4444' }} />

@@ -128,6 +128,24 @@ export interface HealthResponse extends JsonObject {
   uptime_seconds: number
   timestamp: string
   ollama_available?: boolean
+  ollama_api_reachable?: boolean
+  ollama_base_url?: string
+  ollama_api_error?: string | null
+  event_bus?: {
+    queue_depth?: number
+    workers?: number
+    max_retry_attempts?: number
+    retry_backoff_seconds?: number
+    dead_letter_max?: number
+    dead_letter_size?: number
+    published_total?: number
+    processed_total?: number
+    failed_total?: number
+    retried_total?: number
+    dead_letter_total?: number
+    dropped_queue_full_total?: number
+    handler_missing_total?: number
+  } | null
 }
 
 export interface SOCAnalystStatusResponse {
