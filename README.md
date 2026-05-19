@@ -45,6 +45,24 @@ Status pruefen:
 docker-compose ps
 ```
 
+### Binary-Log Import (allgemein)
+
+Binaere/proprietaere Logdateien sind nicht direkt als Klartext ingestierbar.
+
+Vorgehen:
+
+1. Externen Decoder installieren, der das Quellformat in Text umwandelt.
+2. Konvertieren + Import in einem Schritt:
+
+```bash
+BINARY_LOG_DECODER_CMD='mydecoder --to-text' ./scripts/import_binary_log.sh /pfad/zur/datei.binlog "Quelle optional"
+```
+
+Optional:
+
+- `LOGANALYZER_API_BASE` (Default: `http://127.0.0.1:8000/api/v1`)
+- `LOGANALYZER_TOKEN` fuer geschuetzte API-Endpoints
+
 ---
 
 ## Problemstellung
