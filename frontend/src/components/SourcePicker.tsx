@@ -28,7 +28,7 @@ export function isUploadError(result: UploadResultState): result is { error: str
 }
 
 // ─── Option row ───────────────────────────────────────────────────────────────
-export function OptionRow({ opt, checked, onToggle }: { opt: SourceOption; checked: boolean; onToggle: (o: SourceOption) => void }) {
+export function OptionRow({ opt, checked, onToggle, showConfiguredDot = true }: { opt: SourceOption; checked: boolean; onToggle: (o: SourceOption) => void; showConfiguredDot?: boolean }) {
   return (
     <label style={pickerStyles.option}>
       <input
@@ -40,7 +40,7 @@ export function OptionRow({ opt, checked, onToggle }: { opt: SourceOption; check
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {opt.label}
       </span>
-      {opt.kind === 'configured' && (
+      {opt.kind === 'configured' && showConfiguredDot && (
         <span style={{ color: '#22c55e', fontSize: '0.7rem', flexShrink: 0 }}>●</span>
       )}
     </label>
@@ -221,7 +221,7 @@ export function SourcePicker({
           {/* Presets */}
           <div style={pickerStyles.groupHeader}>{t('sourcePicker.group.presets')}</div>
           {journaldOptions.map(opt => (
-            <OptionRow key={opt.id} opt={opt} checked={selected.some(s => optionMatches(s, opt))} onToggle={toggle} />
+            <OptionRow key={opt.id} opt={opt} checked={selected.some(s => optionMatches(s, opt))} onToggle={toggle} showConfiguredDot={false} />
           ))}
           {presetOptions.map(opt => (
             <OptionRow key={opt.id} opt={opt} checked={selected.some(s => optionMatches(s, opt))} onToggle={toggle} />
