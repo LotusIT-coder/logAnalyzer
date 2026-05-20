@@ -39,6 +39,14 @@ Ein lokales, KI-gestütztes Log-Analyse-System mit FastAPI-Backend und React-Fro
 docker-compose up -d --build
 ```
 
+Wenn `docker-compose` mit `KeyError: 'ContainerConfig'` scheitert (bekannter Compose-v1-Bug), nutze stattdessen:
+
+```bash
+./scripts/compose-up-safe.sh --build
+```
+
+Das Script erkennt den Fehler und fuehrt automatisch `down --remove-orphans` + Retry aus.
+
 Status pruefen:
 
 ```bash
