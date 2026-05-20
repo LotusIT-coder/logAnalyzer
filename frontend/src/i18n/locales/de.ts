@@ -100,7 +100,7 @@ const de: Record<string, string> = {
   'sourcePicker.helper': 'Konfigurierte Quellen sind dauerhaft in der App hinterlegt. Standard- und eigene Pfade erweitern den aktuellen Analysekontext nur fuer deine laufende Arbeit.',
   'sourcePicker.clearSelection': 'Auswahl zuruecksetzen (alle aktivierten)',
   'sourcePicker.group.configured': 'Konfigurierte Quellen',
-  'sourcePicker.group.presets': 'Standard-Log-Dateien',
+  'sourcePicker.group.presets': 'Standard Log-Dateien',
   'sourcePicker.group.custom': 'Eigene / Hochgeladene Quellen',
   'sourcePicker.group.customPath': 'Eigener Pfad hinzufuegen',
   'sourcePicker.group.upload': 'Datei hochladen',

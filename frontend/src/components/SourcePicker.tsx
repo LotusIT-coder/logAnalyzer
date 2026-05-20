@@ -76,7 +76,7 @@ export function SourcePicker({
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  const configuredOptions: SourceOption[] = configuredSources
+  const visibleConfiguredSources = configuredSources
     .filter((s: SourceResponse) => {
       // Keep non-file sources (e.g. journald) selectable even if they carry
       // preset metadata.
@@ -87,6 +87,17 @@ export function SourcePicker({
       if (!origin && PRESET_PATH_SET.has(s.config?.path ?? '')) return false
       return true
     })
+  const configuredOptions: SourceOption[] = visibleConfiguredSources
+    .filter((s: SourceResponse) => s.type !== 'journald')
+    .map((s: SourceResponse) => ({
+      id: `source:${s.id}`,
+      label: s.name,
+      path: s.config?.path ?? '',
+      kind: 'configured' as const,
+    }))
+
+  const journaldOptions: SourceOption[] = visibleConfiguredSources
+    .filter((s: SourceResponse) => s.type === 'journald')
     .map((s: SourceResponse) => ({
       id: `source:${s.id}`,
       label: s.name,
@@ -209,6 +220,9 @@ export function SourcePicker({
 
           {/* Presets */}
           <div style={pickerStyles.groupHeader}>{t('sourcePicker.group.presets')}</div>
+          {journaldOptions.map(opt => (
+            <OptionRow key={opt.id} opt={opt} checked={selected.some(s => optionMatches(s, opt))} onToggle={toggle} />
+          ))}
           {presetOptions.map(opt => (
             <OptionRow key={opt.id} opt={opt} checked={selected.some(s => optionMatches(s, opt))} onToggle={toggle} />
           ))}
