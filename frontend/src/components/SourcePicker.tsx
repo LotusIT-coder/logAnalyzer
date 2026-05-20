@@ -78,6 +78,10 @@ export function SourcePicker({
 
   const configuredOptions: SourceOption[] = configuredSources
     .filter((s: SourceResponse) => {
+      // Keep non-file sources (e.g. journald) selectable even if they carry
+      // preset metadata.
+      if (s.type !== 'file') return true
+
       const origin = s.config?.source_origin
       if (origin === 'preset') return false
       if (!origin && PRESET_PATH_SET.has(s.config?.path ?? '')) return false
