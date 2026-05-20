@@ -76,7 +76,12 @@ def test_source(source: Source) -> tuple[bool, str]:
         unit = cfg.get("unit")
         if isinstance(unit, str) and unit.strip():
             command.extend(["-u", unit.strip()])
-        result = subprocess.run(command, capture_output=True, text=True)
+        try:
+            result = subprocess.run(command, capture_output=True, text=True)
+        except FileNotFoundError:
+            return False, "journalctl not found in runtime environment."
+        except OSError as exc:
+            return False, f"journalctl execution failed: {exc}"
         if result.returncode != 0:
             detail = (result.stderr or result.stdout or "journalctl failed").strip()
             return False, detail

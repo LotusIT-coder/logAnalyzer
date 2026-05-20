@@ -310,11 +310,24 @@ async def _ingest_live_journald_source(session: AsyncSession, source: Source) ->
     last_cursor = await _get_last_journal_cursor(session, source.id)
     latest_cursor = last_cursor
     command = _build_journalctl_command(source, after_cursor=last_cursor)
-    process = await asyncio.create_subprocess_exec(
-        *command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        return {
+            "source_id": str(source.id),
+            "skipped": True,
+            "reason": "journalctl not found in runtime environment.",
+        }
+    except OSError as exc:
+        return {
+            "source_id": str(source.id),
+            "skipped": True,
+            "reason": f"journalctl execution failed: {exc}",
+        }
     stdout, stderr = await process.communicate()
 
     if process.returncode != 0:
