@@ -32,13 +32,17 @@ const REQUIRE_SOURCE_SELECTION =
 
 const SEVERITIES = ['debug', 'info', 'warning', 'error', 'critical']
 
-function getEventObservedAt(event: EventResponse) {
+function getEventLogTimestamp(event: EventResponse) {
+  return event.timestamp
+}
+
+function getEventReceivedAt(event: EventResponse) {
   return event.created_at ?? event.timestamp
 }
 
 function compareEventsNewestFirst(a: EventResponse, b: EventResponse) {
-  const aMs = Date.parse(getEventObservedAt(a) ?? '')
-  const bMs = Date.parse(getEventObservedAt(b) ?? '')
+  const aMs = Date.parse(getEventLogTimestamp(a) ?? '')
+  const bMs = Date.parse(getEventLogTimestamp(b) ?? '')
   const aValid = Number.isFinite(aMs)
   const bValid = Number.isFinite(bMs)
   if (aValid && bValid && aMs !== bMs) return bMs - aMs
@@ -1150,12 +1154,12 @@ export default function EventsPage() {
         <div style={styles.resultsMeta}>
           <span>{t('events.results.loaded', { count: allEvents.length })}</span>
           {hasNextPage && <span style={{ color: 'var(--muted-fg)' }}>↓ {t('events.results.scrollMore')}</span>}
-          <HelpTip content="Events are sorted by receive time (newest first). The original log timestamp remains visible in details. Scroll down to load more and click rows to expand." ariaLabel="Explain event list" />
+          <HelpTip content="Events are sorted by log timestamp (newest first). The receive time is still visible in details. Scroll down to load more and click rows to expand." ariaLabel="Explain event list" />
         </div>
         <div ref={tableContainerRef} style={styles.tableContainer}>
           <div style={styles.table}>
             <div style={styles.theader}>
-              <span style={{ width: 150 }}>{t('events.table.received')}</span>
+              <span style={{ width: 150 }}>{t('events.detail.logTimestamp')}</span>
               <span style={{ width: 75 }}>Severity</span>
               {showSourceColumn && <span style={{ width: 140 }}>{t('events.table.source')}</span>}
               <span style={{ width: 110 }}>Host</span>
@@ -1170,7 +1174,7 @@ export default function EventsPage() {
                   title={t('events.row.expand')}
                 >
                   <span style={{ width: 150, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.78rem' }}>
-                    {dayjs(getEventObservedAt(event)).format('DD.MM.YY HH:mm:ss')}
+                    {dayjs(getEventLogTimestamp(event)).format('DD.MM.YY HH:mm:ss')}
                   </span>
                   <span style={{ width: 75, flexShrink: 0 }}>
                     <span style={{ ...styles.badge, background: SEV_COLOR[event.severity] ?? '#475569' }}>
@@ -1197,7 +1201,7 @@ export default function EventsPage() {
                     <div style={styles.detailGrid}>
                       <span style={styles.detailLabel}>ID</span><span style={styles.detailVal}>{event.id}</span>
                       <span style={styles.detailLabel}>{t('events.table.source')}</span><span style={styles.detailVal}>{event.source_id ? `${sourceNameById.get(event.source_id) ?? event.source_id} (${event.source_id})` : '-'}</span>
-                      <span style={styles.detailLabel}>Empfangen</span><span style={styles.detailVal}>{dayjs(getEventObservedAt(event)).format('DD.MM.YYYY HH:mm:ss.SSS')}</span>
+                      <span style={styles.detailLabel}>Empfangen</span><span style={styles.detailVal}>{dayjs(getEventReceivedAt(event)).format('DD.MM.YYYY HH:mm:ss.SSS')}</span>
                       <span style={styles.detailLabel}>{t('events.detail.logTimestamp')}</span><span style={styles.detailVal}>{dayjs(event.timestamp).format('DD.MM.YYYY HH:mm:ss.SSS')}</span>
                       <span style={styles.detailLabel}>Host</span><span style={styles.detailVal}>{event.host ?? '-'}</span>
                       <span style={styles.detailLabel}>Service</span><span style={styles.detailVal}>{event.service ?? '-'}</span>
