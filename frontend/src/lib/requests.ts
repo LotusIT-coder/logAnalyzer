@@ -55,6 +55,7 @@ export interface EventResponse extends JsonObject {
   host?: string | null
   service?: string | null
   message: string
+  fields?: Record<string, unknown>
 }
 
 export interface EventListResponse {

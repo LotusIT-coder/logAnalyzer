@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { getEvents, getHealth, getSourceIngestionStatus, getSources, getServerTime, runIngestion, type EventResponse, type HealthResponse, type SourceIngestionStatus, type SourceResponse } from '../lib/requests'
 import dayjs from 'dayjs'
@@ -94,6 +94,49 @@ function parseCsvValues(value: string) {
     .split(',')
     .map(entry => entry.trim())
     .filter(Boolean)
+}
+
+function getEventFields(event: EventResponse) {
+  const fields = event.fields
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields)) return {}
+  return fields
+}
+
+function firstStringField(fields: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = fields[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+function inferInternalEmitter(message: string) {
+  const marker = message.match(/\]\s*([a-z][a-z0-9_]{2,})\b/i)?.[1]?.toLowerCase()
+  if (!marker) return null
+  if (marker.startsWith('rule_') || marker.startsWith('soc_analyst_') || marker.startsWith('heuristic_')) {
+    return `logAnalyzer-backend (${marker})`
+  }
+  return null
+}
+
+function getEventEmitter(event: EventResponse) {
+  const fields = getEventFields(event)
+  const inferred = inferInternalEmitter(event.message)
+  if (inferred) return inferred
+
+  const systemdUnit = firstStringField(fields, ['_SYSTEMD_UNIT', 'SYSTEMD_UNIT'])
+  if (systemdUnit) return systemdUnit
+
+  const syslogIdentifier = firstStringField(fields, ['SYSLOG_IDENTIFIER'])
+  if (syslogIdentifier) return syslogIdentifier
+
+  const comm = firstStringField(fields, ['_COMM', 'COMM'])
+  if (comm) return comm
+
+  const executable = firstStringField(fields, ['_EXE', 'EXE'])
+  if (executable) return executable
+
+  return event.service ?? '-'
 }
 
 function buildContextItems(params: {
@@ -248,6 +291,24 @@ function computeIngestionTone(statuses?: SourceIngestionStatus[]) {
 const SOURCE_COLORS = ['#7dd3fc', '#fbbf24', '#a78bfa', '#34d399', '#fb7185', '#60a5fa', '#f97316', '#c084fc']
 
 const EVENTS_REFRESH_INTERVAL_KEY = 'events:refresh-interval-ms'
+const EVENTS_COLUMN_WIDTHS_KEY = 'events:column-widths-v1'
+type EventColumnKey = 'timestamp' | 'severity' | 'source' | 'host' | 'service' | 'emitter'
+const DEFAULT_EVENT_COLUMN_WIDTHS: Record<EventColumnKey, number> = {
+  timestamp: 150,
+  severity: 75,
+  source: 140,
+  host: 110,
+  service: 120,
+  emitter: 210,
+}
+const MIN_EVENT_COLUMN_WIDTHS: Record<EventColumnKey, number> = {
+  timestamp: 130,
+  severity: 64,
+  source: 100,
+  host: 90,
+  service: 90,
+  emitter: 130,
+}
 const REFRESH_INTERVAL_OPTIONS: { value: number; label: string }[] = [
   { value: 0, label: 'Aus' },
   { value: 2_000, label: '2 s' },
@@ -513,8 +574,28 @@ export default function EventsPage() {
     const parsed = stored ? Number(stored) : NaN
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : 5_000
   })
+  const [columnWidths, setColumnWidths] = useState<Record<EventColumnKey, number>>(() => {
+    if (typeof window === 'undefined') return DEFAULT_EVENT_COLUMN_WIDTHS
+    const raw = window.localStorage.getItem(EVENTS_COLUMN_WIDTHS_KEY)
+    if (!raw) return DEFAULT_EVENT_COLUMN_WIDTHS
+    try {
+      const parsed = JSON.parse(raw) as Partial<Record<EventColumnKey, number>>
+      return {
+        ...DEFAULT_EVENT_COLUMN_WIDTHS,
+        timestamp: Number.isFinite(parsed.timestamp) ? Math.max(MIN_EVENT_COLUMN_WIDTHS.timestamp, Number(parsed.timestamp)) : DEFAULT_EVENT_COLUMN_WIDTHS.timestamp,
+        severity: Number.isFinite(parsed.severity) ? Math.max(MIN_EVENT_COLUMN_WIDTHS.severity, Number(parsed.severity)) : DEFAULT_EVENT_COLUMN_WIDTHS.severity,
+        source: Number.isFinite(parsed.source) ? Math.max(MIN_EVENT_COLUMN_WIDTHS.source, Number(parsed.source)) : DEFAULT_EVENT_COLUMN_WIDTHS.source,
+        host: Number.isFinite(parsed.host) ? Math.max(MIN_EVENT_COLUMN_WIDTHS.host, Number(parsed.host)) : DEFAULT_EVENT_COLUMN_WIDTHS.host,
+        service: Number.isFinite(parsed.service) ? Math.max(MIN_EVENT_COLUMN_WIDTHS.service, Number(parsed.service)) : DEFAULT_EVENT_COLUMN_WIDTHS.service,
+        emitter: Number.isFinite(parsed.emitter) ? Math.max(MIN_EVENT_COLUMN_WIDTHS.emitter, Number(parsed.emitter)) : DEFAULT_EVENT_COLUMN_WIDTHS.emitter,
+      }
+    } catch {
+      return DEFAULT_EVENT_COLUMN_WIDTHS
+    }
+  })
   const tableContainerRef = useRef<HTMLDivElement>(null)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const resizingRef = useRef<{ key: EventColumnKey; startX: number; startWidth: number } | null>(null)
 
   const clearReconnectTimer = () => {
     if (!reconnectTimerRef.current) return
@@ -526,6 +607,70 @@ export default function EventsPage() {
     if (typeof window === 'undefined') return
     window.localStorage.setItem(EVENTS_REFRESH_INTERVAL_KEY, String(refreshIntervalMs))
   }, [refreshIntervalMs])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(EVENTS_COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths))
+  }, [columnWidths])
+
+  useEffect(() => {
+    const onMouseMove = (event: MouseEvent) => {
+      const active = resizingRef.current
+      if (!active) return
+      const next = Math.max(
+        MIN_EVENT_COLUMN_WIDTHS[active.key],
+        active.startWidth + (event.clientX - active.startX),
+      )
+      setColumnWidths(prev => (prev[active.key] === next ? prev : { ...prev, [active.key]: next }))
+    }
+
+    const onMouseUp = () => {
+      if (!resizingRef.current) return
+      resizingRef.current = null
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+      if (resizingRef.current) {
+        resizingRef.current = null
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+      }
+    }
+  }, [])
+
+  function startColumnResize(key: EventColumnKey, event: ReactMouseEvent<HTMLSpanElement>) {
+    event.preventDefault()
+    event.stopPropagation()
+    resizingRef.current = {
+      key,
+      startX: event.clientX,
+      startWidth: columnWidths[key],
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+
+  function headerCell(label: string, key: EventColumnKey) {
+    return (
+      <span style={{ ...styles.headerCell, width: columnWidths[key] }}>
+        <span>{label}</span>
+        <span
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={`Resize ${label} column`}
+          title={`Resize ${label}`}
+          style={styles.resizeHandle}
+          onMouseDown={(event) => startColumnResize(key, event)}
+        />
+      </span>
+    )
+  }
 
   // On mount (and when source selection changes), ensure preset/custom paths are
   // registered and ingested so that resolve_source_ids finds matching DB records.
@@ -736,7 +881,7 @@ export default function EventsPage() {
   // Infinite query: loads events page by page
   const hasAnySourceSelection = Boolean(sourceId || effectiveSourceIdsCsv || effectiveSourcePathsCsv)
   const eventsQueryEnabled = !REQUIRE_SOURCE_SELECTION || hasAnySourceSelection
-  const canUseEventStream = eventsQueryEnabled && !provider && !fromTime && !toTime
+  const canUseEventStream = eventsQueryEnabled && !provider && !fromTime && !toTime && refreshIntervalMs > 0
   const streamEnabled = canUseEventStream && isPageVisible
   const { data, isLoading, isFetched, hasNextPage, fetchNextPage, isFetchingNextPage, isFetching, refetch } = useInfiniteQuery({
     queryKey: ['events', sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, fromTime, toTime, rangeHours, selectedSeveritiesCsv, provider, host, service, search],
@@ -1159,11 +1304,12 @@ export default function EventsPage() {
         <div ref={tableContainerRef} style={styles.tableContainer}>
           <div style={styles.table}>
             <div style={styles.theader}>
-              <span style={{ width: 150 }}>{t('events.detail.logTimestamp')}</span>
-              <span style={{ width: 75 }}>Severity</span>
-              {showSourceColumn && <span style={{ width: 140 }}>{t('events.table.source')}</span>}
-              <span style={{ width: 110 }}>Host</span>
-              <span style={{ width: 120 }}>Service</span>
+              {headerCell(t('events.detail.logTimestamp'), 'timestamp')}
+              {headerCell('Severity', 'severity')}
+              {showSourceColumn && headerCell(t('events.table.source'), 'source')}
+              {headerCell('Host', 'host')}
+              {headerCell('Service', 'service')}
+              {headerCell(t('events.table.emitter'), 'emitter')}
               <span style={{ flex: 1 }}>{t('events.table.message')}</span>
             </div>
             {allEvents.map((event: EventResponse) => (
@@ -1173,24 +1319,27 @@ export default function EventsPage() {
                   onClick={() => toggleExpand(event.id)}
                   title={t('events.row.expand')}
                 >
-                  <span style={{ width: 150, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.78rem' }}>
+                  <span style={{ width: columnWidths.timestamp, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.78rem' }}>
                     {dayjs(getEventLogTimestamp(event)).format('DD.MM.YY HH:mm:ss')}
                   </span>
-                  <span style={{ width: 75, flexShrink: 0 }}>
+                  <span style={{ width: columnWidths.severity, flexShrink: 0 }}>
                     <span style={{ ...styles.badge, background: SEV_COLOR[event.severity] ?? '#475569' }}>
                       {event.severity}
                     </span>
                   </span>
                   {showSourceColumn && (
-                    <span style={{ width: 140, color: 'var(--accent)', flexShrink: 0, fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={event.source_id ?? ''}>
+                    <span style={{ width: columnWidths.source, color: 'var(--accent)', flexShrink: 0, fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={event.source_id ?? ''}>
                       {event.source_id ? (sourceNameById.get(event.source_id) ?? event.source_id.slice(0, 8)) : '-'}
                     </span>
                   )}
-                  <span style={{ width: 110, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ width: columnWidths.host, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {event.host ?? '-'}
                   </span>
-                  <span style={{ width: 120, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ width: columnWidths.service, color: 'var(--muted-fg)', flexShrink: 0, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {event.service ?? '-'}
+                  </span>
+                  <span style={{ width: columnWidths.emitter, color: 'var(--fg)', flexShrink: 0, fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={getEventEmitter(event)}>
+                    {getEventEmitter(event)}
                   </span>
                   <span style={{ flex: 1, overflow: 'hidden', fontSize: '0.84rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', lineHeight: '1.4' }}>
                     <AnsiText message={event.message} inline />
@@ -1205,6 +1354,7 @@ export default function EventsPage() {
                       <span style={styles.detailLabel}>{t('events.detail.logTimestamp')}</span><span style={styles.detailVal}>{dayjs(event.timestamp).format('DD.MM.YYYY HH:mm:ss.SSS')}</span>
                       <span style={styles.detailLabel}>Host</span><span style={styles.detailVal}>{event.host ?? '-'}</span>
                       <span style={styles.detailLabel}>Service</span><span style={styles.detailVal}>{event.service ?? '-'}</span>
+                      <span style={styles.detailLabel}>{t('events.detail.emitter')}</span><span style={styles.detailVal}>{getEventEmitter(event)}</span>
                       <span style={styles.detailLabel}>Severity</span><span style={styles.detailVal}>{event.severity}</span>
                     </div>
                     <div style={{ marginTop: '0.5rem' }}>
@@ -1299,19 +1449,37 @@ const styles: Record<string, React.CSSProperties> = {
   btn: { background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', whiteSpace: 'nowrap' },
   resetBtn: { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--muted-fg)', borderRadius: 6, padding: '0.4rem 0.9rem', cursor: 'pointer', whiteSpace: 'nowrap' },
   tableContainer: {
+    position: 'relative',
     maxHeight: 'calc(100vh - 450px)',
     overflowY: 'auto' as const,
     borderRadius: 10,
     border: '1px solid var(--border)',
     background: 'var(--table-row-bg)',
   },
-  table: { background: 'var(--table-row-bg)', borderRadius: 10, border: '1px solid var(--border)', overflow: 'hidden' },
+  table: { background: 'var(--table-row-bg)', borderRadius: 10, border: '1px solid var(--border)' },
   theader: {
     display: 'flex', gap: '1rem', padding: '0.6rem 1rem',
     background: 'var(--table-head-bg)', color: 'var(--muted-fg)', fontSize: '0.73rem', fontWeight: 700, textTransform: 'uppercase',
     position: 'sticky' as const,
     top: 0,
     zIndex: 10,
+  },
+  headerCell: {
+    position: 'relative',
+    display: 'inline-flex',
+    alignItems: 'center',
+    flexShrink: 0,
+    paddingRight: '0.55rem',
+  },
+  resizeHandle: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    width: 8,
+    height: '100%',
+    cursor: 'col-resize',
+    opacity: 0.45,
+    borderRight: '1px solid color-mix(in srgb, var(--border) 70%, transparent)',
   },
   row: {
     display: 'flex', gap: '1rem', padding: '0.5rem 1rem',
