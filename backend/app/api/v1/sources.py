@@ -178,6 +178,8 @@ async def tail_source(
     def _build_journald_tail_command() -> list[str]:
         cfg = source.config_json or {}
         command = ["journalctl", "--no-pager", "--output=short-iso"]
+        if cfg.get("boot_only") is True:
+            command.append("-b")
         unit = cfg.get("unit")
         if isinstance(unit, str) and unit.strip():
             command.extend(["-u", unit.strip()])

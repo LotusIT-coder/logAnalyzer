@@ -186,7 +186,10 @@ class TestSourcesCRUD:
         assert items[0]["parse_error_count"] >= 1
 
     async def test_source_test_supports_real_journald_source(self, client: AsyncClient, monkeypatch):
+        captured = {}
+
         def fake_run(*args, **kwargs):
+            captured["args"] = args
             return subprocess.CompletedProcess(args=args, returncode=0, stdout='{"MESSAGE":"ok"}\n', stderr='')
 
         monkeypatch.setattr(source_service.subprocess, "run", fake_run)
@@ -205,6 +208,7 @@ class TestSourcesCRUD:
         body = tested.json()
         assert body["ok"] is True
         assert "journalctl accessible" in (body.get("details") or "")
+        assert "-b" in captured["args"][0]
 
 
 async def test_resolve_source_path_uses_alternate_config_path(tmp_path):

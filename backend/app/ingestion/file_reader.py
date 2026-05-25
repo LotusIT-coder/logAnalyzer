@@ -302,6 +302,8 @@ def _map_journald_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
 def _build_journalctl_command(source: Source, after_cursor: Optional[str] = None) -> list[str]:
     cfg = source.config_json or {}
     command = ["journalctl", "--no-pager", "--output=json"]
+    if cfg.get("boot_only") is True:
+        command.append("-b")
     unit = cfg.get("unit")
     if isinstance(unit, str) and unit.strip():
         command.extend(["-u", unit.strip()])

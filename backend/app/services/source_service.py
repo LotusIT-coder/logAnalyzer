@@ -73,6 +73,8 @@ def test_source(source: Source) -> tuple[bool, str]:
     if source.type == "journald" and not get_source_config_path(source):
         cfg = source.config_json or {}
         command = ["journalctl", "--no-pager", "--output=json", "-n", "1"]
+        if cfg.get("boot_only") is True:
+            command.append("-b")
         unit = cfg.get("unit")
         if isinstance(unit, str) and unit.strip():
             command.extend(["-u", unit.strip()])
