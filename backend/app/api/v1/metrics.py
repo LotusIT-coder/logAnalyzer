@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy import and_, case, func, select, text
+from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.source_filters import resolve_source_ids
@@ -71,7 +71,18 @@ def _metric_ts_expr(to_dt: datetime):
 
 
 def _observed_between(from_dt: datetime, to_dt: datetime):
-    return _metric_ts_expr(to_dt).between(from_dt, to_dt)
+    return or_(
+        and_(
+            Event.timestamp >= from_dt,
+            Event.timestamp <= to_dt,
+        ),
+        and_(
+            Event.created_at.isnot(None),
+            Event.timestamp > to_dt,
+            Event.created_at >= from_dt,
+            Event.created_at <= to_dt,
+        ),
+    )
 
 
 def _default_range() -> tuple[datetime, datetime]:

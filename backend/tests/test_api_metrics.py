@@ -132,6 +132,26 @@ class TestTimeseries:
         assert resp.status_code == 200
         assert sum(point["count"] for point in resp.json()["points"]) == 1
 
+    async def test_recent_window_falls_back_for_future_skewed_timestamp(self, client, db_session):
+        src = _make_source(db_session, name="timeseries-future-skew-src")
+        db_session.add(src)
+        await db_session.flush()
+        now = datetime.now(timezone.utc)
+        _make_event(
+            db_session,
+            src,
+            message="future skewed timeseries event",
+            ts=now + timedelta(hours=2),
+            created_at=now,
+        )
+        await db_session.commit()
+
+        from_ts = (now - timedelta(minutes=1)).isoformat()
+        to_ts = (now + timedelta(seconds=1)).isoformat()
+        resp = await client.get(f"/api/v1/metrics/timeseries?from={from_ts}&to={to_ts}&bucket=1m")
+        assert resp.status_code == 200
+        assert sum(point["count"] for point in resp.json()["points"]) == 1
+
 
 # ---------------------------------------------------------------------------
 # /metrics/top-errors
@@ -238,6 +258,28 @@ class TestTopServices:
         assert resp.status_code == 200
         items = {item["service"]: item["count"] for item in resp.json()["items"]}
         assert "late-service" not in items
+
+    async def test_top_services_recent_window_falls_back_for_future_skewed_timestamp(self, client, db_session):
+        src = _make_source(db_session, name="svc-future-skew-src")
+        db_session.add(src)
+        await db_session.flush()
+        now = datetime.now(timezone.utc)
+        _make_event(
+            db_session,
+            src,
+            service="future-service",
+            message="future skewed service event",
+            ts=now + timedelta(hours=2),
+            created_at=now,
+        )
+        await db_session.commit()
+
+        from_ts = (now - timedelta(minutes=1)).isoformat()
+        to_ts = (now + timedelta(seconds=1)).isoformat()
+        resp = await client.get("/api/v1/metrics/top-services", params={"from": from_ts, "to": to_ts})
+        assert resp.status_code == 200
+        items = {item["service"]: item["count"] for item in resp.json()["items"]}
+        assert items["future-service"] == 1
 
 
 # ---------------------------------------------------------------------------
