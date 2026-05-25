@@ -58,6 +58,13 @@ function parseSeverityCsv(value: string) {
     .filter(Boolean)
 }
 
+function areSameSeveritySelection(a: string[], b: string[]) {
+  if (a.length !== b.length) return false
+  const aSorted = [...a].sort()
+  const bSorted = [...b].sort()
+  return aSorted.every((value, index) => value === bSorted[index])
+}
+
 function normalizeProvider(value: string) {
   const lowered = value.trim().toLowerCase()
   if (lowered === 'postgres' || lowered === 'elastic') return lowered
@@ -551,7 +558,12 @@ export default function EventsPage() {
   const [sourcePathsCsv, setSourcePathsCsv] = useState(() => getInitialFilterValue(searchParams, 'source_paths'))
   const [fromTime, setFromTime] = useState(() => getInitialFilterValue(searchParams, 'from'))
   const [toTime, setToTime] = useState(() => getInitialFilterValue(searchParams, 'to'))
-  const [selectedSeverities, setSelectedSeverities] = useState<string[]>(() => parseSeverityCsv(getInitialFilterValue(searchParams, 'severity')))
+  const [selectedSeverities, setSelectedSeverities] = useState<string[]>(() => {
+    const fromUrl = parseSeverityCsv(getInitialFilterValue(searchParams, 'severity'))
+    if (fromUrl.length > 0) return fromUrl
+    return globalFilter.severities
+  })
+  const selectedSeveritiesRef = useRef<string[]>(selectedSeverities)
   const [provider, setProvider] = useState(() => normalizeProvider(getInitialFilterValue(searchParams, 'provider')))
   const [host, setHost] = useState(() => getInitialFilterValue(searchParams, 'host'))
   const [service, setService] = useState(() => getInitialFilterValue(searchParams, 'service'))
@@ -798,6 +810,25 @@ export default function EventsPage() {
 
   const selectedSeveritiesCsv = selectedSeverities.join(',')
 
+  useEffect(() => {
+    selectedSeveritiesRef.current = selectedSeverities
+  }, [selectedSeverities])
+
+  useEffect(() => {
+    if (areSameSeveritySelection(globalFilter.severities, selectedSeveritiesRef.current)) return
+    setSelectedSeverities(globalFilter.severities)
+  }, [globalFilter.severities])
+
+  useEffect(() => {
+    if (areSameSeveritySelection(globalFilter.severities, selectedSeverities)) return
+    setGlobalFilter({
+      sourceIds: globalFilter.sourceIds,
+      sourcePaths: globalFilter.sourcePaths,
+      rangeHours: globalFilter.rangeHours,
+      severities: selectedSeverities,
+    })
+  }, [globalFilter, selectedSeverities, setGlobalFilter])
+
   // Apply global rangeHours when no explicit from/to is set.
   // Keep key inputs stable; the actual live window is resolved in queryFn per fetch.
   const rangeHours = globalFilter.rangeHours
@@ -845,6 +876,7 @@ export default function EventsPage() {
       sourceIds: globalFilter.sourceIds,
       sourcePaths: globalFilter.sourcePaths,
       rangeHours: nextRangeHours,
+      severities: globalFilter.severities,
     })
     // Clear any explicit from/to so the preset takes effect immediately.
     setFromTime('')
@@ -1071,7 +1103,7 @@ export default function EventsPage() {
     setService('')
     setSearch('')
     setSearchInput('')
-    setGlobalFilter({ sourceIds: [], sourcePaths: [], rangeHours: globalFilter.rangeHours })
+    setGlobalFilter({ sourceIds: [], sourcePaths: [], rangeHours: globalFilter.rangeHours, severities: [] })
     setSelectedSources([])
     setCustomSources([])
   }
@@ -1080,7 +1112,7 @@ export default function EventsPage() {
     setSelectedSources(nextSelected)
     const nextSourceIds = nextSelected.filter(s => s.kind === 'configured').map(s => s.id.replace('source:', ''))
     const nextSourcePaths = nextSelected.filter(s => s.kind === 'preset' || s.kind === 'custom').map(s => s.path)
-    setGlobalFilter({ sourceIds: nextSourceIds, sourcePaths: nextSourcePaths, rangeHours: globalFilter.rangeHours })
+    setGlobalFilter({ sourceIds: nextSourceIds, sourcePaths: nextSourcePaths, rangeHours: globalFilter.rangeHours, severities: globalFilter.severities })
     setSourceId('')
     setSourceIdsCsv('')
     setSourcePathsCsv('')

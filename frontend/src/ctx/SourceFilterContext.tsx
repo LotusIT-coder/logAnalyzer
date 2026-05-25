@@ -24,6 +24,7 @@ function normalizeFilter(candidate: GlobalSourceFilter): GlobalSourceFilter {
     sourceIds: [...new Set(candidate.sourceIds ?? [])],
     sourcePaths: [...new Set(candidate.sourcePaths ?? [])],
     rangeHours: Number.isFinite(candidate.rangeHours) ? candidate.rangeHours : 0,
+    severities: [...new Set((candidate.severities ?? []).map(level => String(level).toLowerCase()).filter(Boolean))],
   }
 }
 
@@ -69,11 +70,7 @@ export function SourceFilterProvider({ children }: { children: React.ReactNode }
   const [customSources, setCustomSources] = useState<SourceOption[]>(() => readStoredJson(CUSTOM_SOURCES_STORAGE_KEY, []))
 
   const setFilter = useCallback((next: GlobalSourceFilter) => {
-    setFilterState({
-      sourceIds: [...new Set(next.sourceIds)],
-      sourcePaths: [...new Set(next.sourcePaths)],
-      rangeHours: next.rangeHours,
-    })
+    setFilterState(normalizeFilter(next))
   }, [])
 
   const clearFilter = useCallback(() => {

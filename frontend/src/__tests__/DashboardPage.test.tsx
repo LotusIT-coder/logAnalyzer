@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { vi } from 'vitest'
 
 import DashboardPage from '../pages/DashboardPage'
+import { I18nProvider } from '../ctx/I18nContext'
 import { SourceFilterProvider } from '../ctx/SourceFilterContext'
 
 vi.mock('../lib/requests', () => ({
@@ -10,6 +11,7 @@ vi.mock('../lib/requests', () => ({
   getTopErrors: vi.fn(),
   getTopServices: vi.fn(),
   getErrorRate: vi.fn(),
+  getServerTime: vi.fn(),
   getMitreCoverage: vi.fn(),
   getSocAnalystStatus: vi.fn(),
   setSocAnalystStatus: vi.fn(),
@@ -30,6 +32,7 @@ import {
   getTopErrors,
   getTopServices,
   getErrorRate,
+  getServerTime,
   getSocAnalystStatus,
   getSources,
 } from '../lib/requests'
@@ -38,6 +41,7 @@ const mockGetTimeseries = vi.mocked(getTimeseries)
 const mockGetTopErrors = vi.mocked(getTopErrors)
 const mockGetTopServices = vi.mocked(getTopServices)
 const mockGetErrorRate = vi.mocked(getErrorRate)
+const mockGetServerTime = vi.mocked(getServerTime)
 const mockGetSocAnalystStatus = vi.mocked(getSocAnalystStatus)
 const mockGetSources = vi.mocked(getSources)
 
@@ -52,15 +56,19 @@ function renderDashboard() {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <SourceFilterProvider>
-        <DashboardPage />
-      </SourceFilterProvider>
+      <I18nProvider>
+        <SourceFilterProvider>
+          <DashboardPage />
+        </SourceFilterProvider>
+      </I18nProvider>
     </QueryClientProvider>
   )
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  window.localStorage.clear()
+  window.localStorage.setItem('ui-language', 'de')
   mockGetSources.mockResolvedValue([] as SourceResponse[])
   mockGetTimeseries.mockResolvedValue({
     bucket: '1h',
@@ -77,6 +85,7 @@ beforeEach(() => {
     error_events: 3,
     error_rate: 0.3,
   } satisfies ErrorRateResponse)
+  mockGetServerTime.mockResolvedValue({ now: '2026-05-06T10:00:00Z' })
   mockGetSocAnalystStatus.mockResolvedValue({
     enabled: false,
     running: false,
@@ -90,7 +99,7 @@ describe('DashboardPage', () => {
     renderDashboard()
 
     await waitFor(() => {
-      expect(screen.getByText('Bitte eine oder mehrere Log-Quellen auswählen, um Metriken anzuzeigen.')).toBeInTheDocument()
+      expect(screen.getByText('Bitte eine oder mehrere Log-Quellen auswaehlen, um Metriken anzuzeigen.')).toBeInTheDocument()
     })
 
     expect(mockGetTimeseries).not.toHaveBeenCalled()

@@ -3,12 +3,18 @@
  * Verifies state management: filter, selectedSources, customSources, clearFilter.
  */
 import { renderHook, act } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SourceFilterProvider } from '../ctx/SourceFilterContext'
 import { type SourceOption } from '../ctx/SourceFilterContext.shared'
 import { useSourceFilter } from '../ctx/useSourceFilter'
 
 function wrapper({ children }: { children: React.ReactNode }) {
-  return <SourceFilterProvider>{children}</SourceFilterProvider>
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return (
+    <QueryClientProvider client={queryClient}>
+      <SourceFilterProvider>{children}</SourceFilterProvider>
+    </QueryClientProvider>
+  )
 }
 
 const SAMPLE_SOURCE: SourceOption = {
@@ -24,13 +30,14 @@ describe('SourceFilterContext', () => {
     expect(result.current.filter.sourceIds).toEqual([])
     expect(result.current.filter.sourcePaths).toEqual([])
     expect(result.current.filter.rangeHours).toBe(0)
+    expect(result.current.filter.severities).toEqual([])
     expect(result.current.hasFilter).toBe(false)
   })
 
   test('setFilter updates state and hasFilter', () => {
     const { result } = renderHook(() => useSourceFilter(), { wrapper })
     act(() => {
-      result.current.setFilter({ sourceIds: ['abc'], sourcePaths: [], rangeHours: 24 })
+      result.current.setFilter({ sourceIds: ['abc'], sourcePaths: [], rangeHours: 24, severities: [] })
     })
     expect(result.current.filter.sourceIds).toEqual(['abc'])
     expect(result.current.filter.rangeHours).toBe(24)
@@ -40,7 +47,7 @@ describe('SourceFilterContext', () => {
   test('setFilter deduplicates sourceIds', () => {
     const { result } = renderHook(() => useSourceFilter(), { wrapper })
     act(() => {
-      result.current.setFilter({ sourceIds: ['x', 'x', 'y'], sourcePaths: [], rangeHours: 0 })
+      result.current.setFilter({ sourceIds: ['x', 'x', 'y'], sourcePaths: [], rangeHours: 0, severities: [] })
     })
     expect(result.current.filter.sourceIds).toEqual(['x', 'y'])
   })
@@ -66,7 +73,7 @@ describe('SourceFilterContext', () => {
   test('clearFilter resets everything', () => {
     const { result } = renderHook(() => useSourceFilter(), { wrapper })
     act(() => {
-      result.current.setFilter({ sourceIds: ['abc'], sourcePaths: ['/var/log/syslog'], rangeHours: 12 })
+      result.current.setFilter({ sourceIds: ['abc'], sourcePaths: ['/var/log/syslog'], rangeHours: 12, severities: [] })
       result.current.setSelectedSources([SAMPLE_SOURCE])
     })
     act(() => {
@@ -75,6 +82,7 @@ describe('SourceFilterContext', () => {
     expect(result.current.filter.sourceIds).toEqual([])
     expect(result.current.filter.sourcePaths).toEqual([])
     expect(result.current.filter.rangeHours).toBe(0)
+    expect(result.current.filter.severities).toEqual([])
     expect(result.current.selectedSources).toEqual([])
     expect(result.current.hasFilter).toBe(false)
   })
@@ -82,7 +90,7 @@ describe('SourceFilterContext', () => {
   test('hasFilter is false when only rangeHours set (no sources)', () => {
     const { result } = renderHook(() => useSourceFilter(), { wrapper })
     act(() => {
-      result.current.setFilter({ sourceIds: [], sourcePaths: [], rangeHours: 6 })
+      result.current.setFilter({ sourceIds: [], sourcePaths: [], rangeHours: 6, severities: [] })
     })
     expect(result.current.hasFilter).toBe(false)
   })
@@ -90,7 +98,7 @@ describe('SourceFilterContext', () => {
   test('hasFilter is true when sourcePaths is set', () => {
     const { result } = renderHook(() => useSourceFilter(), { wrapper })
     act(() => {
-      result.current.setFilter({ sourceIds: [], sourcePaths: ['/var/log/syslog'], rangeHours: 0 })
+      result.current.setFilter({ sourceIds: [], sourcePaths: ['/var/log/syslog'], rangeHours: 0, severities: [] })
     })
     expect(result.current.hasFilter).toBe(true)
   })

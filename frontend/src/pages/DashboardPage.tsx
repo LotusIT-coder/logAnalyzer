@@ -171,6 +171,13 @@ function formatMetaValue(value: unknown) {
   }
 }
 
+function areSameSeveritySelection(a: string[], b: string[]) {
+  if (a.length !== b.length) return false
+  const aSorted = [...a].sort()
+  const bSorted = [...b].sort()
+  return aSorted.every((value, index) => value === bSorted[index])
+}
+
 function getEventObservedAt(event: EventResponse) {
   return event.created_at ?? event.timestamp
 }
@@ -235,7 +242,9 @@ export default function DashboardPage() {
   const [socToggleError, setSocToggleError] = useState<string | null>(null)
   const [manualRefreshing, setManualRefreshing] = useState(false)
   const [uploadResult, setUploadResult] = useState<UploadResultState | null>(null)
-  const [topErrorsSeverities, setTopErrorsSeverities] = useState<string[]>(['error', 'critical'])
+  const [topErrorsSeverities, setTopErrorsSeverities] = useState<string[]>(() => (
+    filter.severities.length > 0 ? filter.severities : ['error', 'critical']
+  ))
   const [topErrorDetail, setTopErrorDetail] = useState<TopErrorDetailTarget | null>(null)
   const [mitreDetail, setMitreDetail] = useState<MitreTechniqueDetailTarget | null>(null)
   const [timeseriesDetail, setTimeseriesDetail] = useState<TimeseriesDetailTarget | null>(null)
@@ -247,6 +256,7 @@ export default function DashboardPage() {
   // Live-Tick: zwingt activeTimeRange.to auf 'jetzt' und triggert via queryKey
   // Refetches in allen relevanten Dashboard-Queries.
   const [refreshTick, setRefreshTick] = useState(0)
+  const hasSeenExplicitGlobalSeveritiesRef = useRef(filter.severities.length > 0)
 
   useEffect(() => {
     const tickMs = resolveBaseTickMs(autoRefreshProfile)
@@ -280,7 +290,28 @@ export default function DashboardPage() {
     window.localStorage.setItem(CHART_BUCKET_MODE_KEY, chartBucketMode)
   }, [chartBucketMode])
 
-  function syncGlobalFilter(nextSelectedSources: SourceOption[], nextRangeHours = rangeHours) {
+  useEffect(() => {
+    if (filter.severities.length > 0) {
+      hasSeenExplicitGlobalSeveritiesRef.current = true
+    }
+    if (!hasSeenExplicitGlobalSeveritiesRef.current && filter.severities.length === 0) {
+      return
+    }
+    if (areSameSeveritySelection(filter.severities, topErrorsSeverities)) return
+    setTopErrorsSeverities(filter.severities)
+  }, [filter.severities, topErrorsSeverities])
+
+  function updateTopErrorsSeverities(nextSeverities: string[]) {
+    setTopErrorsSeverities(nextSeverities)
+    setGlobalSourceFilter({
+      sourceIds: filter.sourceIds,
+      sourcePaths: filter.sourcePaths,
+      rangeHours: filter.rangeHours,
+      severities: nextSeverities,
+    })
+  }
+
+  function syncGlobalFilter(nextSelectedSources: SourceOption[], nextRangeHours = rangeHours, nextSeverities = topErrorsSeverities) {
     const nextSelectedSourceIds = nextSelectedSources
       .filter(source => source.kind === 'configured')
       .map(source => source.id.replace('source:', ''))
@@ -292,6 +323,7 @@ export default function DashboardPage() {
       sourceIds: nextSelectedSourceIds,
       sourcePaths: nextSelectedSourcePaths,
       rangeHours: nextRangeHours,
+      severities: nextSeverities,
     })
   }
 
@@ -813,7 +845,7 @@ export default function DashboardPage() {
                           const newSevers = isSelected
                             ? topErrorsSeverities.filter(s => s !== sev)
                             : [...topErrorsSeverities, sev]
-                          setTopErrorsSeverities(newSevers)
+                          updateTopErrorsSeverities(newSevers)
                         }}
                         style={{
                           padding: '0.35rem 0.6rem',
