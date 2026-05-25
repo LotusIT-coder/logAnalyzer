@@ -78,6 +78,11 @@ def _is_delimiter_only_line(line: str) -> bool:
     return all(ch in {"|", "-", "="} for ch in stripped)
 
 
+def _sanitize_text_for_db(text: str) -> str:
+    """Replace NUL bytes with a visible escape so PostgreSQL text inserts stay valid."""
+    return text.replace("\x00", r"\0")
+
+
 def _ordered_candidate_profiles(line: str, profiles: List[ParserProfile]) -> List[ParserProfile]:
     stripped = line.lstrip()
     is_json_like = stripped.startswith("{") and stripped.endswith("}")
@@ -344,7 +349,7 @@ async def _ingest_live_journald_source(session: AsyncSession, source: Source) ->
     evt_batch: list[dict] = []
 
     for line in stdout.decode("utf-8", errors="replace").splitlines():
-        stripped = line.strip()
+        stripped = _sanitize_text_for_db(line.strip())
         if not stripped:
             continue
         try:
@@ -667,7 +672,7 @@ async def ingest_source(session: AsyncSession, source: Source) -> dict:
                 raw_line = fh.readline()
                 if not raw_line:
                     break  # EOF
-                stripped = raw_line.rstrip("\n")
+                stripped = _sanitize_text_for_db(raw_line.rstrip("\n"))
                 if not stripped:
                     new_cursor = fh.tell()
                     continue

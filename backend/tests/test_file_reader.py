@@ -60,6 +60,31 @@ class TestSyslogHeaderParsing:
 
 @pytest.mark.asyncio
 class TestSpecializedSourceIngestion:
+    async def test_file_source_replaces_nul_bytes_before_db_insert(self, db_session, tmp_path):
+        log_path = tmp_path / "nul-byte.log"
+        log_path.write_text("prefix\x00suffix\n", encoding="utf-8")
+
+        source = Source(
+            name="nul-byte-source",
+            type="file",
+            config_json={"path": str(log_path)},
+            enabled=True,
+        )
+        db_session.add(source)
+        await db_session.flush()
+
+        stats = await ingest_source(db_session, source)
+
+        assert stats["events_created"] == 1
+
+        event_result = await db_session.execute(select(Event).where(Event.source_id == source.id))
+        event = event_result.scalar_one()
+        assert event.message == r"prefix\0suffix"
+
+        raw_result = await db_session.execute(select(file_reader.RawLog).where(file_reader.RawLog.source_id == source.id))
+        raw_logs = list(raw_result.scalars().all())
+        assert any(raw.raw_line == r"prefix\0suffix" for raw in raw_logs)
+
     async def test_file_source_aggregates_java_stacktrace_into_single_event(self, db_session, tmp_path):
         log_path = tmp_path / "app-error.log"
         log_path.write_text(
