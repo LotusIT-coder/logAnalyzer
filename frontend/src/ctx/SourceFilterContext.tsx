@@ -20,11 +20,20 @@ function readStoredJson<T>(key: string, fallback: T): T {
 }
 
 function normalizeFilter(candidate: GlobalSourceFilter): GlobalSourceFilter {
+  const manualFrom = typeof candidate.manualFrom === 'string' && candidate.manualFrom.trim().length > 0
+    ? candidate.manualFrom
+    : undefined
+  const manualTo = typeof candidate.manualTo === 'string' && candidate.manualTo.trim().length > 0
+    ? candidate.manualTo
+    : undefined
+
   return {
     sourceIds: [...new Set(candidate.sourceIds ?? [])],
     sourcePaths: [...new Set(candidate.sourcePaths ?? [])],
-    rangeHours: Number.isFinite(candidate.rangeHours) ? candidate.rangeHours : 0,
+    rangeHours: Number.isFinite(candidate.rangeHours) && candidate.rangeHours > 0 ? candidate.rangeHours : EMPTY_FILTER.rangeHours,
     severities: [...new Set((candidate.severities ?? []).map(level => String(level).toLowerCase()).filter(Boolean))],
+    manualFrom,
+    manualTo,
   }
 }
 

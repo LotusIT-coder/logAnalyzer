@@ -12,6 +12,8 @@ export interface GlobalSourceFilter {
   sourcePaths: string[]
   rangeHours: number
   severities: string[]
+  manualFrom?: string
+  manualTo?: string
 }
 
 export interface SourceFilterCtx {
@@ -25,7 +27,7 @@ export interface SourceFilterCtx {
   setCustomSources: (value: SourceOption[] | ((prev: SourceOption[]) => SourceOption[])) => void
 }
 
-export const EMPTY_FILTER: GlobalSourceFilter = { sourceIds: [], sourcePaths: [], rangeHours: 0, severities: [] }
+export const EMPTY_FILTER: GlobalSourceFilter = { sourceIds: [], sourcePaths: [], rangeHours: 24, severities: [] }
 
 export const SourceFilterContext = createContext<SourceFilterCtx>({
   filter: EMPTY_FILTER,

@@ -85,7 +85,7 @@ beforeEach(() => {
     error_events: 3,
     error_rate: 0.3,
   } satisfies ErrorRateResponse)
-  mockGetServerTime.mockResolvedValue({ now: '2026-05-06T10:00:00Z' })
+  mockGetServerTime.mockResolvedValue({ timestamp: '2026-05-06T10:00:00Z', unix_ms: 1778061600000 })
   mockGetSocAnalystStatus.mockResolvedValue({
     enabled: false,
     running: false,

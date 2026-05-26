@@ -44,7 +44,9 @@ _TIMESERIES_PYTHON_LIMIT = 200_000
 _ROLLUP_BUCKET_SECONDS = 15 * 60
 _ROLLUP_MIN_RANGE = timedelta(hours=24)
 _ROLLUP_REFRESH_HORIZON = timedelta(hours=6)
+_ROLLUP_ON_DEMAND_BACKFILL_MAX_RANGE = timedelta(days=30)
 _METRICS_QUERY_TIMEOUT_MS = 15_000
+_ROLLUP_QUERY_TIMEOUT_MS = 60_000
 _ROLLUP_REFRESH_TIMEOUT_MS = 90_000
 _VOLUME_CHECK_TIMEOUT_MS = 25_000
 _DATE_BIN_ORIGIN_SQL = text("'1970-01-01 00:00:00+00'::timestamptz")
@@ -81,6 +83,21 @@ def _observed_between(from_dt: datetime, to_dt: datetime):
             Event.timestamp > to_dt,
             Event.created_at >= from_dt,
             Event.created_at <= to_dt,
+        ),
+    )
+
+
+def _observed_in_half_open_window(from_dt: datetime, to_dt: datetime):
+    return or_(
+        and_(
+            Event.timestamp >= from_dt,
+            Event.timestamp < to_dt,
+        ),
+        and_(
+            Event.created_at.isnot(None),
+            Event.timestamp >= to_dt,
+            Event.created_at >= from_dt,
+            Event.created_at < to_dt,
         ),
     )
 
@@ -187,8 +204,7 @@ async def _refresh_rollup_15m(
             func.now().label("updated_at"),
         )
         .where(
-            observed_ts >= aligned_from,
-            observed_ts < aligned_to,
+            _observed_in_half_open_window(aligned_from, aligned_to),
             Event.source_id.in_(resolved_source_ids),
         )
         .group_by(Event.source_id, text("bucket_start"))
@@ -223,14 +239,13 @@ async def _query_raw_timeseries_slice(
     stmt = (
         select(bucket_expr, func.count().label("count"))
         .where(
-            observed_ts >= from_dt,
-            observed_ts < to_dt,
+            _observed_in_half_open_window(from_dt, to_dt),
             Event.source_id.in_(resolved_source_ids),
         )
         .group_by(text("bucket"))
         .order_by(text("bucket"))
     )
-    result = await _execute_with_timeout(session, stmt, timeout_ms=_METRICS_QUERY_TIMEOUT_MS)
+    result = await _execute_with_timeout(session, stmt, timeout_ms=_ROLLUP_QUERY_TIMEOUT_MS)
     return {
         row._mapping["bucket"]: int(row._mapping["count"] or 0)
         for row in result
@@ -251,24 +266,39 @@ async def _query_rollup_timeseries(
     merged: dict[datetime, int] = {}
     inner_from = _ceil_bucket(from_dt, _ROLLUP_BUCKET_SECONDS)
     inner_to = _floor_bucket(to_dt, _ROLLUP_BUCKET_SECONDS)
+    rollup_from = inner_to
+
+    if inner_from < inner_to:
+        rollup_from = await _rollup_coverage_start(session, inner_from, inner_to, resolved_source_ids)
 
     head = await _query_raw_timeseries_slice(session, from_dt, min(to_dt, inner_from), bucket_seconds, resolved_source_ids)
     for bucket_ts, count in head.items():
         merged[bucket_ts] = merged.get(bucket_ts, 0) + count
 
-    if inner_from < inner_to:
+    if inner_from < min(inner_to, rollup_from):
+        prefix = await _query_raw_timeseries_slice(
+            session,
+            inner_from,
+            min(inner_to, rollup_from),
+            bucket_seconds,
+            resolved_source_ids,
+        )
+        for bucket_ts, count in prefix.items():
+            merged[bucket_ts] = merged.get(bucket_ts, 0) + count
+
+    if rollup_from < inner_to:
         rollup_bucket_expr = _bucket_expr(EventTimeseriesRollup.bucket_start, bucket_seconds).label("bucket")
         rollup_stmt = (
             select(rollup_bucket_expr, func.sum(EventTimeseriesRollup.total_count).label("count"))
             .where(
-                EventTimeseriesRollup.bucket_start >= inner_from,
+                EventTimeseriesRollup.bucket_start >= rollup_from,
                 EventTimeseriesRollup.bucket_start < inner_to,
                 EventTimeseriesRollup.source_id.in_(resolved_source_ids),
             )
             .group_by(text("bucket"))
             .order_by(text("bucket"))
         )
-        rollup_result = await _execute_with_timeout(session, rollup_stmt, timeout_ms=_METRICS_QUERY_TIMEOUT_MS)
+        rollup_result = await _execute_with_timeout(session, rollup_stmt, timeout_ms=_ROLLUP_QUERY_TIMEOUT_MS)
         for row in rollup_result:
             bucket_ts = row._mapping["bucket"]
             merged[bucket_ts] = merged.get(bucket_ts, 0) + int(row._mapping["count"] or 0)
@@ -295,14 +325,60 @@ async def _query_raw_stats_slice(
             func.count(Event.id).filter(Event.severity.in_(_ERROR_SEVERITIES)).label("errors"),
         )
         .where(
-            observed_ts >= from_dt,
-            observed_ts < to_dt,
+            _observed_in_half_open_window(from_dt, to_dt),
             Event.source_id.in_(resolved_source_ids),
         )
     )
     result = await _execute_with_timeout(session, stmt, timeout_ms=_METRICS_QUERY_TIMEOUT_MS)
     row = result.one()
     return int(row.total or 0), int(row.errors or 0)
+
+
+async def _rollup_coverage_start(
+    session: AsyncSession,
+    inner_from: datetime,
+    inner_to: datetime,
+    resolved_source_ids: list[str],
+) -> datetime:
+    if inner_from >= inner_to or not resolved_source_ids:
+        return inner_to
+
+    stmt = (
+        select(
+            EventTimeseriesRollup.source_id,
+            func.min(EventTimeseriesRollup.bucket_start).label("first_bucket"),
+        )
+        .where(
+            EventTimeseriesRollup.bucket_start >= inner_from,
+            EventTimeseriesRollup.bucket_start < inner_to,
+            EventTimeseriesRollup.source_id.in_(resolved_source_ids),
+        )
+        .group_by(EventTimeseriesRollup.source_id)
+    )
+    result = await _execute_with_timeout(session, stmt, timeout_ms=_METRICS_QUERY_TIMEOUT_MS)
+    first_buckets = {
+        row._mapping["source_id"]: row._mapping["first_bucket"]
+        for row in result
+    }
+    if len(first_buckets) < len(resolved_source_ids):
+        return inner_to
+
+    return max(first_buckets.values())
+
+async def _ensure_rollup_coverage(
+    session: AsyncSession,
+    inner_from: datetime,
+    inner_to: datetime,
+    resolved_source_ids: list[str],
+) -> datetime:
+    coverage_start = await _rollup_coverage_start(session, inner_from, inner_to, resolved_source_ids)
+    if (
+        coverage_start > inner_from
+        and (inner_to - inner_from) <= _ROLLUP_ON_DEMAND_BACKFILL_MAX_RANGE
+    ):
+        await _refresh_rollup_15m(session, inner_from, inner_to, resolved_source_ids)
+        return inner_from
+    return coverage_start
 
 
 async def _query_rollup_error_rate_stats(
@@ -320,24 +396,38 @@ async def _query_rollup_error_rate_stats(
 
     inner_from = _ceil_bucket(from_dt, _ROLLUP_BUCKET_SECONDS)
     inner_to = _floor_bucket(to_dt, _ROLLUP_BUCKET_SECONDS)
+    rollup_from = inner_to
+
+    if inner_from < inner_to:
+        rollup_from = await _rollup_coverage_start(session, inner_from, inner_to, resolved_source_ids)
 
     head_total, head_errors = await _query_raw_stats_slice(session, from_dt, min(to_dt, inner_from), resolved_source_ids)
     total_events += head_total
     error_events += head_errors
 
-    if inner_from < inner_to:
+    if inner_from < min(inner_to, rollup_from):
+        prefix_total, prefix_errors = await _query_raw_stats_slice(
+            session,
+            inner_from,
+            min(inner_to, rollup_from),
+            resolved_source_ids,
+        )
+        total_events += prefix_total
+        error_events += prefix_errors
+
+    if rollup_from < inner_to:
         rollup_stmt = (
             select(
                 func.coalesce(func.sum(EventTimeseriesRollup.total_count), 0).label("total"),
                 func.coalesce(func.sum(EventTimeseriesRollup.error_count), 0).label("errors"),
             )
             .where(
-                EventTimeseriesRollup.bucket_start >= inner_from,
+                EventTimeseriesRollup.bucket_start >= rollup_from,
                 EventTimeseriesRollup.bucket_start < inner_to,
                 EventTimeseriesRollup.source_id.in_(resolved_source_ids),
             )
         )
-        rollup_result = await _execute_with_timeout(session, rollup_stmt, timeout_ms=_METRICS_QUERY_TIMEOUT_MS)
+        rollup_result = await _execute_with_timeout(session, rollup_stmt, timeout_ms=_ROLLUP_QUERY_TIMEOUT_MS)
         row = rollup_result.one()
         total_events += int(row.total or 0)
         error_events += int(row.errors or 0)
@@ -363,22 +453,37 @@ async def _query_rollup_volume_check(
     total_events = 0
     inner_from = _ceil_bucket(from_dt, _ROLLUP_BUCKET_SECONDS)
     inner_to = _floor_bucket(to_dt, _ROLLUP_BUCKET_SECONDS)
+    rollup_from = inner_to
+
+    if inner_from < inner_to:
+        rollup_from = await _rollup_coverage_start(session, inner_from, inner_to, resolved_source_ids)
 
     head_total, _ = await _query_raw_stats_slice(session, from_dt, min(to_dt, inner_from), resolved_source_ids)
     total_events += head_total
     if total_events > threshold:
         return threshold + 1, True
 
-    if inner_from < inner_to:
+    if inner_from < min(inner_to, rollup_from):
+        prefix_total, _ = await _query_raw_stats_slice(
+            session,
+            inner_from,
+            min(inner_to, rollup_from),
+            resolved_source_ids,
+        )
+        total_events += prefix_total
+        if total_events > threshold:
+            return threshold + 1, True
+
+    if rollup_from < inner_to:
         rollup_stmt = (
             select(func.coalesce(func.sum(EventTimeseriesRollup.total_count), 0).label("total"))
             .where(
-                EventTimeseriesRollup.bucket_start >= inner_from,
+                EventTimeseriesRollup.bucket_start >= rollup_from,
                 EventTimeseriesRollup.bucket_start < inner_to,
                 EventTimeseriesRollup.source_id.in_(resolved_source_ids),
             )
         )
-        rollup_result = await _execute_with_timeout(session, rollup_stmt, timeout_ms=_METRICS_QUERY_TIMEOUT_MS)
+        rollup_result = await _execute_with_timeout(session, rollup_stmt, timeout_ms=_ROLLUP_QUERY_TIMEOUT_MS)
         row = rollup_result.one()
         total_events += int(row.total or 0)
         if total_events > threshold:

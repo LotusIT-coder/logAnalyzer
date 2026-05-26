@@ -39,15 +39,16 @@ function ContextBadge({ attachedContext }: { attachedContext: { title: string; s
 
   const hasFilter = filter.sourceIds.length > 0 || filter.sourcePaths.length > 0
 
-  const rangeLabel = filter.rangeHours === 0
-    ? t('ai.range.all')
+  const hasManualRange = Boolean(filter.manualFrom || filter.manualTo)
+
+  const rangeLabel = hasManualRange
+    ? t('ai.range.manual')
     : filter.rangeHours < 1
       ? t('ai.range.lastMinutes', { count: Math.round(filter.rangeHours * 60) })
     : filter.rangeHours === 1 ? t('ai.range.lastHour')
     : filter.rangeHours <= 6 ? t('ai.range.lastHours', { count: filter.rangeHours })
     : filter.rangeHours <= 24 ? t('ai.range.last24h')
-    : filter.rangeHours <= 168 ? t('ai.range.last7d')
-    : t('ai.range.last30d')
+    : t('ai.range.last7d')
 
   if (!hasFilter && !attachedContext) {
     return (

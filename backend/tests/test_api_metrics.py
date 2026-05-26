@@ -12,7 +12,8 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.models import Event, Source
+from app.api.v1 import metrics as metrics_api
+from app.domain.models import Event, EventTimeseriesRollup, Source
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +356,122 @@ class TestErrorRate:
         data = resp.json()
         assert data["total_events"] == 1
         assert data["error_events"] == 0
+
+
+class TestRollupCoverage:
+    async def test_rollup_coverage_start_uses_latest_source_min_bucket(self, db_session):
+        src_a = _make_source(db_session, name="rollup-coverage-a")
+        src_b = _make_source(db_session, name="rollup-coverage-b")
+        db_session.add_all([src_a, src_b])
+        await db_session.flush()
+
+        inner_from = datetime(2026, 5, 18, 0, 0, tzinfo=timezone.utc)
+        inner_to = datetime(2026, 5, 19, 0, 0, tzinfo=timezone.utc)
+
+        db_session.add(
+            EventTimeseriesRollup(
+                source_id=src_a.id,
+                bucket_start=inner_from,
+                total_count=10,
+                error_count=1,
+            )
+        )
+        await db_session.flush()
+        db_session.add(
+            EventTimeseriesRollup(
+                source_id=src_b.id,
+                bucket_start=inner_from + timedelta(hours=6),
+                total_count=4,
+                error_count=0,
+            )
+        )
+        await db_session.commit()
+
+        coverage_start = await metrics_api._rollup_coverage_start(
+            db_session,
+            inner_from,
+            inner_to,
+            [src_a.id, src_b.id],
+        )
+
+        assert coverage_start.replace(tzinfo=timezone.utc) == inner_from + timedelta(hours=6)
+
+    async def test_rollup_coverage_start_falls_back_to_raw_when_source_has_no_rollup(self, db_session):
+        src_a = _make_source(db_session, name="rollup-coverage-present")
+        src_b = _make_source(db_session, name="rollup-coverage-missing")
+        db_session.add_all([src_a, src_b])
+        await db_session.flush()
+
+        inner_from = datetime(2026, 5, 18, 0, 0, tzinfo=timezone.utc)
+        inner_to = datetime(2026, 5, 19, 0, 0, tzinfo=timezone.utc)
+
+        db_session.add(
+            EventTimeseriesRollup(
+                source_id=src_a.id,
+                bucket_start=inner_from,
+                total_count=10,
+                error_count=1,
+            )
+        )
+        await db_session.commit()
+
+        coverage_start = await metrics_api._rollup_coverage_start(
+            db_session,
+            inner_from,
+            inner_to,
+            [src_a.id, src_b.id],
+        )
+
+        assert coverage_start.replace(tzinfo=timezone.utc) == inner_to
+
+    async def test_ensure_rollup_coverage_backfills_missing_prefix_within_limit(self, monkeypatch):
+        inner_from = datetime(2026, 5, 18, 0, 0, tzinfo=timezone.utc)
+        inner_to = datetime(2026, 5, 19, 0, 0, tzinfo=timezone.utc)
+        refresh_calls: list[tuple[datetime, datetime, list[str]]] = []
+        coverage_values = iter([inner_from + timedelta(hours=6), inner_from])
+
+        async def fake_coverage_start(_session, _inner_from, _inner_to, _resolved_source_ids):
+            return next(coverage_values)
+
+        async def fake_refresh(_session, from_dt, to_dt, resolved_source_ids):
+            refresh_calls.append((from_dt, to_dt, resolved_source_ids))
+
+        monkeypatch.setattr(metrics_api, "_rollup_coverage_start", fake_coverage_start)
+        monkeypatch.setattr(metrics_api, "_refresh_rollup_15m", fake_refresh)
+
+        coverage_start = await metrics_api._ensure_rollup_coverage(
+            None,
+            inner_from,
+            inner_to,
+            ["source-a"],
+        )
+
+        assert coverage_start == inner_from
+        assert refresh_calls == [(inner_from, inner_to, ["source-a"])]
+
+    async def test_ensure_rollup_coverage_skips_backfill_over_limit(self, monkeypatch):
+        inner_from = datetime(2026, 4, 1, 0, 0, tzinfo=timezone.utc)
+        inner_to = datetime(2026, 5, 5, 0, 0, tzinfo=timezone.utc)
+        refresh_calls: list[tuple[datetime, datetime, list[str]]] = []
+
+        async def fake_coverage_start(_session, _inner_from, _inner_to, _resolved_source_ids):
+            return inner_from + timedelta(days=1)
+
+        async def fake_refresh(_session, from_dt, to_dt, resolved_source_ids):
+            refresh_calls.append((from_dt, to_dt, resolved_source_ids))
+
+        monkeypatch.setattr(metrics_api, "_rollup_coverage_start", fake_coverage_start)
+        monkeypatch.setattr(metrics_api, "_refresh_rollup_15m", fake_refresh)
+
+        coverage_start = await metrics_api._ensure_rollup_coverage(
+            None,
+            inner_from,
+            inner_to,
+            ["source-a"],
+        )
+
+        assert coverage_start == inner_from + timedelta(days=1)
+        assert refresh_calls == []
 
 
 # ---------------------------------------------------------------------------

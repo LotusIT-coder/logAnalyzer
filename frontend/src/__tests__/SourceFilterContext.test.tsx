@@ -29,7 +29,7 @@ describe('SourceFilterContext', () => {
     const { result } = renderHook(() => useSourceFilter(), { wrapper })
     expect(result.current.filter.sourceIds).toEqual([])
     expect(result.current.filter.sourcePaths).toEqual([])
-    expect(result.current.filter.rangeHours).toBe(0)
+    expect(result.current.filter.rangeHours).toBe(24)
     expect(result.current.filter.severities).toEqual([])
     expect(result.current.hasFilter).toBe(false)
   })
@@ -47,7 +47,7 @@ describe('SourceFilterContext', () => {
   test('setFilter deduplicates sourceIds', () => {
     const { result } = renderHook(() => useSourceFilter(), { wrapper })
     act(() => {
-      result.current.setFilter({ sourceIds: ['x', 'x', 'y'], sourcePaths: [], rangeHours: 0, severities: [] })
+      result.current.setFilter({ sourceIds: ['x', 'x', 'y'], sourcePaths: [], rangeHours: 1, severities: [] })
     })
     expect(result.current.filter.sourceIds).toEqual(['x', 'y'])
   })
@@ -81,7 +81,7 @@ describe('SourceFilterContext', () => {
     })
     expect(result.current.filter.sourceIds).toEqual([])
     expect(result.current.filter.sourcePaths).toEqual([])
-    expect(result.current.filter.rangeHours).toBe(0)
+    expect(result.current.filter.rangeHours).toBe(24)
     expect(result.current.filter.severities).toEqual([])
     expect(result.current.selectedSources).toEqual([])
     expect(result.current.hasFilter).toBe(false)
@@ -98,7 +98,7 @@ describe('SourceFilterContext', () => {
   test('hasFilter is true when sourcePaths is set', () => {
     const { result } = renderHook(() => useSourceFilter(), { wrapper })
     act(() => {
-      result.current.setFilter({ sourceIds: [], sourcePaths: ['/var/log/syslog'], rangeHours: 0, severities: [] })
+      result.current.setFilter({ sourceIds: [], sourcePaths: ['/var/log/syslog'], rangeHours: 24, severities: [] })
     })
     expect(result.current.hasFilter).toBe(true)
   })

@@ -31,7 +31,7 @@ import { useEscapeToClose } from '../lib/useEscapeToClose'
 import HelpTip from '../components/HelpTip'
 import { FormattedMessage } from '../components/FormattedMessage'
 import { SourcePicker, type UploadResultState, isUploadError } from '../components/SourcePicker'
-import { TimeRangePicker, TIME_PRESETS } from '../components/TimeRangePicker'
+import { TimeRangePicker, TIME_PRESETS, type ManualTimeRange } from '../components/TimeRangePicker'
 import { type SourceOption } from '../ctx/SourceFilterContext.shared'
 import { useSourceFilter } from '../ctx/useSourceFilter'
 import { useI18n } from '../ctx/I18nContext'
@@ -67,7 +67,7 @@ function chartBucketToMs(bucket: string) {
 }
 
 function resolveAutoRefreshMs(totalEvents: number, rangeHours: number, targetEventsPerRefresh: number) {
-  const windowHours = rangeHours > 0 ? rangeHours : 24
+  const windowHours = rangeHours
   const clampedTotalEvents = Math.max(totalEvents, 0)
   const clampedTargetEvents = Math.max(targetEventsPerRefresh, 1)
 
@@ -80,7 +80,7 @@ function resolveAutoRefreshMs(totalEvents: number, rangeHours: number, targetEve
 }
 
 function resolveChartBucket(rangeHours: number) {
-  if (rangeHours === 0 || rangeHours > 168) return '1h'
+  if (rangeHours > 168) return '1h'
   if (rangeHours > 24) return '15m'
   if (rangeHours > 6) return '1m'
   if (rangeHours > 1) return '15s'
@@ -137,10 +137,16 @@ function formatAgeLabel(updatedAt?: number) {
   return `vor ${hours} h`
 }
 
-function buildTimeRange(rangeHours: number, serverTimeOffset: number = 0): TimeRange | undefined {
-  if (rangeHours === 0) return undefined
+function buildTimeRange(rangeHours: number, serverTimeOffset: number = 0, manualRange?: ManualTimeRange): TimeRange | undefined {
+  const nowIso = new Date(Date.now() + serverTimeOffset).toISOString()
+  if (manualRange && (manualRange.from || manualRange.to)) {
+    return {
+      from: manualRange.from ?? '1970-01-01T00:00:00.000Z',
+      to: manualRange.to ?? nowIso,
+    }
+  }
   // Use server-synchronized time to fix time-skew bugs
-  const now = new Date(Date.now() + serverTimeOffset)
+  const now = new Date(nowIso)
   return {
     from: new Date(now.getTime() - rangeHours * 3600_000).toISOString(),
     to: now.toISOString(),
@@ -215,6 +221,13 @@ export default function DashboardPage() {
   // Single source of truth: global filter.rangeHours. Changes from any tab
   // propagate via context so this page stays in sync.
   const rangeHours = filter.rangeHours
+  const manualTimeRange = useMemo<ManualTimeRange | undefined>(() => {
+    if (!filter.manualFrom && !filter.manualTo) return undefined
+    return {
+      ...(filter.manualFrom ? { from: filter.manualFrom } : {}),
+      ...(filter.manualTo ? { to: filter.manualTo } : {}),
+    }
+  }, [filter.manualFrom, filter.manualTo])
   const [chartBucketMode, setChartBucketMode] = useState(() => {
     if (typeof window === 'undefined') return 'auto'
     const storedMode = window.localStorage.getItem(CHART_BUCKET_MODE_KEY)
@@ -308,10 +321,17 @@ export default function DashboardPage() {
       sourcePaths: filter.sourcePaths,
       rangeHours: filter.rangeHours,
       severities: nextSeverities,
+      manualFrom: filter.manualFrom,
+      manualTo: filter.manualTo,
     })
   }
 
-  function syncGlobalFilter(nextSelectedSources: SourceOption[], nextRangeHours = rangeHours, nextSeverities = topErrorsSeverities) {
+  function syncGlobalFilter(
+    nextSelectedSources: SourceOption[],
+    nextRangeHours = rangeHours,
+    nextSeverities = topErrorsSeverities,
+    nextManualRange: ManualTimeRange | undefined = manualTimeRange,
+  ) {
     const nextSelectedSourceIds = nextSelectedSources
       .filter(source => source.kind === 'configured')
       .map(source => source.id.replace('source:', ''))
@@ -324,6 +344,8 @@ export default function DashboardPage() {
       sourcePaths: nextSelectedSourcePaths,
       rangeHours: nextRangeHours,
       severities: nextSeverities,
+      manualFrom: nextManualRange?.from,
+      manualTo: nextManualRange?.to,
     })
   }
 
@@ -358,7 +380,7 @@ export default function DashboardPage() {
   }
 
   async function handleRangeHoursChange(nextRangeHours: number) {
-    if (nextRangeHours === rangeHours) return
+    if (nextRangeHours === rangeHours && !manualTimeRange) return
 
     const nextSelectedSourceIds = selectedSources
       .filter(source => source.kind === 'configured')
@@ -393,12 +415,48 @@ export default function DashboardPage() {
       setRangeCheckBusy(false)
     }
 
-    if (nextRangeHours === 0) {
-      const typedConfirmation = window.prompt('Sicherheitsabfrage: Tippe ALLE, um den kompletten Datenbestand zu laden.')
-      if (typedConfirmation !== 'ALLE') return
+    syncGlobalFilter(selectedSources, nextRangeHours, topErrorsSeverities, undefined)
+  }
+
+  async function handleManualRangeChange(nextManualRange?: ManualTimeRange) {
+    if (!nextManualRange || (!nextManualRange.from && !nextManualRange.to)) {
+      syncGlobalFilter(selectedSources, rangeHours, topErrorsSeverities, undefined)
+      return
     }
 
-    syncGlobalFilter(selectedSources, nextRangeHours)
+    const nextSelectedSourceIds = selectedSources
+      .filter(source => source.kind === 'configured')
+      .map(source => source.id.replace('source:', ''))
+    const nextSelectedSourcePaths = selectedSources
+      .filter(source => source.kind === 'preset' || source.kind === 'custom')
+      .map(source => source.path)
+
+    const nextMetricsFilter: MetricsFilter | undefined = selectedSources.length > 0
+      ? { sourceIds: nextSelectedSourceIds, sourcePaths: nextSelectedSourcePaths }
+      : undefined
+
+    setRangeCheckBusy(true)
+    try {
+      const volume = await getEventVolumeCheck(
+        buildTimeRange(rangeHours, serverTimeOffset, nextManualRange),
+        nextMetricsFilter,
+        RANGE_CONFIRMATION_THRESHOLD,
+      )
+      if (volume.requires_confirmation) {
+        const checkedEvents = volume.checked_events.toLocaleString('de-DE')
+        const thresholdLabel = volume.threshold.toLocaleString('de-DE')
+        const confirmed = window.confirm(
+          `Der manuelle Zeitraum umfasst mindestens ${checkedEvents} Eintraege und liegt damit ueber der Grenze von ${thresholdLabel}.\n\nTrotzdem laden?`,
+        )
+        if (!confirmed) return
+      }
+    } catch (error) {
+      console.warn('Volume check failed, continuing without confirmation guard:', error)
+    } finally {
+      setRangeCheckBusy(false)
+    }
+
+    syncGlobalFilter(selectedSources, rangeHours, topErrorsSeverities, nextManualRange)
   }
 
   function removeCustomSource(id: string) {
@@ -416,12 +474,12 @@ export default function DashboardPage() {
     ? { sourceIds: selectedSourceIds, sourcePaths: selectedSourcePaths, severities: topErrorsSeverities }
     : undefined
   const activeTimeRange = useMemo(
-    () => buildTimeRange(rangeHours, serverTimeOffset),
+    () => buildTimeRange(rangeHours, serverTimeOffset, manualTimeRange),
     // refreshTick ist Absicht: zwingt eine neue 'to=now'-Berechnung bei jedem Tick,
     // damit die queryKeys der nachgelagerten Queries wechseln und Live-Refetches
     // mit aktuellem Zeitfenster ausgeloest werden.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rangeHours, refreshTick, serverTimeOffset],
+    [rangeHours, refreshTick, serverTimeOffset, manualTimeRange],
   )
 
   const sourceKey = `${selectedSourceIds.join('|')}::${selectedSourcePaths.join('|')}`
@@ -429,8 +487,8 @@ export default function DashboardPage() {
   const chartBucket = chartBucketMode === 'auto' ? resolveChartBucket(rangeHours) : chartBucketMode
 
   const rate = useQuery({
-    queryKey: ['error-rate', rangeHours, sourceKey],
-    queryFn: () => getErrorRate(buildTimeRange(rangeHours, serverTimeOffset), metricsFilter),
+    queryKey: ['error-rate', rangeHours, manualTimeRange?.from ?? '', manualTimeRange?.to ?? '', sourceKey],
+    queryFn: () => getErrorRate(buildTimeRange(rangeHours, serverTimeOffset, manualTimeRange), metricsFilter),
     enabled: selectedSources.length > 0,
     staleTime: 0,
     placeholderData: keepPreviousData,
@@ -446,9 +504,9 @@ export default function DashboardPage() {
   })
 
   const ts = useQuery({
-    queryKey: ['timeseries', rangeHours, sourceKey, chartBucketMode, chartBucket, autoRefreshTargetEvents],
+    queryKey: ['timeseries', rangeHours, manualTimeRange?.from ?? '', manualTimeRange?.to ?? '', sourceKey, chartBucketMode, chartBucket, autoRefreshTargetEvents],
     queryFn: () => {
-      const timeRange = buildTimeRange(rangeHours, serverTimeOffset)
+      const timeRange = buildTimeRange(rangeHours, serverTimeOffset, manualTimeRange)
       return getTimeseries({
         bucket: chartBucket,
         ...(timeRange ? { from: timeRange.from, to: timeRange.to } : {}),
@@ -476,7 +534,7 @@ export default function DashboardPage() {
     : Math.max(chartBucketToMs(chartBucket), 15_000)
 
   const errs = useQuery({
-    queryKey: ['top-errors', rangeHours, sourceKey, topErrorsSeverities.join(','), activeTimeRange?.to ?? ''],
+    queryKey: ['top-errors', rangeHours, manualTimeRange?.from ?? '', manualTimeRange?.to ?? '', sourceKey, topErrorsSeverities.join(','), activeTimeRange?.to ?? ''],
     queryFn: () => getTopErrors(activeTimeRange, metricsFilter),
     enabled: selectedSources.length > 0 && topErrorsSeverities.length > 0,
     staleTime: 0,
@@ -485,7 +543,7 @@ export default function DashboardPage() {
     refetchIntervalInBackground: true,
   })
   const svcs = useQuery({
-    queryKey: ['top-services', rangeHours, sourceKey, activeTimeRange?.to ?? ''],
+    queryKey: ['top-services', rangeHours, manualTimeRange?.from ?? '', manualTimeRange?.to ?? '', sourceKey, activeTimeRange?.to ?? ''],
     queryFn: () => getTopServices(activeTimeRange, metricsFilter),
     enabled: selectedSources.length > 0,
     staleTime: 0,
@@ -618,14 +676,17 @@ export default function DashboardPage() {
           <h2 style={styles.h2}>Dashboard</h2>
           <HelpTip content="Hier waehlst du Quellen und Zeitfenster fuer den aktuellen Analysekontext. Alle Metriken auf dieser Seite reagieren direkt auf diese Auswahl." ariaLabel="Dashboard erklaeren" />
         </div>
-        <button onClick={() => void refetchAll()} disabled={isAnyQueryLoading || manualRefreshing} style={styles.refBtn}>
-          {(isAnyQueryLoading || manualRefreshing) ? 'Aktualisiere...' : 'Aktualisieren'}
-        </button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', flex: '1 1 auto' }}>
           <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
-            <TimeRangePicker value={rangeHours} onChange={handleRangeHoursChange} disabled={rangeCheckBusy} />
+            <TimeRangePicker
+              value={rangeHours}
+              onChange={handleRangeHoursChange}
+              manualRange={manualTimeRange}
+              onManualRangeChange={handleManualRangeChange}
+              disabled={rangeCheckBusy}
+            />
             {/* Loading text for volume check removed: check is now always fast */}
-            <HelpTip content="Das Zeitfenster steuert, wie weit die Metriken in die Vergangenheit schauen. 'Alle' verwendet den kompletten verfuegbaren Datenbestand." ariaLabel="Zeitfenster erklaeren" />
+            <HelpTip content="Das Zeitfenster steuert, wie weit die Metriken in die Vergangenheit schauen." ariaLabel="Zeitfenster erklaeren" />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
             <span style={{ color: 'var(--muted-fg)', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Raster</span>
@@ -714,6 +775,9 @@ export default function DashboardPage() {
             {ingesting && <span style={{ fontSize: '0.82rem', color: 'var(--warning-fg)', whiteSpace: 'nowrap' }}>⏳ Analysiere…</span>}
           </div>
         </div>
+        <button onClick={() => void refetchAll()} disabled={isAnyQueryLoading || manualRefreshing} style={{ ...styles.refBtn, marginLeft: 'auto' }}>
+          {(isAnyQueryLoading || manualRefreshing) ? 'Aktualisiere...' : 'Aktualisieren'}
+        </button>
       </div>
 
       {socToggleError && (
@@ -801,7 +865,7 @@ export default function DashboardPage() {
             <HelpTip content="Diese Bereiche erklaeren, wie sich das Volumen ueber die Zeit verteilt und welche Fehlermeldungen oder Services besonders haeufig auftreten." ariaLabel="Dashboard-Aufschluesselungen erklaeren" />
           </div>
           <div style={styles.grid}>
-            <Panel title={`Events / ${chartBucketMode === 'auto' ? `Auto (${chartBucket})` : chartBucket} (${rangeHours === 0 ? 'alle' : TIME_PRESETS.find(p => p.hours === rangeHours)?.label ?? ''})`} help="Die Linie zeigt, wie viele Events pro Zeitintervall eingegangen sind. Hoehere Ausschlaege markieren Lastspitzen oder Stoerungsphasen.">
+            <Panel title={`Events / ${chartBucketMode === 'auto' ? `Auto (${chartBucket})` : chartBucket} (${manualTimeRange ? 'manuell' : TIME_PRESETS.find(p => p.hours === rangeHours)?.label ?? ''})`} help="Die Linie zeigt, wie viele Events pro Zeitintervall eingegangen sind. Hoehere Ausschlaege markieren Lastspitzen oder Stoerungsphasen.">
               {ts.data ? (
                 <MiniBar
                   points={ts.data.points}

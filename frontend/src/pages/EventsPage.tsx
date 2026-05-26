@@ -7,7 +7,7 @@ import { getApiBase } from '../lib/api'
 import HelpTip from '../components/HelpTip'
 import GlobalSourceFilterNotice from '../components/GlobalSourceFilterNotice'
 import { SourcePicker, type UploadResultState, isUploadError } from '../components/SourcePicker'
-import { TimeRangePicker } from '../components/TimeRangePicker'
+import { TimeRangePicker, type ManualTimeRange } from '../components/TimeRangePicker'
 import { type SourceOption } from '../ctx/SourceFilterContext.shared'
 import { useSourceFilter } from '../ctx/useSourceFilter'
 import { AnsiText, FormattedMessage } from '../components/FormattedMessage'
@@ -826,12 +826,21 @@ export default function EventsPage() {
       sourcePaths: globalFilter.sourcePaths,
       rangeHours: globalFilter.rangeHours,
       severities: selectedSeverities,
+      manualFrom: globalFilter.manualFrom,
+      manualTo: globalFilter.manualTo,
     })
   }, [globalFilter, selectedSeverities, setGlobalFilter])
 
   // Apply global rangeHours when no explicit from/to is set.
   // Keep key inputs stable; the actual live window is resolved in queryFn per fetch.
   const rangeHours = globalFilter.rangeHours
+  const globalManualRange = useMemo<ManualTimeRange | undefined>(() => {
+    if (!globalFilter.manualFrom && !globalFilter.manualTo) return undefined
+    return {
+      ...(globalFilter.manualFrom ? { from: globalFilter.manualFrom } : {}),
+      ...(globalFilter.manualTo ? { to: globalFilter.manualTo } : {}),
+    }
+  }, [globalFilter.manualFrom, globalFilter.manualTo])
   const effectiveWindow = useMemo(() => {
     if (fromTime || toTime) {
       return {
@@ -840,8 +849,11 @@ export default function EventsPage() {
       }
     }
 
-    if (rangeHours <= 0) {
-      return { from: undefined, to: undefined }
+    if (globalManualRange?.from || globalManualRange?.to) {
+      return {
+        from: globalManualRange.from,
+        to: globalManualRange.to,
+      }
     }
 
     // Use server-synchronized time instead of client Date.now()
@@ -850,7 +862,7 @@ export default function EventsPage() {
       from: new Date(now - rangeHours * 3600_000).toISOString(),
       to: new Date(now).toISOString(),
     }
-  }, [fromTime, toTime, rangeHours, serverTimeOffset])
+  }, [fromTime, toTime, globalManualRange, rangeHours, serverTimeOffset])
   const effectiveFrom = effectiveWindow.from
   const effectiveTo = effectiveWindow.to
 
@@ -861,7 +873,12 @@ export default function EventsPage() {
         to: normalizeExplicitTo(toTime),
       }
     }
-    if (rangeHours <= 0) return { from: undefined, to: undefined }
+    if (globalManualRange?.from || globalManualRange?.to) {
+      return {
+        from: globalManualRange.from,
+        to: globalManualRange.to,
+      }
+    }
     // Use server-synchronized time instead of client Date.now()
     // to ensure events don't fall outside filter ranges due to time skew
     const now = Date.now() + serverTimeOffset
@@ -877,8 +894,23 @@ export default function EventsPage() {
       sourcePaths: globalFilter.sourcePaths,
       rangeHours: nextRangeHours,
       severities: globalFilter.severities,
+      manualFrom: undefined,
+      manualTo: undefined,
     })
     // Clear any explicit from/to so the preset takes effect immediately.
+    setFromTime('')
+    setToTime('')
+  }
+
+  function handleManualRangeChange(nextRange?: ManualTimeRange) {
+    setGlobalFilter({
+      sourceIds: globalFilter.sourceIds,
+      sourcePaths: globalFilter.sourcePaths,
+      rangeHours: globalFilter.rangeHours,
+      severities: globalFilter.severities,
+      manualFrom: nextRange?.from,
+      manualTo: nextRange?.to,
+    })
     setFromTime('')
     setToTime('')
   }
@@ -913,10 +945,16 @@ export default function EventsPage() {
   // Infinite query: loads events page by page
   const hasAnySourceSelection = Boolean(sourceId || effectiveSourceIdsCsv || effectiveSourcePathsCsv)
   const eventsQueryEnabled = !REQUIRE_SOURCE_SELECTION || hasAnySourceSelection
-  const canUseEventStream = eventsQueryEnabled && !provider && !fromTime && !toTime && refreshIntervalMs > 0
+  const canUseEventStream = eventsQueryEnabled
+    && !provider
+    && !fromTime
+    && !toTime
+    && !globalManualRange?.from
+    && !globalManualRange?.to
+    && refreshIntervalMs > 0
   const streamEnabled = canUseEventStream && isPageVisible
   const { data, isLoading, isFetched, hasNextPage, fetchNextPage, isFetchingNextPage, isFetching, refetch } = useInfiniteQuery({
-    queryKey: ['events', sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, fromTime, toTime, rangeHours, selectedSeveritiesCsv, provider, host, service, search],
+    queryKey: ['events', sourceId, effectiveSourceIdsCsv, effectiveSourcePathsCsv, fromTime, toTime, globalManualRange?.from ?? '', globalManualRange?.to ?? '', rangeHours, selectedSeveritiesCsv, provider, host, service, search],
     queryFn: ({ pageParam }: { pageParam?: string }) => {
       const queryWindow = resolveQueryWindow()
       return getEvents({
@@ -1103,7 +1141,7 @@ export default function EventsPage() {
     setService('')
     setSearch('')
     setSearchInput('')
-    setGlobalFilter({ sourceIds: [], sourcePaths: [], rangeHours: globalFilter.rangeHours, severities: [] })
+    setGlobalFilter({ sourceIds: [], sourcePaths: [], rangeHours: globalFilter.rangeHours, severities: [], manualFrom: globalFilter.manualFrom, manualTo: globalFilter.manualTo })
     setSelectedSources([])
     setCustomSources([])
   }
@@ -1112,7 +1150,7 @@ export default function EventsPage() {
     setSelectedSources(nextSelected)
     const nextSourceIds = nextSelected.filter(s => s.kind === 'configured').map(s => s.id.replace('source:', ''))
     const nextSourcePaths = nextSelected.filter(s => s.kind === 'preset' || s.kind === 'custom').map(s => s.path)
-    setGlobalFilter({ sourceIds: nextSourceIds, sourcePaths: nextSourcePaths, rangeHours: globalFilter.rangeHours, severities: globalFilter.severities })
+    setGlobalFilter({ sourceIds: nextSourceIds, sourcePaths: nextSourcePaths, rangeHours: globalFilter.rangeHours, severities: globalFilter.severities, manualFrom: globalFilter.manualFrom, manualTo: globalFilter.manualTo })
     setSourceId('')
     setSourceIdsCsv('')
     setSourcePathsCsv('')
@@ -1221,7 +1259,12 @@ export default function EventsPage() {
           <HelpTip content="The event list refreshes automatically with the selected interval and current filters. 'Off' pauses live updates." ariaLabel="Explain live refresh" />
         </div>
 
-        <TimeRangePicker value={rangeHours} onChange={handleRangeHoursChange} />
+        <TimeRangePicker
+          value={rangeHours}
+          onChange={handleRangeHoursChange}
+          manualRange={globalManualRange}
+          onManualRangeChange={handleManualRangeChange}
+        />
         <HelpTip content="The time window is shared by Events and Dashboard. Changes stay synchronized between tabs." ariaLabel="Explain time window" />
 
         <details style={styles.severityDropdown}>
