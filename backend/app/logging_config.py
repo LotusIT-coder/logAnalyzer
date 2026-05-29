@@ -6,11 +6,12 @@ import os
 import sys
 import uuid
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 import structlog
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 
 def configure_logging(json_logs: bool = True, log_dir: str | None = None) -> None:
@@ -26,6 +27,10 @@ def configure_logging(json_logs: bool = True, log_dir: str | None = None) -> Non
 
     # Ensure log directory exists if specified
     if log_dir:
+        log_path = Path(log_dir)
+        if not log_path.is_absolute():
+            log_path = Path(__file__).resolve().parents[1] / log_path
+        log_dir = str(log_path)
         os.makedirs(log_dir, mode=0o755, exist_ok=True)
         log_file = os.path.join(log_dir, "app.log")
         # Configure file handler with rotation (10MB per file, keep 5 backups)
@@ -66,10 +71,18 @@ def configure_logging(json_logs: bool = True, log_dir: str | None = None) -> Non
     access_logger.addFilter(_AccessLogErrorOnlyFilter())
 
 
-class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """Attaches trace_id to each request and logs method/path/status."""
+class RequestLoggingMiddleware:
+    """Attaches trace_id to each HTTP request and logs method/path/status."""
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive=receive)
         trace_id = str(uuid.uuid4())
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
@@ -83,14 +96,34 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             query_string=query_string,
         )
 
-        response: Response = await call_next(request)
-        response.headers["X-Trace-Id"] = trace_id
+        logged_finished = False
 
-        logger.info(
-            "request_finished",
-            method=request.method,
-            path=request.url.path,
-            query_string=query_string,
-            status_code=response.status_code,
-        )
-        return response
+        async def send_wrapper(message: Message) -> None:
+            nonlocal logged_finished
+
+            if message.get("type") == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers["X-Trace-Id"] = trace_id
+                logger.info(
+                    "request_finished",
+                    method=request.method,
+                    path=request.url.path,
+                    query_string=query_string,
+                    status_code=message.get("status"),
+                )
+                logged_finished = True
+
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception:
+            if not logged_finished:
+                logger.info(
+                    "request_finished",
+                    method=request.method,
+                    path=request.url.path,
+                    query_string=query_string,
+                    status_code=500,
+                )
+            raise

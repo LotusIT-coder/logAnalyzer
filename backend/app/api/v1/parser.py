@@ -15,7 +15,7 @@ from app.schemas.event import ParserTestRequest, ParserTestResponse
 router = APIRouter(prefix="/parser", tags=["Parser"])
 
 
-@router.post("/test", response_model=ParserTestResponse)
+@router.post("/test", response_model=ParserTestResponse, summary="Test parser pattern")
 async def test_parser(
     body: ParserTestRequest,
     session: AsyncSession = Depends(get_db),

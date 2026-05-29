@@ -376,7 +376,7 @@ async def _get_model_settings(
 # GET /ai/models
 # ---------------------------------------------------------------------------
 
-@router.get("/models", response_model=AIModelListResponse)
+@router.get("/models", response_model=AIModelListResponse, summary="List available AI models")
 async def list_models():
     """Proxy Ollama /api/tags to list available local models."""
     try:
@@ -463,7 +463,7 @@ async def _run_window_analysis(
         job_store.set_failed(job_id, str(exc))
 
 
-@router.post("/analyze/window", response_model=AsyncJobAccepted, status_code=202)
+@router.post("/analyze/window", response_model=AsyncJobAccepted, status_code=202, summary="Analyze events in time window")
 async def analyze_window(
     body: AIAnalyzeWindowRequest,
     background_tasks: BackgroundTasks,
@@ -543,7 +543,7 @@ async def _run_incident_analysis(
         job_store.set_failed(job_id, str(exc))
 
 
-@router.post("/analyze/incident/{incident_id}", response_model=AsyncJobAccepted, status_code=202)
+@router.post("/analyze/incident/{incident_id}", response_model=AsyncJobAccepted, status_code=202, summary="Analyze incident with AI")
 async def analyze_incident(
     incident_id: str,
     background_tasks: BackgroundTasks,
@@ -574,7 +574,7 @@ async def analyze_incident(
 # POST /ai/chat
 # ---------------------------------------------------------------------------
 
-@router.post("/chat", response_model=AIChatResponse)
+@router.post("/chat", response_model=AIChatResponse, summary="AI chat")
 async def ai_chat(
     body: AIChatRequest,
     session: AsyncSession = Depends(get_db),
@@ -654,7 +654,7 @@ async def _run_chat_async(
         job_store.set_failed(job_id, str(exc))
 
 
-@router.post("/chat/async", response_model=AsyncJobAccepted, status_code=202)
+@router.post("/chat/async", response_model=AsyncJobAccepted, status_code=202, summary="AI chat (async)")
 async def ai_chat_async(
     body: AIChatAsyncRequest,
     background_tasks: BackgroundTasks,
@@ -695,7 +695,7 @@ async def ai_chat_async(
 # GET /ai/jobs/{id}
 # ---------------------------------------------------------------------------
 
-@router.get("/jobs/{job_id}", response_model=AIJob)
+@router.get("/jobs/{job_id}", response_model=AIJob, summary="Get AI job status")
 async def get_job(job_id: str):
     job = job_store.get_job(job_id)
     if job is None:

@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { vi } from 'vitest'
 
 import UploadPage from '../pages/UploadPage'
+import { I18nProvider } from '../ctx/I18nContext'
 
 vi.mock('../lib/requests', () => ({
   getAIModels: vi.fn(),
@@ -23,13 +24,16 @@ function renderPage() {
 
   render(
     <QueryClientProvider client={queryClient}>
-      <UploadPage />
+      <I18nProvider>
+        <UploadPage />
+      </I18nProvider>
     </QueryClientProvider>
   )
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  window.localStorage.setItem('ui-language', 'de')
   mockGetAIModels.mockResolvedValue([{ name: 'qwen3.5:9b' }] satisfies AIModelResponse[])
   mockAnalyzeUpload.mockResolvedValue({
     lines_parsed: 10,
@@ -54,7 +58,7 @@ describe('UploadPage', () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [file] } })
 
-    fireEvent.click(await screen.findByRole('button', { name: 'In Quelle importieren' }))
+    fireEvent.click(await screen.findByRole('button', { name: /In Quelle importieren|upload\.importToSource/i }))
 
     await waitFor(() => {
       expect(mockUploadImport).toHaveBeenCalledWith(file, undefined)

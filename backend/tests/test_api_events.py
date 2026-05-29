@@ -170,6 +170,45 @@ class TestEventsAPI:
         assert len(items) == 1
         assert items[0]["message"] == "historical timestamp, fresh ingest"
 
+    async def test_short_time_range_includes_events_by_log_timestamp(self, client: AsyncClient, db_session: AsyncSession):
+        src = await _seed_source(db_session)
+        now = datetime.now(timezone.utc)
+        await _seed_event(
+            db_session,
+            src.id,
+            message="recent log timestamp, older ingest",
+            timestamp=now - timedelta(seconds=30),
+            created_at=now - timedelta(minutes=10),
+        )
+        await db_session.commit()
+
+        from_ts = (now - timedelta(minutes=1)).isoformat()
+        to_ts = now.isoformat()
+        resp = await client.get("/api/v1/events", params={"from": from_ts, "to": to_ts, "source_id": src.id})
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["message"] == "recent log timestamp, older ingest"
+
+    async def test_time_range_deduplicates_events_matching_timestamp_and_created_at(self, client: AsyncClient, db_session: AsyncSession):
+        src = await _seed_source(db_session)
+        now = datetime.now(timezone.utc)
+        await _seed_event(
+            db_session,
+            src.id,
+            message="matches both clocks",
+            timestamp=now - timedelta(seconds=20),
+            created_at=now - timedelta(seconds=10),
+        )
+        await db_session.commit()
+
+        from_ts = (now - timedelta(minutes=1)).isoformat()
+        to_ts = now.isoformat()
+        resp = await client.get("/api/v1/events", params={"from": from_ts, "to": to_ts, "source_id": src.id})
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert [item["message"] for item in items] == ["matches both clocks"]
+
     async def test_events_are_sorted_by_ingest_time_for_recent_views(self, client: AsyncClient, db_session: AsyncSession):
         src = await _seed_source(db_session)
         now = datetime.now(timezone.utc)

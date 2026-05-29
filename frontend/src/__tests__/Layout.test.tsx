@@ -6,18 +6,25 @@ import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import Layout from '../components/Layout'
 import { FeatureFlagsContext } from '../ctx/FeatureFlagsContext.shared'
+import { I18nProvider } from '../ctx/I18nContext'
 
 function renderLayout(initialPath = '/', ollamaAvailable = false) {
   return render(
-    <FeatureFlagsContext.Provider value={{ ollama_available: ollamaAvailable }}>
-      <MemoryRouter initialEntries={[initialPath]}>
-        <Layout />
-      </MemoryRouter>
-    </FeatureFlagsContext.Provider>
+    <I18nProvider>
+      <FeatureFlagsContext.Provider value={{ ollama_available: ollamaAvailable }}>
+        <MemoryRouter initialEntries={[initialPath]}>
+          <Layout />
+        </MemoryRouter>
+      </FeatureFlagsContext.Provider>
+    </I18nProvider>
   )
 }
 
 describe('Layout', () => {
+  beforeEach(() => {
+    window.localStorage.setItem('ui-language', 'de')
+  })
+
   test('renders logo', () => {
     const { container } = renderLayout()
     // Logo is split into "Log" + <span>Analyzer</span> — query by partial text

@@ -106,3 +106,82 @@ async def test_event_bus_stop_with_drain_waits_for_handler_completion():
 
     await bus.stop(drain=True, drain_timeout_seconds=2.0)
     assert completed == 2
+
+
+@pytest.mark.asyncio
+async def test_event_bus_runs_other_handlers_when_one_fails():
+    """A failing handler must not block other subscribers for the same topic."""
+    bus = InMemoryEventBus(
+        workers=1,
+        queue_size=128,
+        max_retry_attempts=0,
+        retry_backoff_seconds=0.0,
+    )
+    good_calls: list[dict] = []
+
+    async def broken_handler(_payload: dict):
+        raise RuntimeError("boom")
+
+    async def good_handler(payload: dict):
+        good_calls.append(payload)
+
+    bus.subscribe("topic.mixed", broken_handler)
+    bus.subscribe("topic.mixed", good_handler)
+
+    await bus.start()
+    try:
+        assert await bus.publish("topic.mixed", {"v": 1}) is True
+        await asyncio.wait_for(bus._queue.join(), timeout=2.0)
+        # Good handler must have received the payload despite the broken one.
+        assert good_calls == [{"v": 1}]
+        stats = bus.get_stats()
+        # Exactly one handler failure recorded; event went to DLQ since
+        # max_retry_attempts=0.
+        assert stats["failed_total"] == 1
+        assert stats["dead_letter_total"] == 1
+    finally:
+        await bus.stop(drain=True)
+
+
+@pytest.mark.asyncio
+async def test_event_bus_retry_only_invokes_failed_handlers():
+    """On retry, already-successful handlers must not be invoked again."""
+    bus = InMemoryEventBus(
+        workers=1,
+        queue_size=128,
+        max_retry_attempts=2,
+        retry_backoff_seconds=0.01,
+    )
+    good_calls = 0
+    flaky_calls = 0
+
+    async def good_handler(_payload: dict):
+        nonlocal good_calls
+        good_calls += 1
+
+    async def flaky_handler(_payload: dict):
+        nonlocal flaky_calls
+        flaky_calls += 1
+        # Fail only on the very first attempt.
+        if flaky_calls < 2:
+            raise RuntimeError("transient")
+
+    bus.subscribe("topic.partial", good_handler)
+    bus.subscribe("topic.partial", flaky_handler)
+
+    await bus.start()
+    try:
+        assert await bus.publish("topic.partial", {"v": 2}) is True
+        await asyncio.wait_for(bus._queue.join(), timeout=2.0)
+        # Good handler was already successful on attempt 1 and must not be
+        # re-invoked on the retry.
+        assert good_calls == 1
+        assert flaky_calls == 2
+        stats = bus.get_stats()
+        assert stats["dead_letter_total"] == 0
+        assert stats["retried_total"] == 1
+        # processed_total counts both the partial first attempt (which still
+        # failed overall) and the successful retry covering the failing handler.
+        assert stats["processed_total"] == 1
+    finally:
+        await bus.stop(drain=True)

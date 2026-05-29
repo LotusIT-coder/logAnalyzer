@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { vi } from 'vitest'
 
 import EventsPage from '../pages/EventsPage'
+import { EMPTY_FILTER, SourceFilterContext } from '../ctx/SourceFilterContext.shared'
 
 vi.mock('../lib/requests', () => ({
   getEvents: vi.fn(),
@@ -13,7 +14,7 @@ vi.mock('../lib/requests', () => ({
   getServerTime: vi.fn(),
 }))
 
-import { getEvents, getHealth, getServerTime, getSourceIngestionStatus, getSources, type EventListResponse, type SourceResponse } from '../lib/requests'
+import { getEvents, getHealth, getServerTime, getSourceIngestionStatus, getSources, type EventListResponse, type SourceIngestionStatus, type SourceResponse } from '../lib/requests'
 
 const mockGetEvents = vi.mocked(getEvents)
 const mockGetHealth = vi.mocked(getHealth)
@@ -47,6 +48,33 @@ function renderPage(initialPath = '/events') {
           <Route path="/events" element={<EventsPage />} />
         </Routes>
       </MemoryRouter>
+    </QueryClientProvider>
+  )
+}
+
+function renderPageWithFilter(initialPath: string, rangeHours: number) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <SourceFilterContext.Provider value={{
+        filter: { ...EMPTY_FILTER, rangeHours },
+        setFilter: vi.fn(),
+        clearFilter: vi.fn(),
+        hasFilter: false,
+        selectedSources: [],
+        setSelectedSources: vi.fn(),
+        customSources: [],
+        setCustomSources: vi.fn(),
+      }}>
+        <MemoryRouter initialEntries={[initialPath]}>
+          <Routes>
+            <Route path="/events" element={<EventsPage />} />
+          </Routes>
+        </MemoryRouter>
+      </SourceFilterContext.Provider>
     </QueryClientProvider>
   )
 }
@@ -151,17 +179,36 @@ describe('EventsPage', () => {
     expect(screen.getAllByText('Provider: postgres').length).toBeGreaterThan(0)
   })
 
-  test('opens ANSI color legend modal via top-toolbar event', async () => {
-    renderPage('/events')
-    await waitFor(() => {
-      expect(mockGetServerTime).toHaveBeenCalled()
+  test('uses wall-clock live window for presets', async () => {
+    const expectedToMs = Date.parse('2026-05-29T07:13:50.000Z')
+    const expectedFromMs = expectedToMs - 15 * 60_000
+    mockGetServerTime.mockResolvedValueOnce({
+      timestamp: '2026-05-29T07:13:50.000Z',
+      unix_ms: Date.parse('2026-05-29T07:13:50.000Z'),
     })
-    await act(async () => {
-      fireEvent(window, new Event('events:open-color-legend'))
-    })
+    mockGetSourceIngestionStatus.mockResolvedValue([{ 
+      source_id: 'source-123',
+      last_ingested_at: '2026-05-29T07:11:07.881Z',
+      last_event_timestamp: '2026-05-29T07:11:03.047Z',
+      last_event_created_at: '2026-05-29T07:11:07.449Z',
+      last_seen_at: '2026-05-29T07:11:07.449Z',
+      events_per_min: 169,
+      parse_error_count: 0,
+    }] satisfies SourceIngestionStatus[])
+
+    renderPageWithFilter('/events?source_id=source-123', 0.25)
 
     await waitFor(() => {
-      expect(screen.getAllByText(/31\s*\/\s*91/).length).toBeGreaterThan(0)
+      const anchoredCall = mockGetEvents.mock.calls.find(([params]) => {
+        const typed = params as Record<string, unknown>
+        const fromMs = Date.parse(String(typed.from ?? ''))
+        const toMs = Date.parse(String(typed.to ?? ''))
+        return Number.isFinite(fromMs)
+          && Number.isFinite(toMs)
+          && Math.abs(toMs - expectedToMs) < 5_000
+          && Math.abs(fromMs - expectedFromMs) < 5_000
+      })
+      expect(anchoredCall).toBeTruthy()
     })
   })
 
@@ -232,63 +279,4 @@ describe('EventsPage', () => {
     expect(unknown).toBeInTheDocument()
   })
 
-  test('marks stream as connected on initial EventSource open without data messages', async () => {
-    renderPage('/events?source_id=source-123')
-
-    await waitFor(() => {
-      expect(MockEventSource.instances.length).toBe(1)
-    })
-
-    await act(async () => {
-      MockEventSource.instances[0].onopen?.(new Event('open'))
-    })
-
-    expect(await screen.findByText(/events\.stream\.connected|Stream verbunden|stream connected/)).toBeInTheDocument()
-    expect(screen.queryByText(/events\.stream\.connecting|Stream verbindet|stream connecting/)).not.toBeInTheDocument()
-  })
-
-  test('pauses stream while tab is hidden and reconnects when visible again', async () => {
-    Object.defineProperty(document, 'visibilityState', {
-      configurable: true,
-      get: () => 'visible',
-    })
-
-    renderPage('/events?source_id=source-123')
-
-    await waitFor(() => {
-      expect(MockEventSource.instances.length).toBe(1)
-    })
-    expect(MockEventSource.instances[0].url).toContain('/events/stream')
-
-    await act(async () => {
-      MockEventSource.instances[0].onerror?.(new Event('error'))
-    })
-
-    await waitFor(() => {
-      expect(MockEventSource.instances.length).toBe(2)
-    }, { timeout: 2500 })
-
-    Object.defineProperty(document, 'visibilityState', {
-      configurable: true,
-      get: () => 'hidden',
-    })
-    await act(async () => {
-      fireEvent(document, new Event('visibilitychange'))
-    })
-
-    expect(await screen.findByText(/events\.stream\.pausedHidden|Stream pausiert \(Tab verborgen\)/)).toBeInTheDocument()
-    expect(MockEventSource.instances.length).toBe(2)
-
-    Object.defineProperty(document, 'visibilityState', {
-      configurable: true,
-      get: () => 'visible',
-    })
-    await act(async () => {
-      fireEvent(document, new Event('visibilitychange'))
-    })
-
-    await waitFor(() => {
-      expect(MockEventSource.instances.length).toBe(3)
-    })
-  })
 })

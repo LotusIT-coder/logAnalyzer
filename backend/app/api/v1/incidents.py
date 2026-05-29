@@ -40,7 +40,7 @@ router = APIRouter(prefix="/incidents", tags=["Incidents"])
 _VALID_STATUSES = {"open", "investigating", "resolved", "false_positive", "archived"}
 
 
-@router.get("/mitre-coverage", response_model=MitreCoverageResponse)
+@router.get("/mitre-coverage", response_model=MitreCoverageResponse, summary="MITRE ATT&CK coverage")
 async def get_mitre_coverage(
     session: AsyncSession = Depends(get_db),
 ):
@@ -104,7 +104,7 @@ async def get_mitre_coverage(
     )
 
 
-@router.post("/mitre-coverage/reset", response_model=MitreCoverageResetResponse)
+@router.post("/mitre-coverage/reset", response_model=MitreCoverageResetResponse, summary="Reset MITRE coverage")
 async def reset_mitre_coverage(
     session: AsyncSession = Depends(get_db),
 ):
@@ -242,7 +242,7 @@ async def reset_mitre_coverage(
     )
 
 
-@router.get("", response_model=IncidentListResponse)
+@router.get("", response_model=IncidentListResponse, summary="List incidents")
 async def list_incidents(
     session: AsyncSession = Depends(get_db),
     status_filter: Optional[str] = Query(None, alias="status"),
@@ -280,7 +280,7 @@ async def list_incidents(
     )
 
 
-@router.get("/{incident_id}", response_model=IncidentResponse)
+@router.get("/{incident_id}", response_model=IncidentResponse, summary="Get incident")
 async def get_incident(
     incident_id: str,
     session: AsyncSession = Depends(get_db),
@@ -292,7 +292,7 @@ async def get_incident(
     return IncidentResponse.model_validate(incident)
 
 
-@router.patch("/{incident_id}", response_model=IncidentResponse)
+@router.patch("/{incident_id}", response_model=IncidentResponse, summary="Update incident")
 async def patch_incident(
     incident_id: str,
     body: IncidentPatchRequest,
@@ -323,7 +323,7 @@ async def patch_incident(
     return IncidentResponse.model_validate(incident)
 
 
-@router.post("/{incident_id}/archive", response_model=IncidentResponse)
+@router.post("/{incident_id}/archive", response_model=IncidentResponse, summary="Archive incident")
 async def archive_incident(
     incident_id: str,
     session: AsyncSession = Depends(get_db),
@@ -340,7 +340,7 @@ async def archive_incident(
     return IncidentResponse.model_validate(incident)
 
 
-@router.delete("/{incident_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{incident_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete incident")
 async def delete_incident(
     incident_id: str,
     session: AsyncSession = Depends(get_db),

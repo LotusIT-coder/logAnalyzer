@@ -56,7 +56,7 @@ def _sanitize_filename(name: str) -> str:
     return safe or "upload.log"
 
 
-@router.post("/analyze", response_model=UploadAnalyzeResponse)
+@router.post("/analyze", response_model=UploadAnalyzeResponse, summary="Upload and analyze file")
 async def upload_and_analyze(
     file: UploadFile = File(...),
     model: str = Form(default=_DEFAULT_MODEL),
@@ -117,7 +117,7 @@ async def upload_and_analyze(
     )
 
 
-@router.post("/import", response_model=UploadImportResponse)
+@router.post("/import", response_model=UploadImportResponse, summary="Upload and import file")
 async def upload_and_import(
     file: UploadFile = File(...),
     source_name: Optional[str] = Form(default=None),

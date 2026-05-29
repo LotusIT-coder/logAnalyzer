@@ -6,7 +6,10 @@ import HelpTip from '../components/HelpTip'
 import { getApiErrorMessage } from '../lib/errors'
 import { useDraggableModal } from '../lib/useDraggableModal'
 import { useEscapeToClose } from '../lib/useEscapeToClose'
+import { useI18n } from '../ctx/I18nContext'
 import dayjs from 'dayjs'
+
+type TranslateFn = (key: string, vars?: Record<string, string | number>) => string
 
 type UploadResultState = UploadImportResponse | { error: string }
 type SourceKind = 'file' | 'syslog' | 'journald' | 'docker' | 'filebeat' | 'winlogbeat' | 'elastic_agent'
@@ -27,8 +30,8 @@ function describeSource(source: SourceResponse) {
   return source.config?.path ?? '-'
 }
 
-function formatSourceHealthAge(timestamp?: string | null): string {
-  if (!timestamp) return 'nie'
+function formatSourceHealthAge(timestamp: string | null | undefined, t: TranslateFn): string {
+  if (!timestamp) return t('sources.health.never')
   const seconds = Math.max(0, dayjs().diff(dayjs(timestamp), 'second'))
   if (seconds < 60) return `${seconds}s`
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
@@ -36,22 +39,23 @@ function formatSourceHealthAge(timestamp?: string | null): string {
   return `${Math.floor(seconds / 86400)}d`
 }
 
-function sourceHealthTone(status?: SourceIngestionStatus): { bg: string; fg: string; text: string } {
+function sourceHealthTone(status: SourceIngestionStatus | undefined, t: TranslateFn): { bg: string; fg: string; text: string } {
   if (!status?.last_seen_at) {
-    return { bg: 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))', fg: 'var(--danger-fg)', text: 'keine Events' }
+    return { bg: 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))', fg: 'var(--danger-fg)', text: t('sources.health.noEvents') }
   }
   const ageMs = Date.now() - dayjs(status.last_seen_at).valueOf()
   if (ageMs > 24 * 3600_000) {
-    return { bg: 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))', fg: 'var(--danger-fg)', text: '>24h alt' }
+    return { bg: 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))', fg: 'var(--danger-fg)', text: t('sources.health.stale') }
   }
   if (ageMs > 2 * 3600_000) {
-    return { bg: 'color-mix(in srgb, var(--warning-fg) 16%, var(--surface))', fg: 'var(--warning-fg)', text: 'verzögert' }
+    return { bg: 'color-mix(in srgb, var(--warning-fg) 16%, var(--surface))', fg: 'var(--warning-fg)', text: t('sources.health.delayed') }
   }
-  return { bg: 'color-mix(in srgb, var(--success-fg) 16%, var(--surface))', fg: 'var(--success-fg)', text: 'aktuell' }
+  return { bg: 'color-mix(in srgb, var(--success-fg) 16%, var(--surface))', fg: 'var(--success-fg)', text: t('sources.health.current') }
 }
 
 // ─── Edit Modal ───────────────────────────────────────────────────────────────
 function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse; onClose: () => void; onSaved: () => void }) {
+  const { t } = useI18n()
   const { offset, onHandlePointerDown } = useDraggableModal()
   useEscapeToClose(onClose)
   const [name, setName] = useState(source.name ?? '')
@@ -77,7 +81,7 @@ function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse;
       onSaved()
       onClose()
     } catch (error: unknown) {
-      setError(getApiErrorMessage(error, 'Fehler beim Speichern.'))
+      setError(getApiErrorMessage(error, t('sources.error.save')))
     } finally {
       setSaving(false)
     }
@@ -86,35 +90,35 @@ function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse;
   return (
     <div style={modal.overlay} onClick={onClose}>
       <div style={{ ...modal.box, height: 'auto', maxWidth: 540, padding: '1.5rem', transform: `translate(${offset.x}px, ${offset.y}px)` }} onClick={e => e.stopPropagation()}>
-        <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem', color: 'var(--fg)', cursor: 'grab' }} onPointerDown={onHandlePointerDown}>Quelle bearbeiten</h3>
+        <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem', color: 'var(--fg)', cursor: 'grab' }} onPointerDown={onHandlePointerDown}>{t('sources.edit.title')}</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <div style={styles.field}>
-            <label style={styles.label}>Name</label>
+            <label style={styles.label}>{t('sources.field.name')}</label>
             <input value={name} onChange={e => setName(e.target.value)} style={styles.input} />
           </div>
           {isJournald ? null : (
             <>
               <div style={styles.field}>
-                <label style={styles.label}>Dateipfad</label>
+                <label style={styles.label}>{t('sources.field.path')}</label>
                 <input value={path} onChange={e => setPath(e.target.value)} style={styles.input} />
               </div>
               <label style={styles.inlineCheckbox}>
                 <input type="checkbox" checked={pathRegex} onChange={e => setPathRegex(e.target.checked)} />
-                Dateipfad als Regex behandeln (Dateiname)
+                {t('sources.field.pathRegex')}
               </label>
             </>
           )}
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.88rem', color: 'var(--muted-fg)', cursor: 'pointer' }}>
             <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
-            Aktiv
+            {t('sources.field.enabled')}
           </label>
         </div>
         {error && <div style={{ color: 'var(--danger-fg)', fontSize: '0.82rem', marginTop: '0.5rem' }}>{error}</div>}
         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.25rem' }}>
           <button onClick={handleSave} disabled={saving || !name || (!isJournald && !path)} style={styles.saveBtn}>
-            {saving ? 'Speichere...' : 'Speichern'}
+            {saving ? t('sources.btn.saving') : t('sources.btn.save')}
           </button>
-          <button onClick={onClose} style={modal.ctrlBtn}>Abbrechen</button>
+          <button onClick={onClose} style={modal.ctrlBtn}>{t('sources.btn.cancel')}</button>
         </div>
       </div>
     </div>
@@ -123,15 +127,17 @@ function EditSourceModal({ source, onClose, onSaved }: { source: SourceResponse;
 
 // ─── Live-Tail Modal ──────────────────────────────────────────────────────────
 function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: () => void }) {
+  const { t } = useI18n()
   const { offset, onHandlePointerDown } = useDraggableModal()
   useEscapeToClose(onClose)
-  const [lines, setLines] = useState<string[]>([])
+  const [lines, setLines] = useState<{ seq: number; text: string }[]>([])
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState('')
   const [paused, setPaused] = useState(false)
   const [filter, setFilter] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
   const pausedRef = useRef(false)
+  const seqRef = useRef(0)
 
   useEffect(() => {
     pausedRef.current = paused
@@ -145,25 +151,25 @@ function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: (
     es.onmessage = (e) => {
       if (pausedRef.current) return
       setLines(prev => {
-        const next = [...prev, e.data]
+        const next = [...prev, { seq: seqRef.current++, text: e.data }]
         return next.length > 2000 ? next.slice(-2000) : next
       })
     }
     es.onerror = () => {
-      setError('Verbindung unterbrochen.')
+      setError(t('events.livetail.connectionLost'))
       setConnected(false)
       es.close()
     }
 
     return () => { es.close() }
-  }, [source.id])
+  }, [source.id, t])
 
   useEffect(() => {
     if (!paused) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [lines, paused])
 
   const displayed = filter
-    ? lines.filter(l => l.toLowerCase().includes(filter.toLowerCase()))
+    ? lines.filter(l => l.text.toLowerCase().includes(filter.toLowerCase()))
     : lines
 
   return (
@@ -171,51 +177,51 @@ function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: (
       <div style={{ ...modal.box, transform: `translate(${offset.x}px, ${offset.y}px)` }} onClick={e => e.stopPropagation()}>
         <div style={{ ...modal.header, cursor: 'grab' }} onPointerDown={onHandlePointerDown}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>Live-Tail: {source.name}</span>
+            <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>{t('events.livetail.titleSingle', { name: source.name })}</span>
             <span style={{ ...modal.dot, background: connected ? '#22c55e' : '#ef4444' }} />
-            <span style={{ fontSize: '0.75rem', color: 'var(--muted-fg)' }}>{connected ? 'verbunden' : 'getrennt'}</span>
-            {paused && <span style={{ fontSize: '0.72rem', color: 'var(--warning-fg)', fontWeight: 700 }}>PAUSIERT</span>}
+            <span style={{ fontSize: '0.75rem', color: 'var(--muted-fg)' }}>{connected ? t('events.livetail.connected') : t('events.livetail.disconnected')}</span>
+            {paused && <span style={{ fontSize: '0.72rem', color: 'var(--warning-fg)', fontWeight: 700 }}>{t('events.livetail.paused')}</span>}
             <HelpTip content="Pause stoppt nur den sichtbaren Stream, Leeren entfernt den bisherigen Puffer und der Filter wirkt nur auf die gerade angezeigten Zeilen." ariaLabel="Live-Tail erklaeren" />
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <input
               value={filter}
               onChange={e => setFilter(e.target.value)}
-              placeholder="Zeilen filtern..."
+              placeholder={t('events.livetail.filterLines')}
               style={modal.filterInput}
             />
             <button onClick={() => setPaused(v => !v)} style={modal.ctrlBtn}>
-              {paused ? 'Weiter' : 'Pause'}
+              {paused ? t('events.livetail.resume') : t('events.livetail.pause')}
             </button>
-            <button onClick={() => setLines([])} style={modal.ctrlBtn}>Leeren</button>
-            <button onClick={onClose} style={{ ...modal.ctrlBtn, color: 'var(--danger-fg)' }}>x Schliessen</button>
+            <button onClick={() => setLines([])} style={modal.ctrlBtn}>{t('events.livetail.clear')}</button>
+            <button onClick={onClose} style={{ ...modal.ctrlBtn, color: 'var(--danger-fg)' }}>x {t('events.livetail.close')}</button>
           </div>
         </div>
 
         {error && <div style={{ color: 'var(--danger-fg)', padding: '0.5rem 1rem', fontSize: '0.82rem' }}>{error}</div>}
 
         <div style={modal.log}>
-          {displayed.map((line, i) => (
-            <div key={i} style={{
+          {displayed.map((line) => (
+            <div key={line.seq} style={{
               ...modal.logLine,
-              color: /error|crit|fatal|emerg/i.test(line) ? '#f87171'
-                : /warn/i.test(line) ? '#fbbf24'
-                : /debug/i.test(line) ? '#6366f1'
+              color: /error|crit|fatal|emerg/i.test(line.text) ? '#f87171'
+                : /warn/i.test(line.text) ? '#fbbf24'
+                : /debug/i.test(line.text) ? '#6366f1'
                 : '#d1fae5',
             }}>
-              {line}
+              {line.text}
             </div>
           ))}
           {!displayed.length && (
             <div style={{ color: 'var(--muted-fg)', padding: '1rem' }}>
-              {connected ? 'Warte auf neue Zeilen...' : 'Keine Daten'}
+              {connected ? t('events.livetail.waiting') : t('events.livetail.noData')}
             </div>
           )}
           <div ref={bottomRef} />
         </div>
 
         <div style={modal.footer}>
-          {displayed.length} Zeilen{filter ? ` (gefiltert aus ${lines.length})` : ''}
+          {t('events.livetail.lines', { count: displayed.length })}{filter ? ` ${t('events.livetail.filteredOf', { count: lines.length })}` : ''}
           &nbsp;|&nbsp;{source.config?.path}
         </div>
       </div>
@@ -225,6 +231,7 @@ function LiveTailModal({ source, onClose }: { source: SourceResponse; onClose: (
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function SourcesPage() {
+  const { t } = useI18n()
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({ queryKey: ['sources'], queryFn: getSources })
   const sources: SourceResponse[] = Array.isArray(data) ? data : []
@@ -280,7 +287,7 @@ export default function SourcesPage() {
       setShowNew(false)
       qc.invalidateQueries({ queryKey: ['sources'] })
     } catch (error: unknown) {
-      setUploadResult({ error: getApiErrorMessage(error, 'Upload fehlgeschlagen.') })
+      setUploadResult({ error: getApiErrorMessage(error, t('sources.upload.failed')) })
     } finally {
       setUploading(false)
       if (fileRef.current) fileRef.current.value = ''
@@ -305,31 +312,35 @@ export default function SourcesPage() {
 
       <div style={styles.header}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <h2 style={styles.h2}>Log-Quellen</h2>
-          <HelpTip content="Hier verwaltest du die angebundenen Logdateien. Quellen koennen getestet, live beobachtet, bearbeitet und bei Bedarf entfernt werden." ariaLabel="Log-Quellen erklaeren" />
+          <h2 style={styles.h2}>{t('sources.title')}</h2>
+          <HelpTip content={t('sources.title.help')} ariaLabel={t('sources.title.aria')} />
         </div>
         <button onClick={() => setShowNew(v => !v)} style={styles.addBtn}>
-          {showNew ? 'x Abbrechen' : '+ Neue Quelle'}
+          {showNew ? t('sources.btn.cancelNew') : t('sources.btn.new')}
         </button>
       </div>
 
       <div style={{ ...styles.liveHint, display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
         <span>
-          Live-Ansicht wird pro Quelle gestartet: bei der gewuenschten Quelle auf <strong>Live-Ansicht</strong> klicken.
+          {(() => {
+            const tpl = t('sources.liveHint.text', { linkLabel: '__LINK__' })
+            const [before, after] = tpl.split('__LINK__')
+            return <>{before}<strong>{t('sources.liveHint.link')}</strong>{after}</>
+          })()}
         </span>
-        <HelpTip content="Die Live-Ansicht zeigt neu eintreffende Logzeilen der gewaehlten Datei in Echtzeit. Das ist besonders hilfreich nach Parser-, Ingestion- oder Quellenaenderungen." ariaLabel="Live-Ansicht der Quellen erklaeren" />
+        <HelpTip content={t('sources.liveHint.help')} ariaLabel={t('sources.liveHint.aria')} />
       </div>
 
       {uploadResult && (
         <div style={{ ...styles.uploadInfo, background: isUploadError(uploadResult) ? 'color-mix(in srgb, var(--danger-fg) 16%, var(--surface))' : 'color-mix(in srgb, var(--success-fg) 16%, var(--surface))', color: isUploadError(uploadResult) ? 'var(--danger-fg)' : 'var(--success-fg)', position: 'relative' }}>
           <button onClick={() => setUploadResult(null)} style={styles.dismissBtn}>✕</button>
           {isUploadError(uploadResult) ? (
-            <div>Upload-Fehler: {uploadResult.error}</div>
+            <div>{t('sources.upload.error', { message: uploadResult.error })}</div>
           ) : (
             <>
-              <div>📄 Importiert: {uploadResult.lines_ingested} Zeilen · {uploadResult.events_created} Events</div>
+              <div>📄 {t('sources.upload.imported', { lines: uploadResult.lines_ingested, events: uploadResult.events_created })}</div>
               <div style={{ marginTop: '0.2rem', fontSize: '0.82rem', color: 'var(--fg)' }}>
-                Quelle: {uploadResult.source_name}
+                {t('sources.upload.sourceLabel', { name: uploadResult.source_name })}
               </div>
             </>
           )}
@@ -339,30 +350,30 @@ export default function SourcesPage() {
       {showNew && (
         <div style={styles.form}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <h3 style={{ margin: 0, fontSize: '0.95rem', color: 'var(--muted-fg)' }}>Neue Quelle</h3>
-            <HelpTip content="Lege hier eine Datei-Quelle oder eine echte systemd-journal Quelle an. Journald-Quellen lesen ueber journalctl direkt aus dem System-Journal statt aus /var/log/boot.log." ariaLabel="Neue Quelle erklaeren" />
+            <h3 style={{ margin: 0, fontSize: '0.95rem', color: 'var(--muted-fg)' }}>{t('sources.form.title')}</h3>
+            <HelpTip content={t('sources.form.help')} ariaLabel={t('sources.form.aria')} />
           </div>
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
             <div style={styles.field}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <label style={styles.label}>Name</label>
-                <HelpTip content="Verstaendlicher Anzeigename fuer die Quelle. Dieser Name wird spaeter in Filtern, Reports und Drilldowns verwendet." ariaLabel="Quellname erklaeren" />
+                <label style={styles.label}>{t('sources.field.name')}</label>
+                <HelpTip content={t('sources.field.name.help')} ariaLabel={t('sources.field.name.aria')} />
               </div>
-              <input value={name} onChange={e => setName(e.target.value)} style={styles.input} placeholder="z.B. syslog" />
+              <input value={name} onChange={e => setName(e.target.value)} style={styles.input} placeholder={t('sources.field.name.placeholder')} />
             </div>
             <div style={styles.field}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <label style={styles.label}>Typ</label>
-                <HelpTip content="Pfadbasierte Quellen lesen Logdateien vom Dateisystem (z.B. file, syslog, filebeat, winlogbeat). Journald liest ueber journalctl direkt aus dem systemd-Journal des Hosts." ariaLabel="Quelltyp erklaeren" />
+                <label style={styles.label}>{t('sources.field.type')}</label>
+                <HelpTip content={t('sources.field.type.help')} ariaLabel={t('sources.field.type.aria')} />
               </div>
               <select value={sourceType} onChange={e => setSourceType(e.target.value as SourceKind)} style={styles.input}>
-                <option value="file">Datei</option>
-                <option value="syslog">Syslog-Datei</option>
-                <option value="docker">Docker-JSON-Log</option>
-                <option value="filebeat">Filebeat-Log</option>
-                <option value="winlogbeat">Winlogbeat-Log</option>
-                <option value="elastic_agent">Elastic Agent-Log</option>
-                <option value="journald">Journald</option>
+                <option value="file">{t('sources.type.file')}</option>
+                <option value="syslog">{t('sources.type.syslog')}</option>
+                <option value="docker">{t('sources.type.docker')}</option>
+                <option value="filebeat">{t('sources.type.filebeat')}</option>
+                <option value="winlogbeat">{t('sources.type.winlogbeat')}</option>
+                <option value="elastic_agent">{t('sources.type.elastic_agent')}</option>
+                <option value="journald">{t('sources.type.journald')}</option>
               </select>
             </div>
           </div>
@@ -371,25 +382,25 @@ export default function SourcesPage() {
               <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
                 <div style={{ ...styles.field, flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                    <label style={styles.label}>Dateipfad</label>
-                    <HelpTip content="Absoluter Pfad zur Logdatei auf dem Host. Mit aktivierter Regex-Option wird nur der Dateiname als Regex gematcht." ariaLabel="Dateipfad erklaeren" />
+                    <label style={styles.label}>{t('sources.field.path')}</label>
+                    <HelpTip content={t('sources.field.path.help')} ariaLabel={t('sources.field.path.aria')} />
                   </div>
-                  <input value={path} onChange={e => setPath(e.target.value)} style={styles.input} placeholder="/var/log/syslog oder /home/user/logs/lotus-client-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log" />
+                  <input value={path} onChange={e => setPath(e.target.value)} style={styles.input} placeholder={t('sources.field.path.placeholder')} />
                 </div>
               </div>
               <label style={styles.inlineCheckbox}>
                 <input type="checkbox" checked={pathRegex} onChange={e => setPathRegex(e.target.checked)} />
-                Dateipfad als Regex behandeln (Dateiname)
+                {t('sources.field.pathRegex')}
               </label>
             </>
           )}
           <div style={styles.formActions}>
             <button onClick={handleCreate} disabled={saving || !name || (sourceType !== 'journald' && !path)} style={styles.saveBtn}>
-              {saving ? 'Speichere...' : 'Erstellen'}
+              {saving ? t('sources.btn.saving') : t('sources.btn.create')}
             </button>
             {sourceType === 'file' && (
               <>
-                <div style={styles.uploadDivider}>oder</div>
+                <div style={styles.uploadDivider}>{t('sources.divider.or')}</div>
                 <input
                   ref={fileRef}
                   type="file"
@@ -402,7 +413,7 @@ export default function SourcesPage() {
                   }}
                 />
                 <button onClick={() => fileRef.current?.click()} disabled={uploading} style={styles.uploadBtn}>
-                  {uploading ? 'Importiere…' : '📂 Datei wählen & importieren'}
+                  {uploading ? t('sources.btn.importing') : t('sources.btn.uploadFile')}
                 </button>
               </>
             )}
@@ -411,12 +422,12 @@ export default function SourcesPage() {
       )}
 
       {isLoading ? (
-        <div style={{ color: 'var(--muted-fg)', padding: '2rem' }}>Lade...</div>
+        <div style={{ color: 'var(--muted-fg)', padding: '2rem' }}>{t('sources.loading')}</div>
       ) : (
         <>
           <div style={styles.sectionHeader}>
-            <span style={styles.sectionTitle}>Quellenbestand</span>
-            <HelpTip content="Jede Karte zeigt Status, Typ, Dateipfad und die wichtigsten Aktionen der Quelle. Testen prueft die Erreichbarkeit, Live-Ansicht streamt neue Zeilen, Bearbeiten aendert Konfigurationen." ariaLabel="Quellenkarten erklaeren" />
+            <span style={styles.sectionTitle}>{t('sources.section.list')}</span>
+            <HelpTip content={t('sources.section.list.help')} ariaLabel={t('sources.section.list.aria')} />
           </div>
           <div style={styles.list}>
             {sources.map(src => (
@@ -425,14 +436,14 @@ export default function SourcesPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <span style={styles.srcName}>{src.name}</span>
                   <span style={{ ...styles.badge, background: src.enabled ? '#16a34a' : 'var(--border)' }}>
-                    {src.enabled ? 'aktiv' : 'inaktiv'}
+                    {src.enabled ? t('sources.status.active') : t('sources.status.inactive')}
                   </span>
                   <span style={{ ...styles.badge, background: 'var(--accent-soft)', color: 'var(--accent-fg)' }}>
                     {src.type}
                   </span>
                   {Boolean(src.config?.path_regex) && (
                     <span style={{ ...styles.badge, background: '#5b21b6', color: '#ede9fe' }}>
-                      regex
+                      {t('sources.badge.regex')}
                     </span>
                   )}
                 </div>
@@ -441,49 +452,49 @@ export default function SourcesPage() {
                     onClick={() => setTailSource(src)}
                     disabled={!isPathBasedSourceType(src.type)}
                     style={isPathBasedSourceType(src.type) ? styles.tailBtn : styles.tailBtnDisabled}
-                    title={isPathBasedSourceType(src.type) ? 'Live-Tail oeffnen' : 'Live-Ansicht nur fuer pfadbasierte Quellen'}
+                    title={isPathBasedSourceType(src.type) ? t('sources.tooltip.openLiveTail') : t('sources.tooltip.liveTailDisabled')}
                   >
-                    Live-Ansicht
+                    {t('sources.btn.liveTail')}
                   </button>
                   <button onClick={() => setEditSource(src)} style={styles.testBtn}>
-                    Bearbeiten
+                    {t('sources.btn.edit')}
                   </button>
                   <button onClick={() => handleTest(src.id)} style={styles.testBtn}>
-                    Testen
+                    {t('sources.btn.test')}
                   </button>
                   {pendingDelete === src.id ? (
                     <>
-                      <span style={{ fontSize: '0.82rem', color: 'var(--danger-fg)', alignSelf: 'center' }}>Wirklich löschen?</span>
-                      <button onClick={() => handleDelete(src.id)} style={{ ...styles.deleteBtn, background: 'var(--danger-fg)', color: '#fff' }}>Ja</button>
-                      <button onClick={() => setPendingDelete(null)} style={styles.testBtn}>Abbrechen</button>
+                      <span style={{ fontSize: '0.82rem', color: 'var(--danger-fg)', alignSelf: 'center' }}>{t('sources.confirm.delete')}</span>
+                      <button onClick={() => handleDelete(src.id)} style={{ ...styles.deleteBtn, background: 'var(--danger-fg)', color: '#fff' }}>{t('sources.confirm.yes')}</button>
+                      <button onClick={() => setPendingDelete(null)} style={styles.testBtn}>{t('sources.btn.cancel')}</button>
                     </>
                   ) : (
-                    <button onClick={() => setPendingDelete(src.id)} style={styles.deleteBtn}>Löschen</button>
+                    <button onClick={() => setPendingDelete(src.id)} style={styles.deleteBtn}>{t('sources.btn.delete')}</button>
                   )}
                 </div>
               </div>
               <div style={styles.path}>{describeSource(src)}</div>
               <div style={styles.healthGrid}>
-                <div style={{ ...styles.healthBadge, background: sourceHealthTone(sourceStatusById.get(src.id)).bg, color: sourceHealthTone(sourceStatusById.get(src.id)).fg }}>
-                  {sourceHealthTone(sourceStatusById.get(src.id)).text}
+                <div style={{ ...styles.healthBadge, background: sourceHealthTone(sourceStatusById.get(src.id), t).bg, color: sourceHealthTone(sourceStatusById.get(src.id), t).fg }}>
+                  {sourceHealthTone(sourceStatusById.get(src.id), t).text}
                 </div>
-                <div style={styles.healthMetric}>Events/min: {sourceStatusById.get(src.id)?.events_per_min ?? 0}</div>
-                <div style={styles.healthMetric}>Parse Errors: {sourceStatusById.get(src.id)?.parse_error_count ?? 0}</div>
-                <div style={styles.healthMetric}>Last Seen: {formatSourceHealthAge(sourceStatusById.get(src.id)?.last_seen_at)}</div>
+                <div style={styles.healthMetric}>{t('sources.health.eventsPerMin', { count: sourceStatusById.get(src.id)?.events_per_min ?? 0 })}</div>
+                <div style={styles.healthMetric}>{t('sources.health.parseErrors', { count: sourceStatusById.get(src.id)?.parse_error_count ?? 0 })}</div>
+                <div style={styles.healthMetric}>{t('sources.health.lastSeen', { age: formatSourceHealthAge(sourceStatusById.get(src.id)?.last_seen_at, t) })}</div>
               </div>
               {testResults[src.id] && (
                 <div style={{ marginTop: '0.5rem', fontSize: '0.82rem', color: testResults[src.id].ok ? 'var(--success-fg)' : 'var(--danger-fg)' }}>
                   {testResults[src.id].ok
-                    ? 'Erreichbar'
-                    : `Fehler: ${testResults[src.id].error ?? testResults[src.id].details}`}
+                    ? t('sources.test.reachable')
+                    : t('sources.test.error', { message: testResults[src.id].error ?? testResults[src.id].details ?? '' })}
                 </div>
               )}
               </div>
             ))}
             {!sources.length && (
               <div style={styles.emptyState}>
-                <div style={{ marginBottom: '0.6rem' }}>Keine Quellen konfiguriert.</div>
-                <button onClick={() => setShowNew(true)} style={styles.addBtn}>+ Erste Quelle anlegen</button>
+                <div style={{ marginBottom: '0.6rem' }}>{t('sources.empty.title')}</div>
+                <button onClick={() => setShowNew(true)} style={styles.addBtn}>{t('sources.empty.cta')}</button>
               </div>
             )}
           </div>

@@ -178,7 +178,7 @@ def _stream_events_stmt_after(
     return stmt.order_by(created_expr.asc(), Event.id.asc()).limit(_STREAM_POLL_LIMIT)
 
 
-@router.get("/stream")
+@router.get("/stream", summary="Stream events via SSE")
 async def stream_events(
     request: Request,
     source_id: Optional[str] = Query(None),
@@ -211,6 +211,10 @@ async def stream_events(
         last_event_id = request.headers.get("last-event-id") or ""
         cursor = _decode_stream_cursor(last_event_id)
 
+        # Emit an explicit ready event first so clients can mark the stream as
+        # connected immediately, even if bootstrap queries are slow.
+        yield f"event: ready\ndata: {json.dumps({'type': 'ready'})}\n\n"
+
         # Bootstrap to "current head" when no reconnect cursor exists,
         # so a fresh client receives only future events.
         async with factory() as session:
@@ -233,10 +237,6 @@ async def stream_events(
             recent_emitted_ids.append(cursor[1])
             recent_emitted_lookup.add(cursor[1])
 
-        # Emit an initial frame so clients move to "connected" immediately,
-        # even when no new events are available yet.
-        yield ": connected\n\n"
-
         while True:
             if await request.is_disconnected():
                 break
@@ -258,7 +258,7 @@ async def stream_events(
             if not rows:
                 idle_ticks += 1
                 if idle_ticks >= _STREAM_HEARTBEAT_SECONDS:
-                    yield ": keepalive\n\n"
+                    yield f"event: keepalive\ndata: {json.dumps({'type': 'keepalive'})}\n\n"
                     idle_ticks = 0
                 await asyncio.sleep(poll_interval)
                 continue
@@ -285,10 +285,18 @@ async def stream_events(
 
             await asyncio.sleep(poll_interval)
 
-    return StreamingResponse(_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        _generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
-@router.get("", response_model=EventListResponse)
+@router.get("", response_model=EventListResponse, summary="List events")
 async def list_events(
     request: Request,
     response: Response,
@@ -327,8 +335,6 @@ async def list_events(
         cursor=cursor,
     )
     short_realtime_window = _is_short_realtime_window(query)
-    if short_realtime_window:
-        query.use_created_at_window_only = True
 
     elastic_available = bool(getattr(request.app.state, "elastic_available", False))
     if provider_mode == "postgres":
@@ -354,7 +360,7 @@ async def list_events(
     return EventListResponse(items=result.items, next_cursor=result.next_cursor)
 
 
-@router.get("/{event_id}", response_model=EventResponse)
+@router.get("/{event_id}", response_model=EventResponse, summary="Get event")
 async def get_event(
     event_id: str,
     session: AsyncSession = Depends(get_db),

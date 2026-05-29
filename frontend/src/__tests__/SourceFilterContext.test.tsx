@@ -102,4 +102,50 @@ describe('SourceFilterContext', () => {
     })
     expect(result.current.hasFilter).toBe(true)
   })
+
+  test('setFilter keeps manual range when valid', () => {
+    const { result } = renderHook(() => useSourceFilter(), { wrapper })
+    act(() => {
+      result.current.setFilter({
+        sourceIds: ['abc'],
+        sourcePaths: [],
+        rangeHours: 24,
+        severities: [],
+        manualFrom: '2026-05-17T10:00:00.000Z',
+        manualTo: '2026-05-17T11:00:00.000Z',
+      })
+    })
+
+    expect(result.current.filter.manualFrom).toBe('2026-05-17T10:00:00.000Z')
+    expect(result.current.filter.manualTo).toBe('2026-05-17T11:00:00.000Z')
+  })
+
+  test('setFilter clears manual range for empty values', () => {
+    const { result } = renderHook(() => useSourceFilter(), { wrapper })
+    act(() => {
+      result.current.setFilter({
+        sourceIds: ['abc'],
+        sourcePaths: [],
+        rangeHours: 24,
+        severities: [],
+        manualFrom: '2026-05-17T10:00:00.000Z',
+        manualTo: '2026-05-17T11:00:00.000Z',
+      })
+    })
+
+    act(() => {
+      result.current.setFilter({
+        sourceIds: ['abc'],
+        sourcePaths: [],
+        rangeHours: 1,
+        severities: [],
+        manualFrom: ' ',
+        manualTo: '',
+      })
+    })
+
+    expect(result.current.filter.manualFrom).toBeUndefined()
+    expect(result.current.filter.manualTo).toBeUndefined()
+    expect(result.current.filter.rangeHours).toBe(1)
+  })
 })

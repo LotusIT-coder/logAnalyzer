@@ -33,7 +33,7 @@ class IngestionRunResponse(BaseModel):
     results: list
 
 
-@router.post("/run", response_model=IngestionRunResponse, status_code=202)
+@router.post("/run", response_model=IngestionRunResponse, status_code=202, summary="Trigger ingestion run")
 async def trigger_ingestion(
     body: IngestionRunRequest = IngestionRunRequest(),
     session: AsyncSession = Depends(get_db),

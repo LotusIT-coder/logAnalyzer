@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { vi } from 'vitest'
 
 import SourcesPage from '../pages/SourcesPage'
+import { I18nProvider } from '../ctx/I18nContext'
 
 vi.mock('../lib/requests', () => ({
   getSources: vi.fn(),
@@ -25,13 +26,16 @@ function renderPage() {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <SourcesPage />
+      <I18nProvider>
+        <SourcesPage />
+      </I18nProvider>
     </QueryClientProvider>
   )
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  window.localStorage.setItem('ui-language', 'de')
   mockGetSources.mockResolvedValue([
     { id: 'source-1', name: 'Syslog', type: 'file', enabled: true, config: { path: '/var/log/syslog' } },
   ] satisfies SourceResponse[])

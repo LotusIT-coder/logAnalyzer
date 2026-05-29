@@ -46,6 +46,10 @@ async def test_manual_ingestion_refreshes_source_status_immediately(
     assert resp.status_code == 202
     assert resp.json()["accepted"] is True
 
+    # The API call runs in a different session; refresh local state before
+    # asserting fields that are updated by ingestion.
+    await db_session.refresh(stale_status)
+
     status_result = await db_session.execute(
         select(SourceIngestionStatus).where(SourceIngestionStatus.source_id == source.id)
     )

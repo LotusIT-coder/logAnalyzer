@@ -1,14 +1,24 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 
 import QuickTutorial from '../components/QuickTutorial'
+import { I18nProvider } from '../ctx/I18nContext'
+
+function renderTutorial() {
+  return render(
+    <I18nProvider>
+      <QuickTutorial />
+    </I18nProvider>
+  )
+}
 
 describe('QuickTutorial', () => {
   beforeEach(() => {
     window.localStorage.clear()
+    window.localStorage.setItem('ui-language', 'de')
   })
 
   test('shows the first-visit prompt and persists dismissal', () => {
-    const { unmount } = render(<QuickTutorial />)
+    const { unmount } = renderTutorial()
 
     expect(screen.getByText('Erstbesuch')).toBeInTheDocument()
     expect(screen.getByText('Kurz durch den LotusAnalyzer fuehren lassen?')).toBeInTheDocument()
@@ -19,13 +29,13 @@ describe('QuickTutorial', () => {
     expect(window.localStorage.getItem('lotus-analyzer-onboarding-v1')).toBe('seen')
 
     unmount()
-    render(<QuickTutorial />)
+    renderTutorial()
 
     expect(screen.queryByText('Erstbesuch')).not.toBeInTheDocument()
   })
 
   test('walks through the guided tour steps', () => {
-    render(<QuickTutorial />)
+    renderTutorial()
 
     fireEvent.click(screen.getByRole('button', { name: 'Tour starten' }))
 

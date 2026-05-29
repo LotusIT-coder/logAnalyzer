@@ -10,6 +10,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+from fastapi import HTTPException
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import metrics as metrics_api
@@ -99,7 +102,7 @@ class TestTimeseries:
         total = sum(p["count"] for p in resp.json()["points"])
         assert total == 1
 
-    async def test_recent_window_uses_event_timestamp_for_historical_events(self, client, db_session):
+    async def test_recent_window_uses_ingest_time_for_fresh_historical_events(self, client, db_session):
         src = _make_source(db_session, name="recent-ingest-src")
         db_session.add(src)
         await db_session.flush()
@@ -117,7 +120,7 @@ class TestTimeseries:
         to_ts = (now + timedelta(seconds=1)).isoformat()
         resp = await client.get(f"/api/v1/metrics/timeseries?from={from_ts}&to={to_ts}&bucket=1m")
         assert resp.status_code == 200
-        assert sum(point["count"] for point in resp.json()["points"]) == 0
+        assert sum(point["count"] for point in resp.json()["points"]) == 1
 
     async def test_accepts_one_second_bucket(self, client, db_session):
         src = _make_source(db_session, name="one-second-bucket-src")
@@ -191,7 +194,7 @@ class TestTopErrors:
         resp = await client.get("/api/v1/metrics/top-errors")
         assert resp.json()["items"] == []
 
-    async def test_top_errors_recent_window_uses_event_timestamp(self, client, db_session):
+    async def test_top_errors_recent_window_uses_ingest_time_for_fresh_historical_events(self, client, db_session):
         src = _make_source(db_session, name="top-errors-recent-src")
         db_session.add(src)
         await db_session.flush()
@@ -210,7 +213,8 @@ class TestTopErrors:
         to_ts = (now + timedelta(seconds=1)).isoformat()
         resp = await client.get("/api/v1/metrics/top-errors", params={"from": from_ts, "to": to_ts})
         assert resp.status_code == 200
-        assert resp.json()["items"] == []
+        items = {item["key"]: item["count"] for item in resp.json()["items"]}
+        assert items["late arriving error"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +242,7 @@ class TestTopServices:
         assert items["nginx"] == 3
         assert items["sshd"] == 1
 
-    async def test_top_services_recent_window_uses_event_timestamp(self, client, db_session):
+    async def test_top_services_recent_window_uses_ingest_time_for_fresh_historical_events(self, client, db_session):
         src = _make_source(db_session, name="svc-recent-src")
         db_session.add(src)
         await db_session.flush()
@@ -258,7 +262,7 @@ class TestTopServices:
         resp = await client.get("/api/v1/metrics/top-services", params={"from": from_ts, "to": to_ts})
         assert resp.status_code == 200
         items = {item["service"]: item["count"] for item in resp.json()["items"]}
-        assert "late-service" not in items
+        assert items["late-service"] == 1
 
     async def test_top_services_recent_window_falls_back_for_future_skewed_timestamp(self, client, db_session):
         src = _make_source(db_session, name="svc-future-skew-src")
@@ -311,7 +315,7 @@ class TestErrorRate:
         assert data["total_events"] == 4
         assert abs(data["error_rate"] - 0.5) < 0.01
 
-    async def test_error_rate_recent_window_uses_event_timestamp(self, client, db_session):
+    async def test_error_rate_recent_window_uses_ingest_time_for_fresh_historical_events(self, client, db_session):
         src = _make_source(db_session, name="rate-recent-src")
         db_session.add(src)
         await db_session.flush()
@@ -331,8 +335,8 @@ class TestErrorRate:
         resp = await client.get("/api/v1/metrics/error-rate", params={"from": from_ts, "to": to_ts})
         assert resp.status_code == 200
         data = resp.json()
-        assert data["total_events"] == 0
-        assert data["error_events"] == 0
+        assert data["total_events"] == 1
+        assert data["error_events"] == 1
 
     async def test_error_rate_recent_window_falls_back_for_future_skewed_timestamp(self, client, db_session):
         src = _make_source(db_session, name="rate-future-skew-src")
@@ -510,3 +514,30 @@ class TestVolumeCheck:
         assert data["checked_events"] == 4
         assert data["requires_confirmation"] is True
         assert data["capped"] is True
+
+
+class TestTimeoutFallback:
+    def test_statement_timeout_is_mapped_to_http_504(self):
+        exc = DBAPIError(
+            statement="select 1",
+            params=None,
+            orig=Exception("canceling statement due to statement timeout"),
+            hide_parameters=False,
+        )
+
+        with pytest.raises(HTTPException) as raised:
+            metrics_api._raise_if_statement_timeout(exc)
+
+        assert raised.value.status_code == 504
+        assert "Zeitlimit" in str(raised.value.detail)
+
+    def test_non_timeout_db_errors_are_not_rewritten(self):
+        exc = DBAPIError(
+            statement="select 1",
+            params=None,
+            orig=Exception("duplicate key value violates unique constraint"),
+            hide_parameters=False,
+        )
+
+        # Non-timeout DB errors should bubble up unchanged.
+        metrics_api._raise_if_statement_timeout(exc)

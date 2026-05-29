@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { NavLink, Outlet } from 'react-router-dom'
 import { useFeatureFlags } from '../ctx/FeatureFlagsContext'
 import { useTheme } from '../ctx/ThemeContext'
 import { useI18n } from '../ctx/I18nContext'
@@ -16,11 +16,9 @@ const NAV_BASE: { to: string; labelKey: string; help: string }[] = [
 
 export default function Layout() {
   const flags = useFeatureFlags()
-  const location = useLocation()
   const { theme, toggleTheme } = useTheme()
   const { language, setLanguage, t } = useI18n()
-  const isEventsRoute = location.pathname === '/events'
-  
+
   const navItems = NAV_BASE.filter(item => {
     if (item.to === '/ai') {
       return flags.ollama_available
@@ -68,17 +66,6 @@ export default function Layout() {
             <button type="button" onClick={toggleTheme} style={styles.themeToggle}>
               {theme === 'dark' ? t('layout.theme.light') : t('layout.theme.dark')}
             </button>
-            {isEventsRoute && (
-              <button
-                type="button"
-                onClick={() => window.dispatchEvent(new Event('events:open-color-legend'))}
-                style={styles.toolbarInfoBtn}
-                title={t('layout.eventsLegend.tooltip')}
-                aria-label={t('layout.eventsLegend.tooltip')}
-              >
-                {t('layout.eventsLegend.label')}
-              </button>
-            )}
             <QuickTutorial />
           </div>
         </div>

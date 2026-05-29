@@ -62,6 +62,22 @@ def _build_soc_status_payload(request: Request) -> dict:
     }
 
 
+def _build_watcher_status_payload(request: Request) -> dict:
+    service = getattr(request.app.state, "watcher", None)
+    return {
+        "running": bool(service is not None and service.running),
+        "tick_count": int(getattr(service, "tick_count", 0) if service is not None else 0),
+        "last_tick_lines": int(getattr(service, "last_tick_lines", 0) if service is not None else 0),
+        "last_tick_started_at": getattr(service, "_last_tick_started_at", None).isoformat()
+        if getattr(service, "_last_tick_started_at", None) is not None
+        else None,
+        "last_tick_finished_at": getattr(service, "_last_tick_finished_at", None).isoformat()
+        if getattr(service, "_last_tick_finished_at", None) is not None
+        else None,
+        "last_tick_error": getattr(service, "_last_tick_error", None),
+    }
+
+
 def _age_seconds(value: datetime | None, now: datetime) -> int | None:
     if value is None:
         return None
@@ -69,7 +85,7 @@ def _age_seconds(value: datetime | None, now: datetime) -> int | None:
     return max(0, int((now - normalized.astimezone(timezone.utc)).total_seconds()))
 
 
-@router.get("/health")
+@router.get("/health", summary="Service health")
 async def health(request: Request):
     settings = get_settings()
     ollama_available = getattr(request.app.state, "ollama_available", False)
@@ -81,6 +97,7 @@ async def health(request: Request):
     elastic_indexer_running = bool(elastic_indexer is not None and elastic_indexer.running)
     event_bus = getattr(request.app.state, "event_bus", None)
     event_bus_stats = event_bus.get_stats() if event_bus is not None else None
+    watcher_stats = _build_watcher_status_payload(request)
     return {
         "status": "ok",
         "uptime_seconds": int(time.monotonic() - _start_time),
@@ -93,11 +110,12 @@ async def health(request: Request):
         "elastic_available": elastic_available,
         "elastic_bootstrap_ok": elastic_bootstrap_ok,
         "elastic_indexer_running": elastic_indexer_running,
+        "watcher": watcher_stats,
         "event_bus": event_bus_stats,
     }
 
 
-@router.get("/version")
+@router.get("/version", summary="API version")
 async def version():
     s = get_settings()
     return {
@@ -107,7 +125,7 @@ async def version():
     }
 
 
-@router.get("/system/now")
+@router.get("/system/now", summary="Server time (UTC)")
 async def get_server_time():
     """Return current server time in UTC. Used for time-range calculations.
     
@@ -120,12 +138,12 @@ async def get_server_time():
     }
 
 
-@router.get("/system/soc-analyst")
+@router.get("/system/soc-analyst", summary="SOC analyst status")
 async def soc_analyst_status(request: Request):
     return _build_soc_status_payload(request)
 
 
-@router.get("/system/ingestion-diagnostics")
+@router.get("/system/ingestion-diagnostics", summary="Ingestion diagnostics")
 async def ingestion_diagnostics(session: AsyncSession = Depends(get_db)):
     now = datetime.now(timezone.utc)
 
@@ -179,7 +197,7 @@ async def ingestion_diagnostics(session: AsyncSession = Depends(get_db)):
     }
 
 
-@router.put("/system/soc-analyst")
+@router.put("/system/soc-analyst", summary="Update SOC analyst status")
 async def set_soc_analyst_status(
     body: SOCAnalystToggleRequest,
     request: Request,
@@ -247,7 +265,7 @@ async def set_soc_analyst_status(
     return _build_soc_status_payload(request)
 
 
-@router.post("/system/soc-analyst/demo-alert")
+@router.post("/system/soc-analyst/demo-alert", summary="Create SOC demo alert")
 async def create_soc_demo_alert(
     body: SOCDemoAlertRequest,
     session: AsyncSession = Depends(get_db),

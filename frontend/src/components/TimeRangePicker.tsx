@@ -4,7 +4,6 @@ import { useMemo, useState } from 'react'
 import { useI18n } from '../ctx/I18nContext'
 
 export const TIME_PRESETS: { label: string; hours: number }[] = [
-  { label: '1 m', hours: 1 / 60 },
   { label: '15 m', hours: 0.25 },
   { label: '1 h', hours: 1 },
   { label: '6 h', hours: 6 },

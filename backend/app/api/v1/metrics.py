@@ -53,52 +53,42 @@ _DATE_BIN_ORIGIN_SQL = text("'1970-01-01 00:00:00+00'::timestamptz")
 _ERROR_SEVERITIES = ["error", "critical"]
 
 
-def _metric_ts_expr(to_dt: datetime):
+def _timestamp_in_window(from_dt: datetime, to_dt: datetime, *, include_to: bool):
+    upper_bound = Event.timestamp <= to_dt if include_to else Event.timestamp < to_dt
+    return and_(Event.timestamp >= from_dt, upper_bound)
+
+
+def _created_at_in_window(from_dt: datetime, to_dt: datetime, *, include_to: bool):
+    upper_bound = Event.created_at <= to_dt if include_to else Event.created_at < to_dt
+    return and_(Event.created_at.isnot(None), Event.created_at >= from_dt, upper_bound)
+
+
+def _metric_ts_expr(from_dt: datetime, to_dt: datetime, *, include_to: bool = True):
     """Return timestamp expression for metrics windows.
 
-    We keep source event timestamps as the primary time basis, but guard against
-    skewed future timestamps (common with local-time logs parsed as UTC). For
-    such rows we fall back to created_at so recent dashboard windows stay useful.
+    Prefer the source event timestamp when it falls inside the requested window,
+    but fall back to created_at for freshly ingested rows whose embedded log
+    timestamp is outside that live window. This keeps dashboard counters aligned
+    with /events, which also treats either timestamp as sufficient for inclusion.
     """
     return case(
-        (
-            and_(
-                Event.created_at.isnot(None),
-                Event.timestamp > to_dt,
-            ),
-            Event.created_at,
-        ),
+        (_timestamp_in_window(from_dt, to_dt, include_to=include_to), Event.timestamp),
+        (_created_at_in_window(from_dt, to_dt, include_to=include_to), Event.created_at),
         else_=Event.timestamp,
     )
 
 
 def _observed_between(from_dt: datetime, to_dt: datetime):
     return or_(
-        and_(
-            Event.timestamp >= from_dt,
-            Event.timestamp <= to_dt,
-        ),
-        and_(
-            Event.created_at.isnot(None),
-            Event.timestamp > to_dt,
-            Event.created_at >= from_dt,
-            Event.created_at <= to_dt,
-        ),
+        _timestamp_in_window(from_dt, to_dt, include_to=True),
+        _created_at_in_window(from_dt, to_dt, include_to=True),
     )
 
 
 def _observed_in_half_open_window(from_dt: datetime, to_dt: datetime):
     return or_(
-        and_(
-            Event.timestamp >= from_dt,
-            Event.timestamp < to_dt,
-        ),
-        and_(
-            Event.created_at.isnot(None),
-            Event.timestamp >= to_dt,
-            Event.created_at >= from_dt,
-            Event.created_at < to_dt,
-        ),
+        _timestamp_in_window(from_dt, to_dt, include_to=False),
+        _created_at_in_window(from_dt, to_dt, include_to=False),
     )
 
 
@@ -193,7 +183,7 @@ async def _refresh_rollup_15m(
     if aligned_from >= aligned_to:
         return
 
-    observed_ts = _metric_ts_expr(aligned_to)
+    observed_ts = _metric_ts_expr(aligned_from, aligned_to, include_to=False)
     bucket_expr = _bucket_expr(observed_ts, _ROLLUP_BUCKET_SECONDS).label("bucket_start")
     aggregate_stmt = (
         select(
@@ -234,7 +224,7 @@ async def _query_raw_timeseries_slice(
 ) -> dict[datetime, int]:
     if from_dt >= to_dt:
         return {}
-    observed_ts = _metric_ts_expr(to_dt)
+    observed_ts = _metric_ts_expr(from_dt, to_dt, include_to=False)
     bucket_expr = _bucket_expr(observed_ts, bucket_seconds).label("bucket")
     stmt = (
         select(bucket_expr, func.count().label("count"))
@@ -318,7 +308,7 @@ async def _query_raw_stats_slice(
 ) -> tuple[int, int]:
     if from_dt >= to_dt:
         return 0, 0
-    observed_ts = _metric_ts_expr(to_dt)
+    observed_ts = _metric_ts_expr(from_dt, to_dt, include_to=False)
     stmt = (
         select(
             func.count().label("total"),
@@ -495,7 +485,7 @@ async def _query_rollup_volume_check(
     return (threshold + 1 if requires_confirmation else total_events), requires_confirmation
 
 
-@router.get("/timeseries", response_model=TimeseriesResponse)
+@router.get("/timeseries", response_model=TimeseriesResponse, summary="Event time series")
 async def timeseries(
     session: AsyncSession = Depends(get_db),
     from_: Optional[str] = Query(None, alias="from"),
@@ -519,7 +509,7 @@ async def timeseries(
     if is_postgres:
         # Push bucketing entirely into PostgreSQL — returns one row per bucket,
         # not one row per event. Scales to millions of events with no extra memory.
-        observed_ts = _metric_ts_expr(to_dt)
+        observed_ts = _metric_ts_expr(from_dt, to_dt)
         bucket_expr = _bucket_expr(observed_ts, bucket_seconds).label("bucket")
         stmt = (
             select(bucket_expr, func.count().label("count"))
@@ -536,7 +526,7 @@ async def timeseries(
     # SQLite fallback (used in tests): fetch timestamps with a safety LIMIT
     # and bucket in Python.
     stmt = (
-        select(_metric_ts_expr(to_dt).label("observed_ts"))
+        select(_metric_ts_expr(from_dt, to_dt).label("observed_ts"))
         .where(_observed_between(from_dt, to_dt))
         .order_by(text("observed_ts"))
         .limit(_TIMESERIES_PYTHON_LIMIT)
@@ -559,7 +549,7 @@ async def timeseries(
     return TimeseriesResponse(points=points)
 
 
-@router.get("/top-errors", response_model=TopErrorsResponse)
+@router.get("/top-errors", response_model=TopErrorsResponse, summary="Top error events")
 async def top_errors(
     session: AsyncSession = Depends(get_db),
     from_: Optional[str] = Query(None, alias="from"),
@@ -583,7 +573,7 @@ async def top_errors(
         select(
             Event.message,
             func.count().label("count"),
-            func.max(_metric_ts_expr(to_dt)).label("latest")
+            func.max(_metric_ts_expr(from_dt, to_dt)).label("latest")
         )
         .where(
             _observed_between(from_dt, to_dt),
@@ -601,7 +591,7 @@ async def top_errors(
     return TopErrorsResponse(items=items)
 
 
-@router.get("/top-services", response_model=TopServicesResponse)
+@router.get("/top-services", response_model=TopServicesResponse, summary="Top services by volume")
 async def top_services(
     session: AsyncSession = Depends(get_db),
     from_: Optional[str] = Query(None, alias="from"),
@@ -632,7 +622,7 @@ async def top_services(
     return TopServicesResponse(items=items)
 
 
-@router.get("/error-rate", response_model=ErrorRateResponse)
+@router.get("/error-rate", response_model=ErrorRateResponse, summary="Error rate")
 async def error_rate(
     session: AsyncSession = Depends(get_db),
     from_: Optional[str] = Query(None, alias="from"),
@@ -666,7 +656,7 @@ async def error_rate(
     return ErrorRateResponse(total_events=total, error_events=errors, error_rate=rate)
 
 
-@router.get("/volume-check", response_model=EventVolumeCheckResponse)
+@router.get("/volume-check", response_model=EventVolumeCheckResponse, summary="Event volume check")
 async def volume_check(
     session: AsyncSession = Depends(get_db),
     from_: Optional[str] = Query(None, alias="from"),

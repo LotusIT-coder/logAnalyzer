@@ -4,6 +4,7 @@ backend/__pycache__/
 backend/**/__pycache__/
 backend/**/*.pyc
 backend/**/*.pyo
+backend/log_analyzer_backend.egg-info/
 backend/.env
 backend/data/
 

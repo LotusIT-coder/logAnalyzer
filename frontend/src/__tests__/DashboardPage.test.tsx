@@ -32,7 +32,9 @@ import {
   getTopErrors,
   getTopServices,
   getErrorRate,
+  getMitreCoverage,
   getServerTime,
+  getSourceIngestionStatus,
   getSocAnalystStatus,
   getSources,
 } from '../lib/requests'
@@ -41,7 +43,9 @@ const mockGetTimeseries = vi.mocked(getTimeseries)
 const mockGetTopErrors = vi.mocked(getTopErrors)
 const mockGetTopServices = vi.mocked(getTopServices)
 const mockGetErrorRate = vi.mocked(getErrorRate)
+const mockGetMitreCoverage = vi.mocked(getMitreCoverage)
 const mockGetServerTime = vi.mocked(getServerTime)
+const mockGetSourceIngestionStatus = vi.mocked(getSourceIngestionStatus)
 const mockGetSocAnalystStatus = vi.mocked(getSocAnalystStatus)
 const mockGetSources = vi.mocked(getSources)
 
@@ -85,7 +89,13 @@ beforeEach(() => {
     error_events: 3,
     error_rate: 0.3,
   } satisfies ErrorRateResponse)
+  mockGetMitreCoverage.mockResolvedValue({
+    items: [],
+    mapped_rules: 0,
+    mapped_incidents: 0,
+  })
   mockGetServerTime.mockResolvedValue({ timestamp: '2026-05-06T10:00:00Z', unix_ms: 1778061600000 })
+  mockGetSourceIngestionStatus.mockResolvedValue([])
   mockGetSocAnalystStatus.mockResolvedValue({
     enabled: false,
     running: false,
@@ -95,6 +105,36 @@ beforeEach(() => {
 })
 
 describe('DashboardPage', () => {
+  test('uses manual global range for metrics requests', async () => {
+    window.localStorage.setItem('logAnalyzer:globalSourceFilter', JSON.stringify({
+      sourceIds: ['source-123'],
+      sourcePaths: [],
+      rangeHours: 24,
+      severities: [],
+      manualFrom: '2026-05-17T10:00:00.000Z',
+      manualTo: '2026-05-17T11:00:00.000Z',
+    }))
+    window.localStorage.setItem('logAnalyzer:selectedSources', JSON.stringify([
+      {
+        id: 'source:source-123',
+        label: 'Syslog',
+        path: '/var/log/syslog',
+        kind: 'configured',
+      },
+    ]))
+
+    renderDashboard()
+
+    await waitFor(() => {
+      expect(mockGetErrorRate).toHaveBeenCalled()
+      const [rangeArg] = mockGetErrorRate.mock.calls[0] ?? []
+      expect(rangeArg).toMatchObject({
+        from: '2026-05-17T10:00:00.000Z',
+        to: '2026-05-17T11:00:00.000Z',
+      })
+    })
+  })
+
   test('does not load metrics until a source is selected', async () => {
     renderDashboard()
 

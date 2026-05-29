@@ -49,7 +49,7 @@ async def _select_source_status_rows(session: AsyncSession, ids: list[str] | Non
     return list(result)
 
 
-@router.get("/status", response_model=SourceIngestionStatusListResponse)
+@router.get("/status", response_model=SourceIngestionStatusListResponse, summary="Source ingestion status")
 async def source_status(
     source_ids: str | None = None,
     session: AsyncSession = Depends(get_db),
@@ -85,7 +85,7 @@ async def source_status(
     return SourceIngestionStatusListResponse(items=items)
 
 
-@router.get("", response_model=SourceListResponse)
+@router.get("", response_model=SourceListResponse, summary="List sources")
 async def list_sources(
     session: AsyncSession = Depends(get_db),
 ):
@@ -95,7 +95,7 @@ async def list_sources(
     )
 
 
-@router.post("", response_model=SourceResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=SourceResponse, status_code=status.HTTP_201_CREATED, summary="Create source")
 async def create_source(
     body: SourceCreateRequest,
     session: AsyncSession = Depends(get_db),
@@ -107,7 +107,7 @@ async def create_source(
     return SourceResponse.model_validate(source)
 
 
-@router.patch("/{source_id}", response_model=SourceResponse)
+@router.patch("/{source_id}", response_model=SourceResponse, summary="Update source")
 async def patch_source(
     source_id: str,
     body: SourcePatchRequest,
@@ -120,7 +120,7 @@ async def patch_source(
     return SourceResponse.model_validate(updated)
 
 
-@router.delete("/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{source_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete source")
 async def delete_source(
     source_id: str,
     session: AsyncSession = Depends(get_db),
@@ -131,7 +131,7 @@ async def delete_source(
     await source_service.delete_source(session, source)
 
 
-@router.post("/{source_id}/test", response_model=SourceTestResponse)
+@router.post("/{source_id}/test", response_model=SourceTestResponse, summary="Test source connectivity")
 async def test_source(
     source_id: str,
     session: AsyncSession = Depends(get_db),
@@ -143,7 +143,7 @@ async def test_source(
     return SourceTestResponse(ok=ok, details=details)
 
 
-@router.get("/{source_id}/tail")
+@router.get("/{source_id}/tail", summary="Tail source events")
 async def tail_source(
     source_id: str,
     request: Request,

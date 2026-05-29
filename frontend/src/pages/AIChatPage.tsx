@@ -62,7 +62,7 @@ function ContextBadge({ attachedContext }: { attachedContext: { title: string; s
 
   return (
     <div style={badgeStyles.wrap}>
-      <span style={badgeStyles.label}>Kontext:</span>
+      <span style={badgeStyles.label}>{t('ai.contextLabel')}</span>
       {hasFilter && <span style={badgeStyles.pill}>🕐 {rangeLabel}</span>}
       {selectedSources.map(s => (
         <span key={s.id} style={{ ...badgeStyles.pill, background: 'var(--accent-soft)', color: 'var(--accent-fg)' }}>
@@ -71,7 +71,7 @@ function ContextBadge({ attachedContext }: { attachedContext: { title: string; s
       ))}
       {attachedContext && (
         <span style={{ ...badgeStyles.pill, background: 'color-mix(in srgb, var(--accent) 16%, var(--surface))', color: 'var(--accent-fg)' }}>
-          Netzkontext: {attachedContext.title}
+          {t('ai.attachedContextLabel')} {attachedContext.title}
         </span>
       )}
     </div>
@@ -149,7 +149,7 @@ export default function AIChatPage() {
         )}
         {messages.map((m, i) => (
           <div key={i} style={{ ...styles.bubble, ...(m.role === 'user' ? styles.userBubble : styles.aiBubble), ...(m.error ? styles.errorBubble : {}) }}>
-            <span style={styles.role}>{m.role === 'user' ? 'Du' : model}</span>
+            <span style={styles.role}>{m.role === 'user' ? t('ai.you') : model}</span>
             {m.pending
               ? <span style={{ color: '#64748b' }}>{t('ai.thinking')}</span>
               : <pre style={styles.pre}>{m.content}</pre>

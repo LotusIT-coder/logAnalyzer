@@ -5,6 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUN_DIR="$ROOT_DIR/.run"
 
+BACKEND_PORT=8001
+FRONTEND_PORT=5173
+
 BACKEND_PID_FILE="$RUN_DIR/backend.pid"
 FRONTEND_PID_FILE="$RUN_DIR/frontend.pid"
 
@@ -46,14 +49,18 @@ show_http_state() {
 }
 
 echo "Process state"
-show_proc_state "Backend" "$BACKEND_PID_FILE" 8000
-show_proc_state "Frontend" "$FRONTEND_PID_FILE" 5173
+show_proc_state "Backend" "$BACKEND_PID_FILE" "$BACKEND_PORT"
+show_proc_state "Frontend" "$FRONTEND_PID_FILE" "$FRONTEND_PORT"
 
 echo ""
 echo "HTTP state"
-show_http_state "Backend health" "http://127.0.0.1:8000/api/v1/health"
-show_http_state "Frontend" "http://127.0.0.1:5173/"
+show_http_state "Backend health" "http://127.0.0.1:${BACKEND_PORT}/api/v1/health"
+show_http_state "Frontend" "http://127.0.0.1:${FRONTEND_PORT}/"
 
 echo ""
 echo "Listening ports"
-ss -ltnp | rg ":8000|:5173" || echo "No listeners on 8000/5173"
+ss -ltnp | rg ":${BACKEND_PORT}|:${FRONTEND_PORT}" || echo "No listeners on ${BACKEND_PORT}/${FRONTEND_PORT}"
+
+if ss -ltn "( sport = :8000 )" | rg -q ":8000"; then
+  echo "WARNING: legacy backend listener detected on port 8000 (can cause dual-instance confusion)."
+fi

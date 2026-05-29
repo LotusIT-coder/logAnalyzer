@@ -5,16 +5,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUN_DIR="$ROOT_DIR/.run"
 
+BACKEND_PORT=8001
+FRONTEND_PORT=5173
+
 echo "== Process snapshot =="
 ps -eo pid,ppid,etimes,cmd | rg -i "uvicorn|vite|npm run dev|node.*vite|python.*app.main" || echo "No matching processes"
 
 echo ""
-echo "== Ports 8000/5173 =="
-ss -ltnp | rg ":8000|:5173" || echo "No listeners on 8000/5173"
+echo "== Ports ${BACKEND_PORT}/${FRONTEND_PORT} =="
+ss -ltnp | rg ":${BACKEND_PORT}|:${FRONTEND_PORT}" || echo "No listeners on ${BACKEND_PORT}/${FRONTEND_PORT}"
 
 echo ""
 echo "== HTTP checks =="
-for entry in "backend_health http://127.0.0.1:8000/api/v1/health" "frontend http://127.0.0.1:5173/"; do
+for entry in "backend_health http://127.0.0.1:${BACKEND_PORT}/api/v1/health" "frontend http://127.0.0.1:${FRONTEND_PORT}/"; do
   name="${entry%% *}"
   url="${entry#* }"
   code="$(curl -sS -o /dev/null -w "%{http_code}" "$url" || true)"

@@ -30,6 +30,7 @@ logger = structlog.get_logger(__name__)
 _MAX_LINES_TOTAL_PER_TICK = 10_000
 _SOURCE_INGEST_TIMEOUT_SECONDS = 5.0
 _REALTIME_SOURCE_INGEST_TIMEOUT_SECONDS = 20.0
+_TICK_TIMEOUT_SECONDS = 30.0
 _LOW_PRIORITY_SOURCES_PER_TICK = 1
 _REALTIME_SOURCE_NAMES = {"syslog", "auth.log", "kern.log", "tuxguard", "tuxguard_error"}
 _REALTIME_PATH_HINTS = {"/var/log/tuxguard/"}
@@ -57,6 +58,9 @@ class WatcherService:
         self._tick_running: bool = False  # backpressure guard
         self._last_tick_lines: int = 0
         self._low_priority_rr_index: int = 0
+        self._last_tick_started_at: datetime | None = None
+        self._last_tick_finished_at: datetime | None = None
+        self._last_tick_error: str | None = None
 
     @staticmethod
     def _is_realtime_source(source) -> bool:
@@ -68,6 +72,14 @@ class WatcherService:
         config = source.config_json if isinstance(source.config_json, dict) else {}
         source_path = str(config.get("path") or "").lower()
         return any(hint in source_path for hint in _REALTIME_PATH_HINTS)
+
+    @staticmethod
+    def _source_priority(source) -> tuple[int, str]:
+        if source.type == "journald":
+            return (0, str(source.name or "").lower())
+        if WatcherService._is_realtime_source(source):
+            return (1, str(source.name or "").lower())
+        return (2, str(source.name or "").lower())
 
     @property
     def running(self) -> bool:
@@ -99,11 +111,34 @@ class WatcherService:
         ingested) and the full ``interval_seconds`` when nothing happened.
         """
         while True:
-            await self._tick()
-            self.tick_count += 1
-            if self._last_tick_lines > 0:
-                await asyncio.sleep(self.catchup_min_sleep_seconds)
-            else:
+            self._last_tick_started_at = datetime.now(timezone.utc)
+            self._last_tick_finished_at = None
+            self._last_tick_error = None
+            logger.info("watcher_tick_started", tick_count=self.tick_count)
+            try:
+                await asyncio.wait_for(self._tick(), timeout=_TICK_TIMEOUT_SECONDS)
+                self.tick_count += 1
+                self._last_tick_finished_at = datetime.now(timezone.utc)
+                logger.info(
+                    "watcher_tick_finished",
+                    tick_count=self.tick_count,
+                    lines_ingested=self._last_tick_lines,
+                )
+                if self._last_tick_lines > 0:
+                    await asyncio.sleep(self.catchup_min_sleep_seconds)
+                else:
+                    await asyncio.sleep(self.interval_seconds)
+            except asyncio.TimeoutError:
+                self._last_tick_error = f"tick_timeout_after_{_TICK_TIMEOUT_SECONDS:.0f}s"
+                logger.warning(
+                    "watcher_tick_timeout",
+                    timeout_seconds=_TICK_TIMEOUT_SECONDS,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._last_tick_error = "unexpected_tick_error"
+                logger.exception("watcher_loop_error")
                 await asyncio.sleep(self.interval_seconds)
 
     async def _tick(self) -> None:
@@ -127,7 +162,10 @@ class WatcherService:
                 logger.exception("watcher_list_sources_failed")
                 return
 
-            realtime_sources = [source for source in sources if self._is_realtime_source(source)]
+            realtime_sources = sorted(
+                (source for source in sources if self._is_realtime_source(source)),
+                key=self._source_priority,
+            )
             low_priority_sources = [source for source in sources if not self._is_realtime_source(source)]
             # Keep near-real-time sources on every tick. Process only a small,
             # rotating slice of low-priority sources per tick so one long tick
@@ -154,6 +192,12 @@ class WatcherService:
                     )
                     break
                 try:
+                    logger.info(
+                        "watcher_source_started",
+                        source_id=source.id,
+                        source_name=source.name,
+                        source_type=source.type,
+                    )
                     source_timeout = (
                         _REALTIME_SOURCE_INGEST_TIMEOUT_SECONDS
                         if self._is_realtime_source(source)
@@ -176,6 +220,12 @@ class WatcherService:
                             source_id=source.id,
                             **{k: v for k, v in stats.items() if k != "source_id"},
                         )
+                    logger.info(
+                        "watcher_source_finished",
+                        source_id=source.id,
+                        source_name=source.name,
+                        source_type=source.type,
+                    )
                     try:
                         await session.commit()
                     except Exception:

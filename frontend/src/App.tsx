@@ -9,6 +9,7 @@ import { SocAlertModalProvider } from './ctx/SocAlertModalContext'
 import SocAlertModalStack from './components/SocAlertModalStack'
 import { useSocAlertListener } from './lib/useSocAlertListener'
 import Layout from './components/Layout'
+import ErrorBoundary from './components/ErrorBoundary'
 import DashboardPage from './pages/DashboardPage'
 import EventsPage from './pages/EventsPage'
 import IncidentsPage from './pages/IncidentsPage'
@@ -24,7 +25,14 @@ const qc = new QueryClient({
 export function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<Layout />}>
+      <Route
+        path="/"
+        element={(
+          <ErrorBoundary>
+            <Layout />
+          </ErrorBoundary>
+        )}
+      >
         <Route index element={<DashboardPage />} />
         <Route path="events" element={<EventsPage />} />
         <Route path="incidents" element={<IncidentsPage />} />

@@ -7,6 +7,7 @@ If the file is smaller than the cursor (log rotation), we reset to 0.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
@@ -26,6 +27,7 @@ from app.services.source_service import get_source_config_path, resolve_source_p
 
 _MAX_LINES_PER_RUN = 200  # safety cap per source per ingestion cycle
 _BATCH_SIZE = 200         # rows bulk-inserted and released per partial flush
+_JOURNALCTL_TIMEOUT_SECONDS = 10.0
 _PATH_BASED_SOURCE_TYPES = {"file", "syslog", "docker", "filebeat", "winlogbeat", "elastic_agent"}
 # If backlog is huge, skip ahead close to EOF to prioritize near-real-time data.
 _MAX_BACKLOG_BYTES_BEFORE_FAST_FORWARD = 1_000_000
@@ -335,7 +337,17 @@ async def _ingest_live_journald_source(session: AsyncSession, source: Source) ->
             "skipped": True,
             "reason": f"journalctl execution failed: {exc}",
         }
-    stdout, stderr = await process.communicate()
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=_JOURNALCTL_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        process.kill()
+        with contextlib.suppress(Exception):
+            stdout, stderr = await process.communicate()
+        return {
+            "source_id": str(source.id),
+            "skipped": True,
+            "reason": f"journalctl timed out after {_JOURNALCTL_TIMEOUT_SECONDS:.0f}s",
+        }
 
     if process.returncode != 0:
         detail = stderr.decode("utf-8", errors="replace").strip() or "journalctl failed"

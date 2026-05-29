@@ -24,6 +24,10 @@ class BusEvent:
     payload: dict[str, Any]
     enqueued_at: datetime
     attempts: int = 0
+    # If set, only handlers whose object id is in this tuple should run on this
+    # attempt. Used to retry exclusively the handlers that previously failed so
+    # already-successful (non-idempotent) handlers are not re-invoked.
+    pending_handler_ids: tuple[int, ...] | None = None
 
 
 class InMemoryEventBus:
@@ -160,21 +164,29 @@ class InMemoryEventBus:
             event = await self._queue.get()
             try:
                 handlers = list(self._handlers.get(event.topic, []))
+                if event.pending_handler_ids is not None:
+                    pending_ids = set(event.pending_handler_ids)
+                    handlers = [h for h in handlers if id(h) in pending_ids]
                 if not handlers:
                     self._stats["handler_missing_total"] += 1
                     logger.debug("event_bus_no_handlers", topic=event.topic)
                     continue
-                handler_failed = False
+
+                failed_handler_ids: list[int] = []
                 for handler in handlers:
                     try:
                         await handler(event.payload)
                     except Exception:
-                        handler_failed = True
+                        failed_handler_ids.append(id(handler))
                         self._stats["failed_total"] += 1
-                        logger.exception("event_bus_handler_failed", topic=event.topic, worker=idx)
-                        break
+                        logger.exception(
+                            "event_bus_handler_failed",
+                            topic=event.topic,
+                            worker=idx,
+                            handler=getattr(handler, "__qualname__", repr(handler)),
+                        )
 
-                if not handler_failed:
+                if not failed_handler_ids:
                     self._stats["processed_total"] += 1
                     continue
 
@@ -184,6 +196,7 @@ class InMemoryEventBus:
                         payload=dict(event.payload),
                         enqueued_at=event.enqueued_at,
                         attempts=event.attempts + 1,
+                        pending_handler_ids=tuple(failed_handler_ids),
                     )
                     self._stats["retried_total"] += 1
                     pushed = await self._retry_event(retry_event)

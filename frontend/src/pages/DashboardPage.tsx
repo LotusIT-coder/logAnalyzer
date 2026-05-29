@@ -28,6 +28,8 @@ import dayjs from 'dayjs'
 import { getApiErrorMessage } from '../lib/errors'
 import { useDraggableModal } from '../lib/useDraggableModal'
 import { useEscapeToClose } from '../lib/useEscapeToClose'
+import { useTick } from '../lib/useTick'
+import { MIN_REFRESH_INTERVAL_MS } from '../lib/refresh'
 import HelpTip from '../components/HelpTip'
 import { FormattedMessage } from '../components/FormattedMessage'
 import { SourcePicker, type UploadResultState, isUploadError } from '../components/SourcePicker'
@@ -82,7 +84,7 @@ function resolveAutoRefreshMs(totalEvents: number, rangeHours: number, targetEve
 function resolveChartBucket(rangeHours: number) {
   if (rangeHours > 168) return '1h'
   if (rangeHours > 24) return '15m'
-  if (rangeHours > 6) return '1m'
+  if (rangeHours > 6) return '5m'
   if (rangeHours > 1) return '15s'
   if (rangeHours > 0.25) return '5s'
   return '1s'
@@ -137,8 +139,8 @@ function formatAgeLabel(updatedAt?: number) {
   return `vor ${hours} h`
 }
 
-function buildTimeRange(rangeHours: number, serverTimeOffset: number = 0, manualRange?: ManualTimeRange): TimeRange | undefined {
-  const nowIso = new Date(Date.now() + serverTimeOffset).toISOString()
+function buildTimeRange(rangeHours: number, serverTimeOffset: number = 0, manualRange?: ManualTimeRange, anchorMs?: number): TimeRange | undefined {
+  const nowIso = new Date(anchorMs ?? Date.now() + serverTimeOffset).toISOString()
   if (manualRange && (manualRange.from || manualRange.to)) {
     return {
       from: manualRange.from ?? '1970-01-01T00:00:00.000Z',
@@ -277,7 +279,9 @@ export default function DashboardPage() {
     return () => window.clearInterval(id)
   }, [autoRefreshProfile])
 
-  // Synchronize client time with server time to fix time-skew bugs
+  // Synchronize client time with server time to fix time-skew bugs.
+  // Re-sync periodically so long-running sessions don't drift if the local
+  // clock is adjusted (suspend/resume, NTP) while the tab stays open.
   useEffect(() => {
     const syncServerTime = async () => {
       try {
@@ -292,6 +296,8 @@ export default function DashboardPage() {
       }
     }
     void syncServerTime()
+    const id = window.setInterval(() => { void syncServerTime() }, 10 * 60 * 1000)
+    return () => window.clearInterval(id)
   }, [])
 
   useEffect(() => {
@@ -473,6 +479,15 @@ export default function DashboardPage() {
   const metricsFilter: MetricsFilter | undefined = selectedSources.length > 0
     ? { sourceIds: selectedSourceIds, sourcePaths: selectedSourcePaths, severities: topErrorsSeverities }
     : undefined
+  const sourceStatus = useQuery({
+    queryKey: ['source-status', selectedSourceIds.join('|')],
+    queryFn: () => getSourceIngestionStatus(selectedSourceIds),
+    enabled: selectedSourceIds.length > 0,
+    staleTime: 0,
+    placeholderData: keepPreviousData,
+    refetchInterval: resolveBaseTickMs(autoRefreshProfile),
+    refetchIntervalInBackground: true,
+  })
   const activeTimeRange = useMemo(
     () => buildTimeRange(rangeHours, serverTimeOffset, manualTimeRange),
     // refreshTick ist Absicht: zwingt eine neue 'to=now'-Berechnung bei jedem Tick,
@@ -487,8 +502,8 @@ export default function DashboardPage() {
   const chartBucket = chartBucketMode === 'auto' ? resolveChartBucket(rangeHours) : chartBucketMode
 
   const rate = useQuery({
-    queryKey: ['error-rate', rangeHours, manualTimeRange?.from ?? '', manualTimeRange?.to ?? '', sourceKey],
-    queryFn: () => getErrorRate(buildTimeRange(rangeHours, serverTimeOffset, manualTimeRange), metricsFilter),
+    queryKey: ['error-rate', rangeHours, manualTimeRange?.from ?? '', manualTimeRange?.to ?? '', sourceKey, activeTimeRange?.to ?? ''],
+    queryFn: () => getErrorRate(activeTimeRange, metricsFilter),
     enabled: selectedSources.length > 0,
     staleTime: 0,
     placeholderData: keepPreviousData,
@@ -504,12 +519,11 @@ export default function DashboardPage() {
   })
 
   const ts = useQuery({
-    queryKey: ['timeseries', rangeHours, manualTimeRange?.from ?? '', manualTimeRange?.to ?? '', sourceKey, chartBucketMode, chartBucket, autoRefreshTargetEvents],
+    queryKey: ['timeseries', rangeHours, manualTimeRange?.from ?? '', manualTimeRange?.to ?? '', sourceKey, chartBucketMode, chartBucket, autoRefreshTargetEvents, activeTimeRange?.to ?? ''],
     queryFn: () => {
-      const timeRange = buildTimeRange(rangeHours, serverTimeOffset, manualTimeRange)
       return getTimeseries({
         bucket: chartBucket,
-        ...(timeRange ? { from: timeRange.from, to: timeRange.to } : {}),
+        ...(activeTimeRange ? { from: activeTimeRange.from, to: activeTimeRange.to } : {}),
         ...(metricsFilter?.sourceIds?.length ? { source_ids: metricsFilter.sourceIds.join(',') } : {}),
         ...(metricsFilter?.sourcePaths?.length ? { source_paths: metricsFilter.sourcePaths.join(',') } : {}),
       })
@@ -519,7 +533,7 @@ export default function DashboardPage() {
     placeholderData: keepPreviousData,
     retry: 1,
     refetchInterval: query => {
-      if (chartBucketMode !== 'auto') return chartBucketToMs(chartBucket)
+      if (chartBucketMode !== 'auto') return Math.max(MIN_REFRESH_INTERVAL_MS, chartBucketToMs(chartBucket))
       const currentData = query.state.data as TimeseriesResponse | undefined
       const totalEvents = currentData?.points.reduce((sum, point) => sum + point.count, 0) ?? 0
       return totalEvents > 0
@@ -549,16 +563,6 @@ export default function DashboardPage() {
     staleTime: 0,
     placeholderData: keepPreviousData,
     refetchInterval: drilldownRefreshMs,
-    refetchIntervalInBackground: true,
-  })
-
-  const sourceStatus = useQuery({
-    queryKey: ['source-status', selectedSourceIds.join('|')],
-    queryFn: () => getSourceIngestionStatus(selectedSourceIds),
-    enabled: selectedSourceIds.length > 0,
-    staleTime: 0,
-    placeholderData: keepPreviousData,
-    refetchInterval: resolveBaseTickMs(autoRefreshProfile),
     refetchIntervalInBackground: true,
   })
 
@@ -649,16 +653,12 @@ export default function DashboardPage() {
   const errorRate = rr ? (rr.total_events > 0 ? (rr.error_rate * 100).toFixed(1) : '0.0') : '–'
   const totalEvents = rr?.total_events ?? '–'
   const sourceStatusById = new Map<string, SourceIngestionStatus>((sourceStatus.data ?? []).map(entry => [entry.source_id, entry]))
-  const [clockTick, setClockTick] = useState(0)
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setClockTick(prev => (prev + 1) % 3600), 1000)
-    return () => window.clearInterval(timer)
-  }, [])
+  // Re-render every second so age-based labels (e.g. "vor 5 min") stay
+  // current without requiring user interaction. The returned tick value is
+  // not displayed; subscribing to the hook is enough.
+  useTick()
 
   const isAnyQueryLoading = ts.isLoading || errs.isLoading || svcs.isLoading || rate.isLoading || sourceStatus.isLoading || mitreCoverage.isLoading || socAnalyst.isLoading
-
-  void clockTick
 
   function sourceStatusTone(status?: SourceIngestionStatus) {
     const freshestSeenAt = status?.last_event_created_at ?? status?.last_event_timestamp

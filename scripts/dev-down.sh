@@ -5,6 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUN_DIR="$ROOT_DIR/.run"
 
+BACKEND_PORT=8001
+FRONTEND_PORT=5173
+
 BACKEND_PID_FILE="$RUN_DIR/backend.pid"
 FRONTEND_PID_FILE="$RUN_DIR/frontend.pid"
 
@@ -44,7 +47,7 @@ stop_pidfile "Frontend" "$FRONTEND_PID_FILE"
 stop_pidfile "Backend" "$BACKEND_PID_FILE"
 
 # Best-effort cleanup for manually started dev processes with matching ports.
-pkill -f "uvicorn app.main:app --host 127.0.0.1 --port 8000" 2>/dev/null || true
-pkill -f "vite --host 127.0.0.1 --port 5173" 2>/dev/null || true
+pkill -f "uvicorn app.main:app --host 127.0.0.1 --port ${BACKEND_PORT}" 2>/dev/null || true
+pkill -f "vite --host 127.0.0.1 --port ${FRONTEND_PORT}" 2>/dev/null || true
 
 echo "Done."

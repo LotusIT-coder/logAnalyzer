@@ -49,7 +49,65 @@ def _parse_cursor(cursor: str | None) -> datetime | None:
         return None
 
 
+def _apply_postgres_filters(stmt, query: EventSearchQuery, cursor_ts: datetime | None):
+    if query.resolved_source_ids is not None:
+        stmt = stmt.where(Event.source_id.in_(query.resolved_source_ids))
+
+    severity_values = _severity_values(query.severity)
+    if severity_values:
+        stmt = stmt.where(Event.severity.in_(severity_values))
+
+    if query.service:
+        stmt = stmt.where(Event.service.ilike(f"%{query.service}%"))
+    if query.host:
+        stmt = stmt.where(Event.host.ilike(f"%{query.host}%"))
+    if query.q:
+        stmt = stmt.where(Event.message.ilike(f"%{query.q}%"))
+
+    if cursor_ts:
+        stmt = stmt.where(Event.created_at < cursor_ts)
+
+    return stmt
+
+
+def _event_sort_key(event: Event) -> tuple[datetime, datetime, str]:
+    return (event.created_at or event.timestamp, event.timestamp, str(event.id))
+
+
 async def search_events_postgres(session: AsyncSession, query: EventSearchQuery) -> EventSearchResult:
+    cursor_ts = _parse_cursor(query.cursor)
+
+    if query.from_ts and query.to_ts and not query.use_created_at_window_only:
+        bounded_rows: dict[str, Event] = {}
+        has_more = False
+        for time_column in (Event.created_at, Event.timestamp):
+            stmt = (
+                select(Event)
+                .where(time_column.between(query.from_ts, query.to_ts))
+                .order_by(Event.created_at.desc(), Event.timestamp.desc(), Event.id.desc())
+                .limit(query.limit + 1)
+            )
+            stmt = _apply_postgres_filters(stmt, query, cursor_ts)
+            result = await session.execute(stmt)
+            rows = list(result.scalars().all())
+            if len(rows) > query.limit:
+                has_more = True
+                rows = rows[:query.limit]
+            for row in rows:
+                bounded_rows[str(row.id)] = row
+
+        rows = sorted(bounded_rows.values(), key=_event_sort_key, reverse=True)
+        if len(rows) > query.limit:
+            has_more = True
+            rows = rows[:query.limit]
+
+        next_cursor = rows[-1].created_at.isoformat() if has_more and rows else None
+        return EventSearchResult(
+            items=[EventResponse.model_validate(row) for row in rows],
+            next_cursor=next_cursor,
+            provider_used="postgres",
+        )
+
     # Sort primarily by ingestion time, then by event timestamp so events from
     # the same ingest batch still appear newest-first in the UI.
     stmt = (
@@ -77,23 +135,7 @@ async def search_events_postgres(session: AsyncSession, query: EventSearchQuery)
             stmt = stmt.where(or_(Event.timestamp >= query.from_ts, Event.created_at >= query.from_ts))
         elif query.to_ts:
             stmt = stmt.where(or_(Event.timestamp <= query.to_ts, Event.created_at <= query.to_ts))
-    if query.resolved_source_ids is not None:
-        stmt = stmt.where(Event.source_id.in_(query.resolved_source_ids))
-
-    severity_values = _severity_values(query.severity)
-    if severity_values:
-        stmt = stmt.where(Event.severity.in_(severity_values))
-
-    if query.service:
-        stmt = stmt.where(Event.service.ilike(f"%{query.service}%"))
-    if query.host:
-        stmt = stmt.where(Event.host.ilike(f"%{query.host}%"))
-    if query.q:
-        stmt = stmt.where(Event.message.ilike(f"%{query.q}%"))
-
-    cursor_ts = _parse_cursor(query.cursor)
-    if cursor_ts:
-        stmt = stmt.where(Event.created_at < cursor_ts)
+    stmt = _apply_postgres_filters(stmt, query, cursor_ts)
 
     result = await session.execute(stmt)
     rows = list(result.scalars().all())
