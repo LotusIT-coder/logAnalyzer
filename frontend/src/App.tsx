@@ -5,9 +5,6 @@ import { SourceFilterProvider } from './ctx/SourceFilterContext'
 import { FeatureFlagsProvider } from './ctx/FeatureFlagsContext'
 import { ThemeProvider } from './ctx/ThemeContext'
 import { I18nProvider } from './ctx/I18nContext'
-import { SocAlertModalProvider } from './ctx/SocAlertModalContext'
-import SocAlertModalStack from './components/SocAlertModalStack'
-import { useSocAlertListener } from './lib/useSocAlertListener'
 import Layout from './components/Layout'
 import ErrorBoundary from './components/ErrorBoundary'
 import DashboardPage from './pages/DashboardPage'
@@ -47,11 +44,6 @@ export function AppRoutes() {
   )
 }
 
-function SocAlertRuntime() {
-  useSocAlertListener()
-  return <SocAlertModalStack />
-}
-
 export default function App() {
   return (
     <QueryClientProvider client={qc}>
@@ -60,12 +52,9 @@ export default function App() {
           <FeatureFlagsProvider>
             <SourceFilterProvider>
               <AIChatProvider>
-                <SocAlertModalProvider>
-                  <BrowserRouter>
-                    <AppRoutes />
-                  </BrowserRouter>
-                  <SocAlertRuntime />
-                </SocAlertModalProvider>
+                <BrowserRouter>
+                  <AppRoutes />
+                </BrowserRouter>
               </AIChatProvider>
             </SourceFilterProvider>
           </FeatureFlagsProvider>

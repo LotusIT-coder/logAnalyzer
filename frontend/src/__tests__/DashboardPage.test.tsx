@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { vi } from 'vitest'
 
 import DashboardPage from '../pages/DashboardPage'
@@ -110,7 +110,7 @@ describe('DashboardPage', () => {
       sourceIds: ['source-123'],
       sourcePaths: [],
       rangeHours: 24,
-      severities: [],
+      severities: ['warning'],
       manualFrom: '2026-05-17T10:00:00.000Z',
       manualTo: '2026-05-17T11:00:00.000Z',
     }))
@@ -135,6 +135,42 @@ describe('DashboardPage', () => {
     })
   })
 
+  test('applies global severities to dashboard metrics queries', async () => {
+    window.localStorage.setItem('logAnalyzer:globalSourceFilter', JSON.stringify({
+      sourceIds: ['source-123'],
+      sourcePaths: [],
+      rangeHours: 24,
+      severities: ['warning', 'error'],
+      manualFrom: undefined,
+      manualTo: undefined,
+    }))
+    window.localStorage.setItem('logAnalyzer:selectedSources', JSON.stringify([
+      {
+        id: 'source:source-123',
+        label: 'Syslog',
+        path: '/var/log/syslog',
+        kind: 'configured',
+      },
+    ]))
+
+    renderDashboard()
+
+    await waitFor(() => {
+      expect(mockGetTimeseries).toHaveBeenCalled()
+      expect(mockGetErrorRate).toHaveBeenCalled()
+    })
+
+    const [timeseriesArg] = mockGetTimeseries.mock.calls[0] ?? []
+    expect(timeseriesArg).toMatchObject({
+      severity: 'warning,error',
+    })
+
+    const [, errorRateFilterArg] = mockGetErrorRate.mock.calls[0] ?? []
+    expect(errorRateFilterArg).toMatchObject({
+      severities: ['warning', 'error'],
+    })
+  })
+
   test('does not load metrics until a source is selected', async () => {
     renderDashboard()
 
@@ -146,6 +182,72 @@ describe('DashboardPage', () => {
     expect(mockGetTopErrors).not.toHaveBeenCalled()
     expect(mockGetTopServices).not.toHaveBeenCalled()
     expect(mockGetErrorRate).not.toHaveBeenCalled()
+  })
+
+  test('does not load metrics when no severity is selected', async () => {
+    window.localStorage.setItem('logAnalyzer:globalSourceFilter', JSON.stringify({
+      sourceIds: ['source-123'],
+      sourcePaths: [],
+      rangeHours: 24,
+      severities: [],
+      manualFrom: undefined,
+      manualTo: undefined,
+    }))
+    window.localStorage.setItem('logAnalyzer:selectedSources', JSON.stringify([
+      {
+        id: 'source:source-123',
+        label: 'Syslog',
+        path: '/var/log/syslog',
+        kind: 'configured',
+      },
+    ]))
+
+    renderDashboard()
+
+    await waitFor(() => {
+      expect(screen.getByText('Keine Severity ausgewaehlt. Bitte mindestens einen Schweregrad waehlen.')).toBeInTheDocument()
+    })
+
+    expect(mockGetTimeseries).not.toHaveBeenCalled()
+    expect(mockGetTopErrors).not.toHaveBeenCalled()
+    expect(mockGetTopServices).not.toHaveBeenCalled()
+    expect(mockGetErrorRate).not.toHaveBeenCalled()
+  })
+
+  test('applies selected global severity from dropdown to graph and total requests', async () => {
+    window.localStorage.setItem('logAnalyzer:globalSourceFilter', JSON.stringify({
+      sourceIds: ['source-123'],
+      sourcePaths: [],
+      rangeHours: 24,
+      severities: [],
+      manualFrom: undefined,
+      manualTo: undefined,
+    }))
+    window.localStorage.setItem('logAnalyzer:selectedSources', JSON.stringify([
+      {
+        id: 'source:source-123',
+        label: 'Syslog',
+        path: '/var/log/syslog',
+        kind: 'configured',
+      },
+    ]))
+
+    renderDashboard()
+
+    const summary = await screen.findByText('Keine Schweregrade')
+    fireEvent.click(summary)
+    fireEvent.click(screen.getByLabelText(/warning/i))
+
+    await waitFor(() => {
+      expect(mockGetErrorRate).toHaveBeenCalled()
+      expect(mockGetTimeseries).toHaveBeenCalled()
+    })
+
+    const [, errorRateFilterArg] = mockGetErrorRate.mock.calls.at(-1) ?? []
+    expect(errorRateFilterArg).toMatchObject({ severities: ['warning'] })
+
+    const [timeseriesArg] = mockGetTimeseries.mock.calls.at(-1) ?? []
+    expect(timeseriesArg).toMatchObject({ severity: 'warning' })
   })
 
   test('renders contextual help for dashboard controls and summaries', async () => {

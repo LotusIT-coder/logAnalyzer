@@ -119,6 +119,12 @@ def _resolve_time_range(from_raw: Optional[str], to_raw: Optional[str]) -> tuple
     return _parse_datetime_param(from_raw) or default_from, _parse_datetime_param(to_raw) or default_to
 
 
+def _parse_severity_filter(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    return [entry.strip().lower() for entry in value.split(",") if entry.strip()]
+
+
 def _is_postgres() -> bool:
     return get_settings().database_url.startswith("postgresql")
 
@@ -143,11 +149,18 @@ def _ceil_bucket(ts: datetime, bucket_seconds: int) -> datetime:
     return floored + timedelta(seconds=bucket_seconds)
 
 
-def _should_use_rollup(from_dt: datetime, to_dt: datetime, bucket_seconds: int, resolved_source_ids: Optional[list[str]]) -> bool:
+def _should_use_rollup(
+    from_dt: datetime,
+    to_dt: datetime,
+    bucket_seconds: int,
+    resolved_source_ids: Optional[list[str]],
+    severity_values: Optional[list[str]] = None,
+) -> bool:
     return (
         _is_postgres()
         and resolved_source_ids is not None
         and len(resolved_source_ids) > 0
+        and not severity_values
         and bucket_seconds in {_ROLLUP_BUCKET_SECONDS, 60 * 60}
         and (to_dt - from_dt) >= _ROLLUP_MIN_RANGE
     )
@@ -493,8 +506,10 @@ async def timeseries(
     bucket: str = Query("15s", pattern="^(1s|5s|15s|30s|1m|5m|15m|1h)$"),
     source_ids: Optional[str] = Query(None),
     source_paths: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
 ):
     from_dt, to_dt = _resolve_time_range(from_, to)
+    severity_values = _parse_severity_filter(severity)
     resolved_source_ids = await resolve_source_ids(session, source_ids_csv=source_ids, source_paths_csv=source_paths)
     if resolved_source_ids == []:
         return TimeseriesResponse(points=[])
@@ -502,7 +517,7 @@ async def timeseries(
     bucket_seconds = _BUCKET_SECONDS.get(bucket, 15)
     is_postgres = _is_postgres()
 
-    if _should_use_rollup(from_dt, to_dt, bucket_seconds, resolved_source_ids):
+    if _should_use_rollup(from_dt, to_dt, bucket_seconds, resolved_source_ids, severity_values):
         points = await _query_rollup_timeseries(session, from_dt, to_dt, bucket_seconds, resolved_source_ids or [])
         return TimeseriesResponse(points=points)
 
@@ -519,6 +534,8 @@ async def timeseries(
         )
         if resolved_source_ids is not None:
             stmt = stmt.where(Event.source_id.in_(resolved_source_ids))
+        if severity_values:
+            stmt = stmt.where(Event.severity.in_(severity_values))
         result = await _execute_with_timeout(session, stmt, timeout_ms=_METRICS_QUERY_TIMEOUT_MS)
         points = [TimeseriesPoint(ts=row.bucket, count=int(row.count) if isinstance(row.count, (int, float)) else 0) for row in result]
         return TimeseriesResponse(points=points)
@@ -533,6 +550,8 @@ async def timeseries(
     )
     if resolved_source_ids is not None:
         stmt = stmt.where(Event.source_id.in_(resolved_source_ids))
+    if severity_values:
+        stmt = stmt.where(Event.severity.in_(severity_values))
 
     result = await _execute_with_timeout(session, stmt, timeout_ms=_METRICS_QUERY_TIMEOUT_MS)
     timestamps = [row[0] for row in result.all()]
@@ -598,8 +617,10 @@ async def top_services(
     to: Optional[str] = Query(None),
     source_ids: Optional[str] = Query(None),
     source_paths: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
 ):
     from_dt, to_dt = _resolve_time_range(from_, to)
+    severity_values = _parse_severity_filter(severity)
     resolved_source_ids = await resolve_source_ids(session, source_ids_csv=source_ids, source_paths_csv=source_paths)
     if resolved_source_ids == []:
         return TopServicesResponse(items=[])
@@ -616,6 +637,8 @@ async def top_services(
     )
     if resolved_source_ids is not None:
         stmt = stmt.where(Event.source_id.in_(resolved_source_ids))
+    if severity_values:
+        stmt = stmt.where(Event.severity.in_(severity_values))
 
     result = await _execute_with_timeout(session, stmt, timeout_ms=_METRICS_QUERY_TIMEOUT_MS)
     items = [TopServiceItem(service=row.service, count=int(row.count) if isinstance(row.count, (int, float)) else 0) for row in result]
@@ -629,13 +652,15 @@ async def error_rate(
     to: Optional[str] = Query(None),
     source_ids: Optional[str] = Query(None),
     source_paths: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
 ):
     from_dt, to_dt = _resolve_time_range(from_, to)
+    severity_values = _parse_severity_filter(severity)
     resolved_source_ids = await resolve_source_ids(session, source_ids_csv=source_ids, source_paths_csv=source_paths)
     if resolved_source_ids == []:
         return ErrorRateResponse(total_events=0, error_events=0, error_rate=0.0)
 
-    if _should_use_rollup(from_dt, to_dt, _ROLLUP_BUCKET_SECONDS, resolved_source_ids):
+    if _should_use_rollup(from_dt, to_dt, _ROLLUP_BUCKET_SECONDS, resolved_source_ids, severity_values):
         total, errors = await _query_rollup_error_rate_stats(session, from_dt, to_dt, resolved_source_ids or [])
         rate = round(errors / total, 4) if total > 0 else 0.0
         return ErrorRateResponse(total_events=total, error_events=errors, error_rate=rate)
@@ -646,6 +671,8 @@ async def error_rate(
     ).where(_observed_between(from_dt, to_dt))
     if resolved_source_ids is not None:
         stats_stmt = stats_stmt.where(Event.source_id.in_(resolved_source_ids))
+    if severity_values:
+        stats_stmt = stats_stmt.where(Event.severity.in_(severity_values))
 
     stats_result = await _execute_with_timeout(session, stats_stmt, timeout_ms=_METRICS_QUERY_TIMEOUT_MS)
     stats_row = stats_result.one()
@@ -663,6 +690,7 @@ async def volume_check(
     to: Optional[str] = Query(None),
     source_ids: Optional[str] = Query(None),
     source_paths: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
     threshold: int = Query(5_000_000, ge=1, le=50_000_000),
 ):
     """Check whether a query window exceeds a safety threshold.
@@ -671,6 +699,7 @@ async def volume_check(
     whether confirmation is required without scanning all matching rows.
     """
     from_dt, to_dt = _resolve_time_range(from_, to)
+    severity_values = _parse_severity_filter(severity)
     resolved_source_ids = await resolve_source_ids(session, source_ids_csv=source_ids, source_paths_csv=source_paths)
     if resolved_source_ids == []:
         return EventVolumeCheckResponse(
@@ -680,7 +709,7 @@ async def volume_check(
             capped=False,
         )
 
-    if _should_use_rollup(from_dt, to_dt, _ROLLUP_BUCKET_SECONDS, resolved_source_ids):
+    if _should_use_rollup(from_dt, to_dt, _ROLLUP_BUCKET_SECONDS, resolved_source_ids, severity_values):
         checked_events, requires_confirmation = await _query_rollup_volume_check(
             session,
             from_dt,
@@ -699,6 +728,8 @@ async def volume_check(
     limited_stmt = select(Event.id).where(_observed_between(from_dt, to_dt)).limit(capped_limit)
     if resolved_source_ids is not None:
         limited_stmt = limited_stmt.where(Event.source_id.in_(resolved_source_ids))
+    if severity_values:
+        limited_stmt = limited_stmt.where(Event.severity.in_(severity_values))
 
     limited_subquery = limited_stmt.subquery()
     count_result = await _execute_with_timeout(

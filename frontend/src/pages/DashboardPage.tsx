@@ -1,4 +1,4 @@
-import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   getEvents,
   getErrorRate,
@@ -52,6 +52,8 @@ const CHART_BUCKETS: { value: string; label: string }[] = [
   { value: '15m', label: '15 m' },
   { value: '1h', label: '1 h' },
 ]
+
+const SEVERITIES = ['debug', 'info', 'warning', 'error', 'critical']
 
 function chartBucketToMs(bucket: string) {
   const seconds: Record<string, number> = {
@@ -179,13 +181,6 @@ function formatMetaValue(value: unknown) {
   }
 }
 
-function areSameSeveritySelection(a: string[], b: string[]) {
-  if (a.length !== b.length) return false
-  const aSorted = [...a].sort()
-  const bSorted = [...b].sort()
-  return aSorted.every((value, index) => value === bSorted[index])
-}
-
 function getEventObservedAt(event: EventResponse) {
   return event.created_at ?? event.timestamp
 }
@@ -219,6 +214,7 @@ interface TimeseriesDetailTarget {
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const { t } = useI18n()
+  const queryClient = useQueryClient()
   const { filter, setFilter: setGlobalSourceFilter, selectedSources, setSelectedSources, customSources, setCustomSources } = useSourceFilter()
   // Single source of truth: global filter.rangeHours. Changes from any tab
   // propagate via context so this page stays in sync.
@@ -257,9 +253,11 @@ export default function DashboardPage() {
   const [socToggleError, setSocToggleError] = useState<string | null>(null)
   const [manualRefreshing, setManualRefreshing] = useState(false)
   const [uploadResult, setUploadResult] = useState<UploadResultState | null>(null)
-  const [topErrorsSeverities, setTopErrorsSeverities] = useState<string[]>(() => (
-    filter.severities.length > 0 ? filter.severities : ['error', 'critical']
-  ))
+  const globalSeverities = filter.severities
+  const [topErrorPanelSeverities, setTopErrorPanelSeverities] = useState<string[]>(() => {
+    const initial = filter.severities.length > 0 ? filter.severities : SEVERITIES
+    return [...initial]
+  })
   const [topErrorDetail, setTopErrorDetail] = useState<TopErrorDetailTarget | null>(null)
   const [mitreDetail, setMitreDetail] = useState<MitreTechniqueDetailTarget | null>(null)
   const [timeseriesDetail, setTimeseriesDetail] = useState<TimeseriesDetailTarget | null>(null)
@@ -271,7 +269,7 @@ export default function DashboardPage() {
   // Live-Tick: zwingt activeTimeRange.to auf 'jetzt' und triggert via queryKey
   // Refetches in allen relevanten Dashboard-Queries.
   const [refreshTick, setRefreshTick] = useState(0)
-  const hasSeenExplicitGlobalSeveritiesRef = useRef(filter.severities.length > 0)
+  const hasGlobalSeveritySelection = globalSeverities.length > 0
 
   useEffect(() => {
     const tickMs = resolveBaseTickMs(autoRefreshProfile)
@@ -309,19 +307,26 @@ export default function DashboardPage() {
     window.localStorage.setItem(CHART_BUCKET_MODE_KEY, chartBucketMode)
   }, [chartBucketMode])
 
+  const availableTopErrorPanelSeverities = useMemo(() => {
+    return SEVERITIES.filter(level => globalSeverities.includes(level))
+  }, [globalSeverities])
+
   useEffect(() => {
-    if (filter.severities.length > 0) {
-      hasSeenExplicitGlobalSeveritiesRef.current = true
-    }
-    if (!hasSeenExplicitGlobalSeveritiesRef.current && filter.severities.length === 0) {
-      return
-    }
-    if (areSameSeveritySelection(filter.severities, topErrorsSeverities)) return
-    setTopErrorsSeverities(filter.severities)
-  }, [filter.severities, topErrorsSeverities])
+    setTopErrorPanelSeverities(prev => {
+      const normalizedPrev = prev.filter(level => availableTopErrorPanelSeverities.includes(level))
+      if (normalizedPrev.length > 0) return normalizedPrev
+      return [...availableTopErrorPanelSeverities]
+    })
+  }, [availableTopErrorPanelSeverities])
+
+  useEffect(() => {
+    queryClient.invalidateQueries({ queryKey: ['error-rate'] })
+    queryClient.invalidateQueries({ queryKey: ['timeseries'] })
+    queryClient.invalidateQueries({ queryKey: ['top-errors'] })
+    queryClient.invalidateQueries({ queryKey: ['top-services'] })
+  }, [globalSeverities, queryClient])
 
   function updateTopErrorsSeverities(nextSeverities: string[]) {
-    setTopErrorsSeverities(nextSeverities)
     setGlobalSourceFilter({
       sourceIds: filter.sourceIds,
       sourcePaths: filter.sourcePaths,
@@ -335,7 +340,7 @@ export default function DashboardPage() {
   function syncGlobalFilter(
     nextSelectedSources: SourceOption[],
     nextRangeHours = rangeHours,
-    nextSeverities = topErrorsSeverities,
+    nextSeverities = globalSeverities,
     nextManualRange: ManualTimeRange | undefined = manualTimeRange,
   ) {
     const nextSelectedSourceIds = nextSelectedSources
@@ -421,12 +426,12 @@ export default function DashboardPage() {
       setRangeCheckBusy(false)
     }
 
-    syncGlobalFilter(selectedSources, nextRangeHours, topErrorsSeverities, undefined)
+    syncGlobalFilter(selectedSources, nextRangeHours, globalSeverities, undefined)
   }
 
   async function handleManualRangeChange(nextManualRange?: ManualTimeRange) {
     if (!nextManualRange || (!nextManualRange.from && !nextManualRange.to)) {
-      syncGlobalFilter(selectedSources, rangeHours, topErrorsSeverities, undefined)
+      syncGlobalFilter(selectedSources, rangeHours, globalSeverities, undefined)
       return
     }
 
@@ -462,7 +467,7 @@ export default function DashboardPage() {
       setRangeCheckBusy(false)
     }
 
-    syncGlobalFilter(selectedSources, rangeHours, topErrorsSeverities, nextManualRange)
+    syncGlobalFilter(selectedSources, rangeHours, globalSeverities, nextManualRange)
   }
 
   function removeCustomSource(id: string) {
@@ -477,7 +482,10 @@ export default function DashboardPage() {
     .filter(s => s.kind === 'preset' || s.kind === 'custom')
     .map(s => s.path)
   const metricsFilter: MetricsFilter | undefined = selectedSources.length > 0
-    ? { sourceIds: selectedSourceIds, sourcePaths: selectedSourcePaths, severities: topErrorsSeverities }
+    ? { sourceIds: selectedSourceIds, sourcePaths: selectedSourcePaths, severities: globalSeverities }
+    : undefined
+  const topErrorsMetricsFilter: MetricsFilter | undefined = selectedSources.length > 0
+    ? { sourceIds: selectedSourceIds, sourcePaths: selectedSourcePaths, severities: topErrorPanelSeverities }
     : undefined
   const sourceStatus = useQuery({
     queryKey: ['source-status', selectedSourceIds.join('|')],
@@ -502,11 +510,10 @@ export default function DashboardPage() {
   const chartBucket = chartBucketMode === 'auto' ? resolveChartBucket(rangeHours) : chartBucketMode
 
   const rate = useQuery({
-    queryKey: ['error-rate', rangeHours, manualTimeRange?.from ?? '', manualTimeRange?.to ?? '', sourceKey, activeTimeRange?.to ?? ''],
+    queryKey: ['error-rate', rangeHours, manualTimeRange?.from ?? '', manualTimeRange?.to ?? '', sourceKey, globalSeverities.join(','), activeTimeRange?.to ?? ''],
     queryFn: () => getErrorRate(activeTimeRange, metricsFilter),
-    enabled: selectedSources.length > 0,
+    enabled: selectedSources.length > 0 && hasGlobalSeveritySelection,
     staleTime: 0,
-    placeholderData: keepPreviousData,
     refetchInterval: query => {
       if (chartBucketMode !== 'auto') return false
       const currentData = query.state.data as { total_events?: number } | undefined
@@ -519,18 +526,18 @@ export default function DashboardPage() {
   })
 
   const ts = useQuery({
-    queryKey: ['timeseries', rangeHours, manualTimeRange?.from ?? '', manualTimeRange?.to ?? '', sourceKey, chartBucketMode, chartBucket, autoRefreshTargetEvents, activeTimeRange?.to ?? ''],
+    queryKey: ['timeseries', rangeHours, manualTimeRange?.from ?? '', manualTimeRange?.to ?? '', sourceKey, globalSeverities.join(','), chartBucketMode, chartBucket, autoRefreshTargetEvents, activeTimeRange?.to ?? ''],
     queryFn: () => {
       return getTimeseries({
         bucket: chartBucket,
         ...(activeTimeRange ? { from: activeTimeRange.from, to: activeTimeRange.to } : {}),
         ...(metricsFilter?.sourceIds?.length ? { source_ids: metricsFilter.sourceIds.join(',') } : {}),
         ...(metricsFilter?.sourcePaths?.length ? { source_paths: metricsFilter.sourcePaths.join(',') } : {}),
+        ...(metricsFilter?.severities?.length ? { severity: metricsFilter.severities.join(',') } : {}),
       })
     },
-    enabled: selectedSources.length > 0,
+    enabled: selectedSources.length > 0 && hasGlobalSeveritySelection,
     staleTime: 0,
-    placeholderData: keepPreviousData,
     retry: 1,
     refetchInterval: query => {
       if (chartBucketMode !== 'auto') return Math.max(MIN_REFRESH_INTERVAL_MS, chartBucketToMs(chartBucket))
@@ -548,18 +555,18 @@ export default function DashboardPage() {
     : Math.max(chartBucketToMs(chartBucket), 15_000)
 
   const errs = useQuery({
-    queryKey: ['top-errors', rangeHours, manualTimeRange?.from ?? '', manualTimeRange?.to ?? '', sourceKey, topErrorsSeverities.join(','), activeTimeRange?.to ?? ''],
-    queryFn: () => getTopErrors(activeTimeRange, metricsFilter),
-    enabled: selectedSources.length > 0 && topErrorsSeverities.length > 0,
+    queryKey: ['top-errors', rangeHours, manualTimeRange?.from ?? '', manualTimeRange?.to ?? '', sourceKey, globalSeverities.join(','), topErrorPanelSeverities.join(','), activeTimeRange?.to ?? ''],
+    queryFn: () => getTopErrors(activeTimeRange, topErrorsMetricsFilter),
+    enabled: selectedSources.length > 0 && hasGlobalSeveritySelection && topErrorPanelSeverities.length > 0,
     staleTime: 0,
     placeholderData: keepPreviousData,
     refetchInterval: drilldownRefreshMs,
     refetchIntervalInBackground: true,
   })
   const svcs = useQuery({
-    queryKey: ['top-services', rangeHours, manualTimeRange?.from ?? '', manualTimeRange?.to ?? '', sourceKey, activeTimeRange?.to ?? ''],
+    queryKey: ['top-services', rangeHours, manualTimeRange?.from ?? '', manualTimeRange?.to ?? '', sourceKey, globalSeverities.join(','), activeTimeRange?.to ?? ''],
     queryFn: () => getTopServices(activeTimeRange, metricsFilter),
-    enabled: selectedSources.length > 0,
+    enabled: selectedSources.length > 0 && hasGlobalSeveritySelection,
     staleTime: 0,
     placeholderData: keepPreviousData,
     refetchInterval: drilldownRefreshMs,
@@ -594,7 +601,7 @@ export default function DashboardPage() {
   const mitreCoverage = useQuery({
     queryKey: ['mitre-coverage'],
     queryFn: getMitreCoverage,
-    enabled: selectedSources.length > 0,
+    enabled: selectedSources.length > 0 && hasGlobalSeveritySelection,
     staleTime: 0,
     placeholderData: keepPreviousData,
     refetchInterval: drilldownRefreshMs,
@@ -650,8 +657,8 @@ export default function DashboardPage() {
   }
 
   const rr = rate.data
-  const errorRate = rr ? (rr.total_events > 0 ? (rr.error_rate * 100).toFixed(1) : '0.0') : '–'
-  const totalEvents = rr?.total_events ?? '–'
+  const errorRate = rr ? (rr.total_events > 0 ? (rr.error_rate * 100).toFixed(1) : '0.0') : '0.0'
+  const totalEvents = rr?.total_events ?? 0
   const sourceStatusById = new Map<string, SourceIngestionStatus>((sourceStatus.data ?? []).map(entry => [entry.source_id, entry]))
   // Re-render every second so age-based labels (e.g. "vor 5 min") stay
   // current without requiring user interaction. The returned tick value is
@@ -687,6 +694,57 @@ export default function DashboardPage() {
             />
             {/* Loading text for volume check removed: check is now always fast */}
             <HelpTip content="Das Zeitfenster steuert, wie weit die Metriken in die Vergangenheit schauen." ariaLabel="Zeitfenster erklaeren" />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <span style={{ color: 'var(--muted-fg)', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Severity</span>
+            <details style={styles.severityDropdown}>
+              <summary style={styles.severitySummary}>
+                {globalSeverities.length > 0
+                  ? `${globalSeverities.length} Schweregrade`
+                  : 'Keine Schweregrade'}
+              </summary>
+              <div style={styles.severityMenu}>
+                {SEVERITIES.map(level => {
+                  const checked = globalSeverities.includes(level)
+                  return (
+                    <label key={level} style={styles.severityOption}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          const nextSeverities = checked
+                            ? globalSeverities.filter(value => value !== level)
+                            : [...globalSeverities, level]
+                          updateTopErrorsSeverities(nextSeverities)
+                        }}
+                      />
+                      <span style={{ textTransform: 'capitalize' }}>{level}</span>
+                    </label>
+                  )
+                })}
+                <div style={{ display: 'flex', gap: '0.35rem', marginTop: '0.3rem' }}>
+                  <button
+                    type="button"
+                    style={styles.severityActionBtn}
+                    onClick={() => {
+                      updateTopErrorsSeverities(SEVERITIES)
+                    }}
+                  >
+                    Alle
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.severityActionBtn}
+                    onClick={() => {
+                      updateTopErrorsSeverities([])
+                    }}
+                  >
+                    Keine
+                  </button>
+                </div>
+              </div>
+            </details>
+            <HelpTip content="Schweregrade filtern den Dashboard-Kontext fuer Kennzahlen und Aufschluesselungen. Wie im Events-Tab kannst du mehrere Stufen kombinieren." ariaLabel="Schweregrad erklaeren" />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
             <span style={{ color: 'var(--muted-fg)', fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Raster</span>
@@ -848,6 +906,10 @@ export default function DashboardPage() {
         <div style={{ color: 'var(--muted-fg)', textAlign: 'center', padding: '3rem 1rem', fontSize: '0.9rem' }}>
           {t('dashboard.selectSources')}
         </div>
+      ) : !hasGlobalSeveritySelection ? (
+        <div style={{ color: 'var(--muted-fg)', textAlign: 'center', padding: '3rem 1rem', fontSize: '0.9rem' }}>
+          Keine Severity ausgewaehlt. Bitte mindestens einen Schweregrad waehlen.
+        </div>
       ) : (
         <>
           <div style={styles.sectionHeader}>
@@ -884,7 +946,7 @@ export default function DashboardPage() {
               ) : ts.isError ? <PanelError error={ts.error} /> : <Spinner />}
             </Panel>
 
-            <Panel title="Top Fehler-Meldungen" help="Hier siehst du die haeufigsten Fehlermeldungen im aktuellen Datenfenster. Das hilft beim Clustern wiederkehrender Stoerungen.">
+            <Panel title="Top Fehermeldungen" help="Hier siehst du die haeufigsten Fehlermeldungen im aktuellen Datenfenster. Das hilft beim Clustern wiederkehrender Stoerungen.">
               <div style={styles.panelMetaRow}>
                 <span style={styles.panelMetaLabel}>Letztes Update:</span>
                 <span style={styles.panelMetaValue}>{formatAgeLabel(errs.dataUpdatedAt)}</span>
@@ -892,8 +954,8 @@ export default function DashboardPage() {
               <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '0.75rem', color: 'var(--muted-fg)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Severity:</span>
                 <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
-                  {(['debug', 'info', 'warning', 'error', 'critical'] as const).map(sev => {
-                    const isSelected = topErrorsSeverities.includes(sev)
+                  {availableTopErrorPanelSeverities.map(sev => {
+                    const isSelected = topErrorPanelSeverities.includes(sev)
                     const severityColors: Record<string, { bg: string; text: string }> = {
                       debug: { bg: '#334155', text: '#94a3b8' },
                       info: { bg: '#0f3460', text: '#06b6d4' },
@@ -907,9 +969,9 @@ export default function DashboardPage() {
                         key={sev}
                         onClick={() => {
                           const newSevers = isSelected
-                            ? topErrorsSeverities.filter(s => s !== sev)
-                            : [...topErrorsSeverities, sev]
-                          updateTopErrorsSeverities(newSevers)
+                            ? topErrorPanelSeverities.filter(s => s !== sev)
+                            : [...topErrorPanelSeverities, sev]
+                          setTopErrorPanelSeverities(newSevers)
                         }}
                         style={{
                           padding: '0.35rem 0.6rem',
@@ -931,13 +993,29 @@ export default function DashboardPage() {
                     )
                   })}
                 </div>
+                <div style={{ display: 'flex', gap: '0.35rem' }}>
+                  <button
+                    type="button"
+                    style={styles.severityActionBtn}
+                    onClick={() => setTopErrorPanelSeverities([...availableTopErrorPanelSeverities])}
+                  >
+                    Alle
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.severityActionBtn}
+                    onClick={() => setTopErrorPanelSeverities([])}
+                  >
+                    Keine
+                  </button>
+                </div>
               </div>
-              {topErrorsSeverities.length === 0 && (
+              {topErrorPanelSeverities.length === 0 && (
                 <div style={{ color: 'var(--warning-fg)', fontSize: '0.8rem', marginBottom: '0.5rem', fontStyle: 'italic' }}>
-                  ⚠ Keine Severity ausgewählt – es werden keine Fehler angezeigt.
+                  Keine Severity im Panel-Filter ausgewaehlt.
                 </div>
               )}
-              {topErrorsSeverities.length === 0 ? (
+              {topErrorPanelSeverities.length === 0 ? (
                 <div style={{ color: 'var(--muted-fg)', fontSize: '0.85rem' }}>–</div>
               ) : errs.data ? (
                 <ol style={styles.ol}>
@@ -1141,6 +1219,7 @@ export default function DashboardPage() {
           target={topErrorDetail}
           sourceIds={selectedSourceIds}
           sourcePaths={selectedSourcePaths}
+          severities={globalSeverities}
           initialFrom={activeTimeRange?.from}
           initialTo={activeTimeRange?.to}
           onClose={() => setTopErrorDetail(null)}
@@ -1158,6 +1237,7 @@ export default function DashboardPage() {
           }}
           sourceIds={selectedSourceIds}
           sourcePaths={selectedSourcePaths}
+          severities={globalSeverities}
           initialFrom={timeseriesDetail.from}
           initialTo={timeseriesDetail.to}
           onClose={() => {
@@ -1171,6 +1251,7 @@ export default function DashboardPage() {
           target={mitreDetail}
           sourceIds={selectedSourceIds}
           sourcePaths={selectedSourcePaths}
+          severities={globalSeverities}
           onClose={() => setMitreDetail(null)}
         />
       )}
@@ -1182,6 +1263,7 @@ function TopErrorDetailModal({
   target,
   sourceIds,
   sourcePaths,
+  severities,
   initialFrom,
   initialTo,
   onClose,
@@ -1189,6 +1271,7 @@ function TopErrorDetailModal({
   target: TopErrorDetailTarget
   sourceIds: string[]
   sourcePaths: string[]
+  severities: string[]
   initialFrom?: string
   initialTo?: string
   onClose: () => void
@@ -1237,13 +1320,14 @@ function TopErrorDetailModal({
     isFetchingNextPage,
     isFetching,
   } = useInfiniteQuery({
-    queryKey: ['top-error-detail', target.query, target.service ?? '', sourceIds.join('|'), sourcePaths.join('|'), fromIso, toIso],
+    queryKey: ['top-error-detail', target.query, target.service ?? '', sourceIds.join('|'), sourcePaths.join('|'), severities.join(','), fromIso, toIso],
     queryFn: ({ pageParam }: { pageParam?: string }) => getEvents({
       limit: 100,
       cursor: pageParam,
       ...(target.service ? { service: target.service } : {}),
       ...(!target.service && target.query.trim() ? { q: target.query } : {}),
       ...(target.providerOverride ? { provider: target.providerOverride } : {}),
+      ...(severities.length ? { severity: severities.join(',') } : {}),
       ...(fromIso ? { from: fromIso } : {}),
       ...(toIso ? { to: toIso } : {}),
       ...(sourceIds.length ? { source_ids: sourceIds.join(',') } : {}),
@@ -1427,18 +1511,21 @@ function MitreTechniqueDetailModal({
   target,
   sourceIds,
   sourcePaths,
+  severities,
   onClose,
 }: {
   target: MitreTechniqueDetailTarget
   sourceIds: string[]
   sourcePaths: string[]
+  severities: string[]
   onClose: () => void
 }) {
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['mitre-technique-detail', sourceIds.join('|'), sourcePaths.join('|')],
+    queryKey: ['mitre-technique-detail', sourceIds.join('|'), sourcePaths.join('|'), severities.join(',')],
     queryFn: () => getIncidents({
       ...(sourceIds.length ? { source_ids: sourceIds.join(',') } : {}),
       ...(sourcePaths.length ? { source_paths: sourcePaths.join(',') } : {}),
+      ...(severities.length ? { severity: severities.join(',') } : {}),
     }),
     staleTime: 0,
   })
@@ -2140,6 +2227,47 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     padding: '0.35rem 0.55rem',
     fontSize: '0.82rem',
+  },
+  severityDropdown: { position: 'relative' },
+  severitySummary: {
+    background: 'var(--surface)',
+    color: 'var(--fg)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    padding: '0.35rem 0.55rem',
+    listStyle: 'none',
+    cursor: 'pointer',
+    minWidth: 170,
+    fontSize: '0.82rem',
+  },
+  severityMenu: {
+    position: 'absolute',
+    top: 'calc(100% + 0.3rem)',
+    left: 0,
+    zIndex: 30,
+    minWidth: 185,
+    background: 'var(--surface)',
+    border: '1px solid var(--border)',
+    borderRadius: 8,
+    padding: '0.45rem 0.55rem',
+    boxShadow: '0 10px 24px rgba(2, 6, 23, 0.5)',
+  },
+  severityOption: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    color: 'var(--fg)',
+    fontSize: '0.84rem',
+    padding: '0.18rem 0',
+  },
+  severityActionBtn: {
+    background: 'var(--surface-2)',
+    color: 'var(--accent)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    padding: '0.2rem 0.5rem',
+    fontSize: '0.75rem',
+    cursor: 'pointer',
   },
   autoProfileGroup: {
     display: 'inline-flex',

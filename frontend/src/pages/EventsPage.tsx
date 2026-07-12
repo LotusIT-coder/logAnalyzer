@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { getEvents, getHealth, getSourceIngestionStatus, getSources, getServerTime, runIngestion, type EventResponse, type HealthResponse, type SourceIngestionStatus, type SourceResponse } from '../lib/requests'
 import dayjs from 'dayjs'
@@ -432,12 +432,16 @@ export default function EventsPage() {
   const { t } = useI18n()
   const { filter: globalFilter, setFilter: setGlobalFilter, selectedSources, setSelectedSources, customSources, setCustomSources } = useSourceFilter()
   const [searchParams] = useSearchParams()
+  const initialSeveritiesFromParams = useMemo(
+    () => parseSeverityCsv(getInitialFilterValue(searchParams, 'severity')).filter(level => SEVERITIES.includes(level)),
+    [searchParams],
+  )
+  const didInitSeverityFromParams = useRef(false)
   const [sourceId, setSourceId] = useState(() => getInitialFilterValue(searchParams, 'source_id'))
   const [sourceIdsCsv, setSourceIdsCsv] = useState(() => getInitialFilterValue(searchParams, 'source_ids'))
   const [sourcePathsCsv, setSourcePathsCsv] = useState(() => getInitialFilterValue(searchParams, 'source_paths'))
   const [fromTime, setFromTime] = useState(() => getInitialFilterValue(searchParams, 'from'))
   const [toTime, setToTime] = useState(() => getInitialFilterValue(searchParams, 'to'))
-  const [selectedSeverities, setSelectedSeverities] = useState<string[]>(() => parseSeverityCsv(getInitialFilterValue(searchParams, 'severity')))
   const [provider, setProvider] = useState(() => normalizeProvider(getInitialFilterValue(searchParams, 'provider')))
   const [host, setHost] = useState(() => getInitialFilterValue(searchParams, 'host'))
   const [service, setService] = useState(() => getInitialFilterValue(searchParams, 'service'))
@@ -532,6 +536,7 @@ export default function EventsPage() {
   })
   const globalSourceIdsCsv = globalFilter.sourceIds.join(',')
   const globalSourcePathsCsv = globalFilter.sourcePaths.join(',')
+  const selectedSeverities = globalFilter.severities
   const globalSingleSourceId = globalFilter.sourceIds.length === 1 && globalFilter.sourcePaths.length === 0
     ? globalFilter.sourceIds[0]
     : ''
@@ -604,6 +609,27 @@ export default function EventsPage() {
   })
 
   const selectedSeveritiesCsv = selectedSeverities.join(',')
+
+  const setSelectedSeverities = useCallback((next: string[] | ((prev: string[]) => string[])) => {
+    const resolved = typeof next === 'function' ? next(globalFilter.severities) : next
+    const normalized = SEVERITIES.filter(level => resolved.includes(level))
+    setGlobalFilter({
+      ...globalFilter,
+      severities: normalized,
+    })
+  }, [globalFilter, setGlobalFilter])
+
+  useEffect(() => {
+    if (didInitSeverityFromParams.current) return
+    didInitSeverityFromParams.current = true
+    if (initialSeveritiesFromParams.length === 0) return
+    setGlobalFilter({
+      ...globalFilter,
+      severities: initialSeveritiesFromParams,
+    })
+  // Intentionally run once: query params should seed the shared filter only on initial mount.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSeveritiesFromParams, setGlobalFilter])
 
   // Apply global rangeHours when no explicit from/to is set.
   const rangeHours = globalFilter.rangeHours
@@ -874,7 +900,7 @@ export default function EventsPage() {
     setService('')
     setSearch('')
     setSearchInput('')
-    setGlobalFilter({ ...globalFilter, sourceIds: [], sourcePaths: [], rangeHours: globalFilter.rangeHours })
+    setGlobalFilter({ ...globalFilter, sourceIds: [], sourcePaths: [], rangeHours: globalFilter.rangeHours, severities: [] })
     setSelectedSources([])
     setCustomSources([])
   }

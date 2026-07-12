@@ -156,6 +156,19 @@ class TestTimeseries:
         assert resp.status_code == 200
         assert sum(point["count"] for point in resp.json()["points"]) == 1
 
+    async def test_severity_filter_limits_timeseries_counts(self, client, db_session):
+        src = _make_source(db_session, name="timeseries-severity-src")
+        db_session.add(src)
+        await db_session.flush()
+        _make_event(db_session, src, severity="warning", message="warn-1")
+        _make_event(db_session, src, severity="warning", message="warn-2")
+        _make_event(db_session, src, severity="info", message="info-1")
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/metrics/timeseries?severity=warning")
+        assert resp.status_code == 200
+        assert sum(point["count"] for point in resp.json()["points"]) == 2
+
 
 # ---------------------------------------------------------------------------
 # /metrics/top-errors
@@ -286,6 +299,20 @@ class TestTopServices:
         items = {item["service"]: item["count"] for item in resp.json()["items"]}
         assert items["future-service"] == 1
 
+    async def test_top_services_respects_severity_filter(self, client, db_session):
+        src = _make_source(db_session, name="svc-severity-src")
+        db_session.add(src)
+        await db_session.flush()
+        _make_event(db_session, src, severity="warning", service="warn-svc", message="warn-1")
+        _make_event(db_session, src, severity="warning", service="warn-svc", message="warn-2")
+        _make_event(db_session, src, severity="info", service="info-svc", message="info-1")
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/metrics/top-services?severity=warning")
+        assert resp.status_code == 200
+        items = {item["service"]: item["count"] for item in resp.json()["items"]}
+        assert items == {"warn-svc": 2}
+
 
 # ---------------------------------------------------------------------------
 # /metrics/error-rate
@@ -360,6 +387,22 @@ class TestErrorRate:
         data = resp.json()
         assert data["total_events"] == 1
         assert data["error_events"] == 0
+
+    async def test_error_rate_respects_severity_filter(self, client, db_session):
+        src = _make_source(db_session, name="rate-severity-src")
+        db_session.add(src)
+        await db_session.flush()
+        _make_event(db_session, src, severity="warning", message="warn")
+        _make_event(db_session, src, severity="warning", message="warn-2")
+        _make_event(db_session, src, severity="error", message="err")
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/metrics/error-rate?severity=warning")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_events"] == 2
+        assert data["error_events"] == 0
+        assert data["error_rate"] == 0.0
 
 
 class TestRollupCoverage:
@@ -514,6 +557,21 @@ class TestVolumeCheck:
         assert data["checked_events"] == 4
         assert data["requires_confirmation"] is True
         assert data["capped"] is True
+
+    async def test_volume_check_respects_severity_filter(self, client, db_session):
+        src = _make_source(db_session, name="volume-severity-src")
+        db_session.add(src)
+        await db_session.flush()
+        _make_event(db_session, src, severity="warning", message="warn-1")
+        _make_event(db_session, src, severity="warning", message="warn-2")
+        _make_event(db_session, src, severity="info", message="info-1")
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/metrics/volume-check?severity=warning&threshold=5")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["checked_events"] == 2
+        assert data["requires_confirmation"] is False
 
 
 class TestTimeoutFallback:

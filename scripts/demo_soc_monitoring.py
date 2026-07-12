@@ -118,7 +118,6 @@ def main() -> int:
     parser.add_argument("--source-name", default="Journald", help="Preferred journald source name")
     parser.add_argument("--emit-count", type=int, default=5, help="Number of demo log lines to emit")
     parser.add_argument("--timeout", type=int, default=90, help="Seconds to wait for SOC events")
-    parser.add_argument("--force-demo-alerts", type=int, default=0, help="Create guaranteed demo ai_soc incidents directly (0 disables)")
     args = parser.parse_args()
 
     source = choose_journald_source(args.api_base, args.source_name)
@@ -144,20 +143,6 @@ def main() -> int:
 
     print("Emitting suspicious log burst...")
     emit_demo_logs(args.emit_count)
-
-    if args.force_demo_alerts > 0:
-        print(f"Creating {args.force_demo_alerts} guaranteed demo alerts...")
-        demo_result = http_json(
-            "POST",
-            f"{args.api_base}/system/soc-analyst/demo-alert",
-            {
-                "count": int(args.force_demo_alerts),
-                "title": "AI SOC DEMO: Verdaechtiges Aktivitaetsmuster erkannt",
-                "severity": "critical",
-                "summary": "Verdachtsmoment: Mehrere fehlgeschlagene SSH-Authentifizierungen in kurzer Zeit, gefolgt von auffaelligen sudo-Mustern.",
-            },
-        )
-        print(json.dumps(demo_result, indent=2, ensure_ascii=False))
 
     print("Polling for SOC analysis results...")
     return poll_soc_events(args.api_base, args.timeout, known_incident_ids, start_tick_count)
